@@ -277,6 +277,7 @@ int main(int argc, char *argv[]) {
     router.add(std::make_unique<InputIntent>());
 
     Agent agent(&executor, &tools);
+    agent.setMaxSteps(config.agent.maxToolRounds);
 
     AppController controller(
         AppServices{&store, &providers, &tools, &executor, &router, &agent, &panic, &policy, &voice, &http},
@@ -314,10 +315,12 @@ int main(int argc, char *argv[]) {
     };
     applyRemote(controller.config());
 
-    QObject::connect(&controller, &AppController::configChanged, &app, [applyAndroid, applyRemote](const Config &updated) {
-        applyAndroid(updated.android);
-        applyRemote(updated);
-    });
+    QObject::connect(&controller, &AppController::configChanged, &app,
+                     [applyAndroid, applyRemote, &agent](const Config &updated) {
+                         agent.setMaxSteps(updated.agent.maxToolRounds);
+                         applyAndroid(updated.android);
+                         applyRemote(updated);
+                     });
     // Hotkeys that work from any window. The compositor grants them (GNOME asks once) and the
     // user can change them in Settings → Keyboard; without the portal, the in-window shortcuts
     // (Ctrl+M, Esc, Ctrl+Alt+Esc) still work.

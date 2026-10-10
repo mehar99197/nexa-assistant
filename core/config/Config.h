@@ -76,6 +76,17 @@ struct RemoteConfig {
     bool operator==(const RemoteConfig &) const = default;
 };
 
+// The agent loop. Driving a phone by screenshot and tap takes a dozen rounds for one request, so
+// the cap is generous; it only stops a model that is going in circles.
+struct AgentConfig {
+    int maxToolRounds{20};
+
+    QJsonObject toJson() const;
+    static AgentConfig fromJson(const QJsonObject &json);
+
+    bool operator==(const AgentConfig &) const = default;
+};
+
 // Typed view of ~/.config/nexa/config.json. Sections this build does not know stay in `extra` and
 // are written back unchanged, so no build drops settings it does not understand.
 struct Config {
@@ -90,6 +101,7 @@ struct Config {
     VoiceConfig voice;
     AndroidConfig android;
     RemoteConfig remote;
+    AgentConfig agent;
     QJsonObject extra;
 
     QJsonObject toJson() const;

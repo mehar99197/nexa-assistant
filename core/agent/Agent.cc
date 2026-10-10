@@ -49,7 +49,9 @@ void Agent::cancel() {
 
 void Agent::requestStep() {
     if (step_ >= maxSteps_) {
-        stop(Error{ErrorCode::Unknown, u"Stopped after %1 tool rounds without a final answer."_s.arg(maxSteps_)},
+        stop(Error{ErrorCode::Unknown,
+                   u"Stopped after %1 tool rounds without a final answer (agent.maxToolRounds in config.json "
+                   "allows more)."_s.arg(maxSteps_)},
              FinishReason::Other);
         return;
     }

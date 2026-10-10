@@ -43,6 +43,7 @@ Config sampleConfig() {
     config.android.autoReconnect = false;
     config.remote.enabled = true;
     config.remote.port = 8443;
+    config.agent.maxToolRounds = 12;
     // A section this build does not know.
     config.extra.insert(u"future"_s, QJsonObject{{u"setting"_s, 42}});
     return config;
@@ -78,8 +79,10 @@ TEST_CASE("ConfigStore round-trips providers, prompt and unknown sections") {
     CHECK_FALSE(loaded.value().android.autoReconnect);
     CHECK(loaded.value().remote.enabled);
     CHECK(loaded.value().remote.port == 8443);
+    CHECK(loaded.value().agent.maxToolRounds == 12);
     CHECK(loaded.value().extra.value(u"future"_s).toObject().value(u"setting"_s).toInt() == 42);
     CHECK_FALSE(loaded.value().extra.contains(u"remote"_s));
+    CHECK_FALSE(loaded.value().extra.contains(u"agent"_s));
     CHECK_FALSE(loaded.value().extra.contains(u"voice"_s));
     CHECK_FALSE(loaded.value().extra.contains(u"android"_s));
 }
