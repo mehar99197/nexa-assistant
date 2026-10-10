@@ -1,8 +1,8 @@
 #include "remote/TlsIdentity.h"
 
 #include "core/Logging.h"
+#include "remote/RemoteClient.h"
 
-#include <QCryptographicHash>
 #include <QDateTime>
 #include <QDir>
 #include <QFile>
@@ -35,14 +35,6 @@ QString keyPath(const QString &directory) {
     return directory + u"/key.pem"_s;
 }
 
-// "AB:CD:…", the way browsers show a fingerprint.
-QString colonHex(const QByteArray &bytes) {
-    QStringList parts;
-    parts.reserve(bytes.size());
-    for (const char byte : bytes) parts.append(u"%1"_s.arg(uchar(byte), 2, 16, u'0').toUpper());
-    return parts.join(u':');
-}
-
 } // namespace
 
 TlsIdentity::TlsIdentity(QString directory, QObject *parent) : QObject(parent), directory_(std::move(directory)) {}
@@ -71,7 +63,7 @@ Result<QSslConfiguration> TlsIdentity::load() {
     configuration.setPrivateKey(key);
     configuration.setProtocol(QSsl::TlsV1_2OrLater);
     configuration.setPeerVerifyMode(QSslSocket::VerifyNone);     // browsers present no certificate of their own
-    fingerprint_ = colonHex(certificate.digest(QCryptographicHash::Sha256));
+    fingerprint_ = fingerprintOf(certificate);      // the phone app compares against exactly this
     return configuration;
 }
 

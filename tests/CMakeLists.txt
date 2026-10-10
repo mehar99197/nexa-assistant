@@ -27,6 +27,8 @@ add_executable(nexa_tests
     PolicyEngineTest.cc
     PortalInputBackendTest.cc
     QrCodeTest.cc
+    PhoneWindowTest.cc
+    RemoteClientTest.cc
     RemoteDesktopSessionTest.cc
     RemoteProtocolTest.cc
     RemoteServerTest.cc
@@ -50,6 +52,7 @@ target_link_libraries(nexa_tests PRIVATE
     nexa_system
     nexa_voice
     nexa_remote
+    nexa_phone_ui
     nexa_options
     Qt6::Test
     Catch2::Catch2

@@ -66,3 +66,47 @@ TEST_CASE("Server messages carry their type and their fields") {
     // Text with quotes and newlines survives the trip.
     CHECK(parsed(remote::delta(u"say \"hi\"\nthen"_s)).value(u"text"_s).toString() == u"say \"hi\"\nthen"_s);
 }
+
+TEST_CASE("The phone app reads every server message back, and writes what the page writes") {
+    using Type = remote::ServerMessage::Type;
+    const auto welcome = remote::decodeServer(remote::welcome(u"Phone"_s, true, false));
+    REQUIRE(welcome);
+    CHECK(welcome->type == Type::Welcome);
+    CHECK(welcome->device == u"Phone"_s);
+    CHECK(welcome->voice);
+    CHECK_FALSE(welcome->busy);
+    CHECK(welcome->version == remote::kVersion);
+
+    const auto accepted = remote::decodeServer(remote::accepted(u"open firefox"_s, u"pc"_s));
+    REQUIRE(accepted);
+    CHECK(accepted->type == Type::Accepted);
+    CHECK(accepted->text == u"open firefox"_s);
+    CHECK(accepted->source == u"pc"_s);
+    CHECK(remote::decodeServer(remote::delta(u"Hel"_s))->text == u"Hel"_s);
+    const auto step = remote::decodeServer(remote::step(u"open_app — failed"_s, false));
+    REQUIRE(step);
+    CHECK(step->type == Type::Step);
+    CHECK_FALSE(step->ok);
+    CHECK(remote::decodeServer(remote::finished(u"cancelled"_s))->reason == u"cancelled"_s);
+    CHECK(remote::decodeServer(remote::failed(u"no model"_s))->text == u"no model"_s);
+    CHECK(remote::decodeServer(remote::transcript(u"volume up"_s))->text == u"volume up"_s);
+    CHECK(remote::decodeServer(remote::speech(u"/speech/abc.wav"_s))->url == u"/speech/abc.wav"_s);
+    CHECK(remote::decodeServer(remote::busy(true))->busy);
+    const auto error = remote::decodeServer(remote::error(u"unauthorized"_s, u"Pair again."_s));
+    REQUIRE(error);
+    CHECK(error->type == Type::Error);
+    CHECK(error->code == u"unauthorized"_s);
+    CHECK(error->text == u"Pair again."_s);
+    CHECK(remote::decodeServer(remote::pong())->type == Type::Pong);
+    // A step without an `ok` field is fine; an unknown type or no JSON is not.
+    CHECK(remote::decodeServer(R"({"t":"step","text":"x"})")->ok);
+    CHECK_FALSE(remote::decodeServer(R"({"t":"reboot"})"));
+    CHECK_FALSE(remote::decodeServer("nope"));
+    CHECK_FALSE(remote::decodeServer("[]"));
+
+    // The client side writes exactly what the server reads.
+    CHECK(remote::decode(remote::hello(u"abc"_s))->token == u"abc"_s);
+    CHECK(remote::decode(remote::text(u"open firefox"_s))->text == u"open firefox"_s);
+    CHECK(remote::decode(remote::cancel())->type == remote::ClientMessage::Type::Cancel);
+    CHECK(remote::decode(remote::ping())->type == remote::ClientMessage::Type::Ping);
+}

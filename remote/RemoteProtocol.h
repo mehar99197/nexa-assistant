@@ -43,4 +43,29 @@ QByteArray busy(bool busy);
 QByteArray error(const QString &code, const QString &message);
 QByteArray pong();
 
+// The same messages as Nexa's own phone app reads them (the browser page reads the JSON itself).
+struct ServerMessage {
+    enum class Type { Welcome, Accepted, Delta, Step, Finished, Failed, Transcript, Speech, Busy, Error, Pong };
+    Type type{Type::Pong};
+    QString text;       // Accepted, Delta, Step, Failed, Transcript, Error: the words
+    QString source;     // Accepted: "pc", "phone" or "phone-voice"
+    QString device;     // Welcome: this phone, as it was named when it paired
+    QString reason;     // Finished
+    QString url;        // Speech: the WAV, relative to the server
+    QString code;       // Error
+    int version{0};     // Welcome
+    bool ok{true};      // Step
+    bool busy{false};   // Welcome, Busy
+    bool voice{false};  // Welcome: the PC can hear a recording
+};
+
+// Unknown types are refused; missing fields take their empty value.
+std::optional<ServerMessage> decodeServer(QByteArrayView frame);
+
+// What a client sends.
+QByteArray hello(const QString &token);
+QByteArray text(const QString &request);
+QByteArray cancel();
+QByteArray ping();
+
 } // namespace nexa::remote

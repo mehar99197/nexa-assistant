@@ -27,7 +27,8 @@ Not to be confused with Nexa Download Manager: this is a separate program, named
   types, takes screenshots and describes them, reads notifications and text messages, starts calls
   and messages, controls music and volume, and copies files both ways.
 - **Is controlled from your phone** — pair the phone's browser once, then type or hold-to-talk on the
-  phone; the PC acts, and the phone shows the conversation and plays the spoken reply.
+  phone; the PC acts, and the phone shows the conversation and plays the spoken reply. There is also
+  a small app for the phone (`android/`), which does the same natively and remembers the pairing.
 - **Shows its work** — every action appears in the Actions panel and in
   `~/.local/share/nexa/audit.jsonl`. Esc stops the reply; Ctrl+Alt+Esc (or Ctrl+Shift+Esc) stops
   everything, including commands it started. Settings → Policy can ask before risky actions (root
@@ -79,6 +80,32 @@ On first start Nexa asks for the OmniRoute API key. Then:
 
 `sudo ./packaging/uninstall-helper.sh` removes everything the helper install added;
 `scripts/install-desktop-entry.sh --uninstall` removes the entry and icon.
+
+## The phone app
+
+`android/` is Nexa's own app for the phone: the same conversation as the browser page, native, with
+a hold-to-talk button, and it keeps the pairing. On the first screen type the address shown under
+the QR code (or paste the whole link) and the six-digit code. Over the network the app shows the
+fingerprint of Nexa's certificate once — compare it with the one in Settings → Remote and trust it;
+after that only that certificate is accepted. Over USB with adb, `localhost:7777` works with no
+certificate at all. "Forget this PC" in the ⋮ menu unpairs.
+
+The same app builds for the desktop as part of the normal build (`./build/android/nexa-phone`), which
+is how its screens are tested. The APK needs the Qt for Android kit and the Android SDK, neither of
+which comes from apt:
+
+```bash
+pipx install aqtinstall
+aqt install-qt all_os android 6.10.2 android_arm64_v8a -m qtwebsockets qtmultimedia \
+    --archives qtbase qtsvg qtwebsockets qtmultimedia -O ~/Qt
+# Android SDK: command-line tools from developer.android.com into ~/Android/Sdk/cmdline-tools/latest, then
+sdkmanager "platform-tools" "platforms;android-35" "build-tools;35.0.0" "ndk;27.2.12479018"
+scripts/build-phone-apk.sh                 # configures with the kit, builds, and prints the APK's path
+adb install -r build-android/android-build/build/outputs/apk/debug/android-build-debug.apk
+```
+
+The host tools come from the system's own Qt (it is the same version, and Debian ships
+`androiddeployqt`), so no desktop kit is downloaded.
 
 ## Security, in brief
 

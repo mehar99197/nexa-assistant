@@ -105,7 +105,13 @@ models over its slow `auto/*` combos).
   utterance), `TlsIdentity` (self-signed cert in `~/.config/nexa/tls`), `QrCode`, and `IRemoteHost` — implemented
   by `app/RemoteBridge`, so remote/ depends only on core. The page itself is `remote/web/` (strict CSP: no inline
   script or style; server text only through `textContent`). Phone requests carry the source `phone` or
-  `phone-voice`.
+  `phone-voice`. `RemoteClient` is the phone's end of the same protocol (pair, hello, backoff, trust on first
+  use pinned to the certificate's fingerprint); `RemoteProtocol` decodes both directions.
+- `android/` — Nexa Phone, the native client: a Qt Widgets app (`PhoneWindow` mediator, `PairPage`, `ChatPage`,
+  `PhoneSettings`, `Recorder`, `SpeechPlayer`) over `remote/RemoteClient`. It is a standalone CMake project for
+  the APK (`scripts/build-phone-apk.sh`; README → "The phone app") and is also built inside the Linux build as
+  `nexa_phone_ui` + `./build/android/nexa-phone`, which is how `tests/PhoneWindowTest.cc` drives the real
+  screens against the real server. Keep it free of anything Android could not build (no D-Bus, no `app/`).
 - `packaging/` — `org.nexa.Assistant.desktop`, the helper's polkit policy, D-Bus and systemd files, and
   `install-helper.sh` / `uninstall-helper.sh`; `scripts/` — model and engine downloads, desktop-entry install.
 - Runtime files: `~/.config/nexa/config.json` (settings, 0600), `~/.local/share/nexa/audit.jsonl` (every action,
@@ -122,7 +128,8 @@ models over its slow `auto/*` combos).
 - No exceptions: fallible calls return `Result<T>` (`core/Result.h`); async APIs take a `std::function<void(Result<T>)>` callback or emit `failed(nexa::Error)`.
 - Smart pointers only; constructor injection, no singletons; wiring happens in `app/main.cc`.
 - Name the design pattern in the class comment (Strategy, Factory/Registry, Facade, Builder, Mediator, …).
-- Dependencies point downward: `app → remote/voice → core ← system → proto`. `core` never includes QtWidgets.
+- Dependencies point downward: `app → remote/voice → core ← system → proto`, and `android → remote/voice`.
+  `core` never includes QtWidgets.
 - Nothing blocks the GUI thread: network via QNetworkAccessManager signals, processes via QProcess signals, heavy work in worker threads.
 - QObjects handed out as `shared_ptr` (e.g. `ChatStream`) use a `deleteLater()` deleter, so they can be released from their own signals.
 - Never log or display API keys/tokens.

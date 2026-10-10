@@ -6,6 +6,7 @@ add_library(nexa_remote STATIC
     IRemoteHost.h
     PairingManager.h PairingManager.cc
     QrCode.h QrCode.cc
+    RemoteClient.h RemoteClient.cc
     RemoteProtocol.h RemoteProtocol.cc
     RemoteServer.h RemoteServer.cc
     RemoteSession.h RemoteSession.cc
