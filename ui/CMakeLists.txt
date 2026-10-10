@@ -9,10 +9,10 @@ qt_add_library(nexa_ui STATIC
     NexaTheme.h NexaTheme.cc
 )
 
-# The stylesheet and its one picture, built in; NexaTheme fills the tokens in at run time.
+# The stylesheet and its two pictures, built in; NexaTheme fills the tokens in at run time.
 qt_add_resources(nexa_ui "nexa_theme"
     PREFIX "/nexa/ui"
-    FILES theme.qss chevron-down.svg
+    FILES theme.qss chevron-down.svg check.svg
 )
 
 target_include_directories(nexa_ui PUBLIC "${PROJECT_SOURCE_DIR}")

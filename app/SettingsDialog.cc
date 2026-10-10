@@ -96,6 +96,16 @@ void SettingsDialog::showTab(const QString &title) {
     }
 }
 
+void SettingsDialog::snapshotTabs(const QString &directory) {
+    for (int i = 0; i < tabs_->count(); ++i) {
+        tabs_->setCurrentIndex(i);
+        QCoreApplication::processEvents();
+        QCoreApplication::processEvents();
+        const QString name = tabs_->tabText(i).toLower().remove(u' ');
+        grab().save(u"%1/settings-%2.png"_s.arg(directory, name));
+    }
+}
+
 SettingsDialog::~SettingsDialog() {
     // Discovery polls often only while someone is looking at the result.
     if (status_.discovery) status_.discovery->setWatched(false);

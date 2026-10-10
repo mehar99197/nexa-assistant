@@ -10,6 +10,7 @@
 
 #include <QImage>
 #include <QSet>
+#include <QTest>
 
 #include <catch2/catch_approx.hpp>
 #include <catch2/catch_test_macros.hpp>
@@ -179,6 +180,24 @@ TEST_CASE("The theme fills every token in, for both schemes") {
     CHECK(NexaTheme::schemeFor(u"dark"_s) == ThemeScheme::Dark);
     CHECK(NexaTheme::schemeFor(u"light"_s) == ThemeScheme::Light);
     CHECK(NexaTheme::schemeKey(ThemeScheme::Light) == u"light"_s);
+}
+
+TEST_CASE("The widget keeps moving while it is shown and something happens") {
+    NexaCoreWidget core;
+    core.setDiameter(96);
+    core.setMode(CoreMode::Listening);
+    core.setLevel(0.8);
+    core.show();
+    QTest::qWait(80);
+    const QImage first = core.grab().toImage();
+    QTest::qWait(260);      // a quarter of the inner ring's 0.9 s swell
+    const QImage second = core.grab().toImage();
+    CHECK(first != second);
+    core.setAnimated(false);
+    QTest::qWait(80);
+    const QImage still = core.grab().toImage();
+    QTest::qWait(200);
+    CHECK(core.grab().toImage() == still);
 }
 
 TEST_CASE("The widget paints a state in its colour, and a change cross-fades") {

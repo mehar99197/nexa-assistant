@@ -146,8 +146,8 @@ nexa-assistant --say "hello" --voice-file request.wav      # speak; feed a recor
 
 If Nexa is already running, these go to the running copy. `--new-instance` starts a separate one
 (for testing). `--screenshot <file.png>` saves a picture of the window once the requests are done,
-then quits (it works with `QT_QPA_PLATFORM=offscreen`), and `--theme dark|light|system` picks the
-look for that run; Settings → General → Appearance and the sun/moon button in the toolbar set it
-for good.
+then quits (it works with `QT_QPA_PLATFORM=offscreen`); `--screenshot-settings <dir>` does the same
+for every Settings tab; `--theme dark|light|system` picks the look for that run, while Settings →
+General → Appearance and the sun/moon button in the toolbar set it for good.
 
 No licence has been chosen yet.

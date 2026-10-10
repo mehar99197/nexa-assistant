@@ -41,6 +41,8 @@ public:
                GlobalShortcuts *shortcuts, SystemStatus status, const QString &auditPath, QWidget *parent = nullptr);
 
     void openSettings(const QString &tab = {});
+    // Opens Settings without blocking, saves a picture of each tab into `directory`, closes it.
+    void snapshotSettings(const QString &directory);
     // Asked when the window is closed: true means "hidden to the tray, keep running".
     void setCloseToTray(std::function<bool()> hide) { closeToTray_ = std::move(hide); }
     NexaCoreWidget *presence() const { return presence_; }    // the core beside the chat (the tray copies it)

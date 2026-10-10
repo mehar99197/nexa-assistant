@@ -176,6 +176,9 @@ int main(int argc, char *argv[]) {
     parser.addOption(screenshotOption);
     const QCommandLineOption themeOption(u"theme"_s, u"Look for this run only: system, dark or light."_s, u"scheme"_s);
     parser.addOption(themeOption);
+    const QCommandLineOption settingsShotsOption(
+        u"screenshot-settings"_s, u"Save a picture of every Settings tab into <dir>, then quit."_s, u"dir"_s);
+    parser.addOption(settingsShotsOption);
     parser.process(app);
 
     // One Nexa per user: a second start hands what it was asked to do to the running one and
@@ -426,6 +429,11 @@ int main(int argc, char *argv[]) {
     };
     queue(parser.values(sayOption), parser.values(voiceFileOption), parser.values(askOption), 800);
     if (steps.isEmpty() && !screenshotPath.isEmpty()) QTimer::singleShot(1500, runNext);
+    if (parser.isSet(settingsShotsOption)) {
+        const QString directory = parser.value(settingsShotsOption);
+        QTimer::singleShot(1500, &window, [&window, directory] { window.snapshotSettings(directory); });
+        QTimer::singleShot(3500, &app, &QCoreApplication::quit);
+    }
 
     // A later start: take over its requests. Without any, it means "show me Nexa" and the window
     // comes forward; with some, it is a script or a shortcut at work, and the window only comes

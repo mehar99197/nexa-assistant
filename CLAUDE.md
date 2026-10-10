@@ -28,8 +28,15 @@ run it with `QT_QPA_PLATFORM=offscreen` to keep it off the user's screen. `--say
 request; the three run in that order, one at a time. **To check the look**, add `--screenshot <file.png>`: once the
 requests are done and Nexa is idle, it saves a picture of the window and quits — it works offscreen, so
 `QT_QPA_PLATFORM=offscreen ./build/app/nexa-assistant --new-instance --theme light --ask "run uname -sr" --screenshot /tmp/nexa.png`
-shows the light scheme with a fast-path reply without touching the screen (`--theme` is for that run only). The phone
-app's screens come out of `NEXA_TEST_SCREENSHOTS=<dir> ./build/tests/nexa_tests "The phone app pairs*"`.
+shows the light scheme with a fast-path reply without touching the screen (`--theme` is for that run only);
+`--screenshot-settings <dir>` saves every Settings tab the same way. The phone app's screens come out of
+`NEXA_TEST_SCREENSHOTS=<dir> ./build/tests/nexa_tests "The phone app pairs*"`, and the web remote's page can be looked
+at in any browser without a phone through `scripts/preview-web-remote.py` (a stand-in server that plays a
+conversation and walks the core through its states; `--once` for a screenshot, e.g. with
+`google-chrome --headless=new --screenshot=… --virtual-time-budget=8000 "http://127.0.0.1:8765/#pair=123456"`).
+On the real screen, a copy started with `QT_QPA_PLATFORM=xcb --new-instance` can be captured with `xwd -id` (there is
+no `convert` here: decode the XWD in Python) and the tray icon GNOME holds can be read back from
+`busctl --user get-property <nexa's bus name> /StatusNotifierItem org.kde.StatusNotifierItem IconPixmap`.
 The binary is **nexa-assistant** and the desktop id **org.nexa.Assistant** — `nexa`, `/usr/bin/nexa` and
 `nexa.desktop` belong to Nexa Download Manager, a different product. `scripts/install-desktop-entry.sh`
 installs the entry for the current user; the global hotkeys need it (the portal rejects an app id it cannot

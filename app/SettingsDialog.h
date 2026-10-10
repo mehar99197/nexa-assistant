@@ -38,6 +38,8 @@ public:
 
     Config config() const { return config_; }
     void showTab(const QString &title);         // e.g. "Policy": open on that page
+    // A picture of every tab into `directory` (settings-<tab>.png), for checking the look.
+    void snapshotTabs(const QString &directory);
 
     void accept() override;
 

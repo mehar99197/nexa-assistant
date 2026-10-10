@@ -1,9 +1,9 @@
 #include "ChatPage.h"
 
+#include "MessageDelegate.h"
 #include "ui/NexaCoreWidget.h"
 #include "ui/NexaIcons.h"
 
-#include <QFontDatabase>
 #include <QHBoxLayout>
 #include <QLabel>
 #include <QLineEdit>
@@ -90,11 +90,12 @@ ChatPage::ChatPage(QWidget *parent) : QWidget(parent), tokens_(NexaTheme::tokens
 
     messages_ = new QListWidget(this);
     messages_->setObjectName(u"messages"_s);
-    messages_->setWordWrap(true);
-    messages_->setTextElideMode(Qt::ElideNone);
+    delegate_ = new MessageDelegate(messages_);
+    messages_->setItemDelegate(delegate_);
+    messages_->setResizeMode(QListView::Adjust);     // bubbles re-wrap when the width changes
     messages_->setSelectionMode(QAbstractItemView::NoSelection);
     messages_->setFocusPolicy(Qt::NoFocus);
-    messages_->setSpacing(3);
+    messages_->setSpacing(2);
     messages_->setVerticalScrollMode(QAbstractItemView::ScrollPerPixel);
     messages_->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
     QScroller::grabGesture(messages_->viewport(), QScroller::TouchGesture);
@@ -144,6 +145,7 @@ ChatPage::ChatPage(QWidget *parent) : QWidget(parent), tokens_(NexaTheme::tokens
 
 void ChatPage::setScheme(ThemeScheme scheme) {
     tokens_ = NexaTheme::tokens(scheme);
+    delegate_->setTokens(tokens_);
     refreshIcons();
     setCore(mode_, NoNode, hint_->text());
 }
@@ -201,32 +203,7 @@ void ChatPage::layoutPresence() {
 
 void ChatPage::addMessage(Kind kind, const QString &text) {
     auto *item = new QListWidgetItem(text);
-    QFont mono = QFontDatabase::systemFont(QFontDatabase::FixedFont);
-    mono.setPointSizeF(font().pointSizeF() * 0.85);
-    switch (kind) {
-    case Kind::User:
-        item->setTextAlignment(Qt::AlignRight);
-        item->setBackground(tokens_.panel);
-        item->setForeground(tokens_.text);
-        break;
-    case Kind::FromPc:
-        item->setTextAlignment(Qt::AlignRight);
-        item->setBackground(tokens_.panelRaised);
-        item->setForeground(tokens_.text);
-        break;
-    case Kind::Nexa:
-        item->setForeground(tokens_.text);
-        break;
-    case Kind::Step:
-    case Kind::StepFailed:
-    case Kind::Heard:
-        item->setFont(mono);
-        item->setForeground(kind == Kind::StepFailed ? tokens_.error : tokens_.muted);
-        break;
-    case Kind::Error:
-        item->setForeground(tokens_.error);
-        break;
-    }
+    item->setData(MessageDelegate::KindRole, static_cast<int>(kind));
     messages_->addItem(item);
     messages_->scrollToBottom();
     if (kind == Kind::Nexa) reply_ = item;
@@ -239,6 +216,7 @@ void ChatPage::appendReply(const QString &text) {
         return;
     }
     reply_->setText(reply_->text() + text);
+    messages_->doItemsLayout();     // the line grew: its bubble-less row needs its new height
     messages_->scrollToBottom();
 }
 

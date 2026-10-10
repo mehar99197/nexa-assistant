@@ -30,6 +30,7 @@
 #include <QSignalBlocker>
 #include <QStatusBar>
 #include <QStyle>
+#include <QTimer>
 #include <QToolBar>
 #include <QToolButton>
 #include <QVBoxLayout>
@@ -549,6 +550,16 @@ void MainWindow::openSettings(const QString &tab) {
     SettingsDialog dialog(controller_->config(), registry_, http_, status_, this);
     if (!tab.isEmpty()) dialog.showTab(tab);
     if (dialog.exec() == QDialog::Accepted) controller_->updateConfig(dialog.config());
+}
+
+void MainWindow::snapshotSettings(const QString &directory) {
+    auto *dialog = new SettingsDialog(controller_->config(), registry_, http_, status_, this);
+    dialog->setAttribute(Qt::WA_DeleteOnClose);
+    dialog->show();
+    QTimer::singleShot(600, dialog, [dialog, directory] {
+        dialog->snapshotTabs(directory);
+        dialog->close();
+    });
 }
 
 void MainWindow::promptForApiKey(const QString &providerName) {

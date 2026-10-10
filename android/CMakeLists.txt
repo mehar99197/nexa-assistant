@@ -21,6 +21,7 @@ endif()
 # The screens and what they need, as a library so the tests can drive them.
 add_library(nexa_phone_ui STATIC
     ChatPage.h ChatPage.cc
+    MessageDelegate.h MessageDelegate.cc
     PairPage.h PairPage.cc
     PhoneSettings.h PhoneSettings.cc
     PhoneWindow.h PhoneWindow.cc
@@ -49,9 +50,10 @@ if(NEXA_PHONE_STANDALONE)
     )
     set_source_files_properties("${NEXA_ROOT}/ui/theme.qss" PROPERTIES QT_RESOURCE_ALIAS theme.qss)
     set_source_files_properties("${NEXA_ROOT}/ui/chevron-down.svg" PROPERTIES QT_RESOURCE_ALIAS chevron-down.svg)
+    set_source_files_properties("${NEXA_ROOT}/ui/check.svg" PROPERTIES QT_RESOURCE_ALIAS check.svg)
     qt_add_resources(nexa_phone_ui "nexa_theme"
         PREFIX "/nexa/ui"
-        FILES "${NEXA_ROOT}/ui/theme.qss" "${NEXA_ROOT}/ui/chevron-down.svg"
+        FILES "${NEXA_ROOT}/ui/theme.qss" "${NEXA_ROOT}/ui/chevron-down.svg" "${NEXA_ROOT}/ui/check.svg"
     )
     target_compile_options(nexa_phone_ui PRIVATE -Wall -Wextra -Wpedantic -Wno-missing-field-initializers)
 else()

@@ -167,10 +167,12 @@ CoreNodes NexaCoreWidget::litFor(CoreMode mode) const {
 }
 
 void NexaCoreWidget::paintFrame(QPainter &painter, const QRectF &rect) const {
-    const double t = seconds();
-    const double sinceMode = (clock_.elapsed() - modeStartMs_) / 1000.0;
+    // Not animated: one still frame of the state at rest, the same every time (the phone's brand
+    // mark, snapshots, tests). Otherwise this moment of the motion.
+    const double t = animated_ ? seconds() : 0.0;
+    const double sinceMode = animated_ ? (clock_.elapsed() - modeStartMs_) / 1000.0 : 10.0;
     double blend = 1.0;
-    if (fadeStartMs_ >= 0) blend = easeCross(double(clock_.elapsed() - fadeStartMs_) / kCrossFadeMs);
+    if (animated_ && fadeStartMs_ >= 0) blend = easeCross(double(clock_.elapsed() - fadeStartMs_) / kCrossFadeMs);
 
     std::vector<CoreLayer> layers;
     const CoreFrame current = coreFrame(mode_, shownLevel_, t, sinceMode);
@@ -212,7 +214,7 @@ void NexaCoreWidget::paintFrame(QPainter &painter, const QRectF &rect) const {
 }
 
 void NexaCoreWidget::paintEvent(QPaintEvent *) {
-    shownLevel_ += (level_ - shownLevel_) * 0.35;
+    shownLevel_ = animated_ ? shownLevel_ + (level_ - shownLevel_) * 0.35 : level_;
     QPainter painter(this);
     paintFrame(painter, QRectF(rect()).adjusted(1, 1, -1, -1));
 }

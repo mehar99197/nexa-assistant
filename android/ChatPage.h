@@ -15,6 +15,7 @@ class QToolButton;
 
 namespace nexa {
 
+class MessageDelegate;
 class NexaCoreButton;
 class NexaCoreWidget;
 
@@ -65,6 +66,7 @@ private:
     QLabel *title_{nullptr};
     QLabel *hint_{nullptr};
     QListWidget *messages_{nullptr};
+    MessageDelegate *delegate_{nullptr};
     QLineEdit *input_{nullptr};
     QToolButton *send_{nullptr};
     QToolButton *more_{nullptr};

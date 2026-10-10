@@ -236,7 +236,23 @@ QHeaderView::section { background: @panel@; color: @muted@; border: 0; border-bo
 
 QGroupBox { border: 1px solid @line@; border-radius: 8px; margin-top: 12px; padding-top: 8px; }
 QGroupBox::title { subcontrol-origin: margin; left: 10px; padding: 0 4px; color: @muted@; }
-QCheckBox, QRadioButton { background: transparent; spacing: 6px; }
+QCheckBox, QRadioButton { background: transparent; spacing: 8px; }
+QCheckBox::indicator, QRadioButton::indicator, QGroupBox::indicator, QListView::indicator, QTreeView::indicator {
+    width: 16px;
+    height: 16px;
+    border: 1px solid @muted@;
+    border-radius: 4px;
+    background: @panel@;
+}
+QRadioButton::indicator { border-radius: 8px; }
+QCheckBox::indicator:hover, QRadioButton::indicator:hover { border-color: @idle@; }
+QCheckBox::indicator:checked, QGroupBox::indicator:checked, QListView::indicator:checked, QTreeView::indicator:checked {
+    background: @idle@;
+    border-color: @idle@;
+    image: url(:/nexa/ui/check.svg);
+}
+QRadioButton::indicator:checked { background: @idle@; border: 4px solid @panel@; outline: 1px solid @idle@; }
+QCheckBox::indicator:disabled, QRadioButton::indicator:disabled { border-color: @line@; background: @ground@; }
 QScrollArea { border: 0; background: transparent; }
 QScrollArea > QWidget > QWidget { background: transparent; }
 QSplitter::handle { background: @line@; }
