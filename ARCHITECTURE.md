@@ -2,7 +2,7 @@
 
 > Living document: the approved plan plus a **Status** section. Update the status table at the end of every milestone.
 
-## Status (updated 2026-10-10, M3+M4)
+## Status (updated 2026-10-10, M8 in progress)
 
 | Milestone | State |
 |---|---|

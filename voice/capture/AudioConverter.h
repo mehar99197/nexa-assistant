@@ -25,7 +25,6 @@ private:
     void resample(float sample, QByteArray &out);
 
     QAudioFormat input_;
-    int outputRate_;
     bool passthrough_{false};
     double step_{1.0};      // input samples per output sample
     QByteArray partial_;    // bytes of an incomplete input frame

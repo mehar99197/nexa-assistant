@@ -14,7 +14,20 @@ QT_ANDROID="${QT_ANDROID:-$HOME/Qt/$QT_VERSION/android_arm64_v8a}"
 QT_HOST_PATH="${QT_HOST_PATH:-/usr}"
 ANDROID_SDK_ROOT="${ANDROID_SDK_ROOT:-${ANDROID_HOME:-$HOME/Android/Sdk}}"
 ANDROID_NDK_ROOT="${ANDROID_NDK_ROOT:-$(ls -d "$ANDROID_SDK_ROOT"/ndk/* 2>/dev/null | sort -V | tail -n 1)}"
-JAVA_HOME="${JAVA_HOME:-$(ls -d /usr/lib/jvm/java-*-openjdk-* 2>/dev/null | sort -V | tail -n 1)}"
+# Gradle 8.14 (Qt's) runs on Java 17 to 24: the newest JDK in that range, not the newest there is —
+# and a JDK, with javac, not the JRE Debian installs by default (`apt install openjdk-21-jdk-headless`,
+# or a Temurin JDK unpacked under ~/Android).
+if [ -z "${JAVA_HOME:-}" ]; then
+    for version in 24 23 22 21 20 19 18 17; do
+        for candidate in /usr/lib/jvm/java-$version-openjdk-* "$HOME"/Android/jdk-$version*; do
+            if [ -x "$candidate/bin/javac" ]; then
+                JAVA_HOME="$candidate"
+                break 2
+            fi
+        done
+    done
+fi
+JAVA_HOME="${JAVA_HOME:-/usr/lib/jvm/a-jdk-with-javac}"
 BUILD_DIR="${BUILD_DIR:-build-android}"
 
 # Debian keeps Qt's CMake files under the multiarch directory; the kit expects to be told.
@@ -25,7 +38,7 @@ else
 fi
 
 for required in "$QT_ANDROID/lib/cmake/Qt6/qt.toolchain.cmake" "$QT_HOST_PATH_CMAKE_DIR/Qt6HostInfo" \
-                "$ANDROID_SDK_ROOT/platform-tools" "${ANDROID_NDK_ROOT:-/nonexistent}/ndk-build" "$JAVA_HOME/bin/java"; do
+                "$ANDROID_SDK_ROOT/platform-tools" "${ANDROID_NDK_ROOT:-/nonexistent}/ndk-build" "$JAVA_HOME/bin/javac"; do
     if [ ! -e "$required" ]; then
         echo "missing: $required" >&2
         echo "(README → \"The phone app\" lists what to install)" >&2

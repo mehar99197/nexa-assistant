@@ -16,7 +16,6 @@ void appendSample(QByteArray &out, float value) {
 
 AudioConverter::AudioConverter(const QAudioFormat &input, int outputRate)
     : input_(input),
-      outputRate_(outputRate),
       passthrough_(input.sampleFormat() == QAudioFormat::Int16 && input.channelCount() == 1
                    && input.sampleRate() == outputRate),
       step_(input.sampleRate() > 0 ? double(input.sampleRate()) / outputRate : 1.0) {}
