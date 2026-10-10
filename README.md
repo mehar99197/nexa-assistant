@@ -86,7 +86,10 @@ On first start Nexa asks for the OmniRoute API key. Then:
 ## The phone app
 
 `android/` is Nexa's own app for the phone: the same conversation as the browser page, native, with
-a hold-to-talk button, and it keeps the pairing. On the first screen type the address shown under
+a hold-to-talk button, and it keeps the pairing. With the phone connected through adb (Settings →
+Android), `nexa-assistant --pair-phone` — or Settings → Android → "Pair Nexa Phone over adb" — pairs
+the app without typing anything: Nexa starts a code, routes the phone's `localhost:7777` to itself and
+starts the app with the address and the code. Otherwise, on the first screen type the address shown under
 the QR code (or paste the whole link) and the six-digit code. Over the network the app shows the
 fingerprint of Nexa's certificate once — compare it with the one in Settings → Remote and trust it;
 after that only that certificate is accepted. Over USB with adb, `localhost:7777` works with no
@@ -142,6 +145,7 @@ plugin (about 600 MB). The APK is signed with the usual Android debug key unless
 ```bash
 nexa-assistant --ask "open calculator" --ask "volume 50"   # requests, in order, as if typed
 nexa-assistant --say "hello" --voice-file request.wav      # speak; feed a recording in as a spoken request
+nexa-assistant --pair-phone                                 # pair the Nexa Phone app on the adb-connected phone, no typing
 ```
 
 If Nexa is already running, these go to the running copy. `--new-instance` starts a separate one

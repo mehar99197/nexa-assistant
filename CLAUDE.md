@@ -142,7 +142,11 @@ models over its slow `auto/*` combos).
 - `android/` — Nexa Phone, the native client: a Qt Widgets app (`PhoneWindow` mediator, `PairPage`, `ChatPage`,
   `PhoneSettings`, `Recorder`, `SpeechPlayer`) over `remote/RemoteClient`, wearing `ui/`'s theme and core (the
   PC's state, except while the phone itself listens, waits for its words or reads a reply aloud; a tap on Talk
-  listens until the pause, a hold is push-to-talk). It is a standalone CMake project for
+  listens until the pause, a hold is push-to-talk). **Pairing it needs no typing**: `nexa-assistant --pair-phone`
+  (or Settings → Android → "Pair Nexa Phone over adb") has `app/PhoneLink` start a code, put the adb route up
+  (`adb reverse tcp:7777`) and start the app on the connected phone with the address and the code as launch-intent
+  extras (`nexa.address`, `nexa.code`, `nexa.name` — read by `android/LaunchIntent`), so it pairs by itself; the
+  desktop build takes the same through `--pair <address> --code <code>`. It is a standalone CMake project for
   the APK (`scripts/build-phone-apk.sh`; README → "The phone app") and is also built inside the Linux build as
   `nexa_phone_ui` + `./build/android/nexa-phone`, which is how `tests/PhoneWindowTest.cc` drives the real
   screens against the real server. Keep it free of anything Android could not build (no D-Bus, no `app/`).

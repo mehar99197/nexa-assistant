@@ -42,8 +42,7 @@ PairPage::PairPage(QWidget *parent) : QWidget(parent) {
     layout->addWidget(core, 0, Qt::AlignHCenter);
 
     auto *title = new QLabel(tr("Pair with Nexa"), this);
-    QFont titleFont = title->font();
-    titleFont.setPointSizeF(titleFont.pointSizeF() * 1.6);
+    QFont titleFont = NexaTheme::scaled(title->font(), 1.6);
     titleFont.setBold(true);
     title->setFont(titleFont);
     title->setAlignment(Qt::AlignHCenter);

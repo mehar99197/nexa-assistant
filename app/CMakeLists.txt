@@ -7,6 +7,7 @@ qt_add_executable(nexa_assistant
     GlobalShortcuts.h GlobalShortcuts.cc
     MainWindow.h MainWindow.cc
     MicButton.h MicButton.cc
+    PhoneLink.h PhoneLink.cc
     RemoteBridge.h RemoteBridge.cc
     SingleInstance.h SingleInstance.cc
     TrayIcon.h TrayIcon.cc

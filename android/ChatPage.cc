@@ -193,8 +193,7 @@ void ChatPage::layoutPresence() {
     presenceLayout_->setAlignment(core_, compact ? Qt::AlignVCenter : Qt::AlignHCenter);
     title_->setAlignment(compact ? Qt::AlignLeft : Qt::AlignHCenter);
     hint_->setAlignment(compact ? Qt::AlignLeft : Qt::AlignHCenter);
-    QFont titleFont = font();
-    titleFont.setPointSizeF(font().pointSizeF() * (compact ? 1.25 : 1.7));
+    QFont titleFont = NexaTheme::scaled(font(), compact ? 1.25 : 1.7);
     titleFont.setBold(true);
     title_->setFont(titleFont);
     presence_->setProperty("compact", compact);

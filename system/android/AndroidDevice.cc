@@ -150,6 +150,28 @@ void AndroidDevice::setReversePort(int pcPort) {
     if (!currentSerial_.isEmpty()) applyReverse(currentSerial_);
 }
 
+void AndroidDevice::reverse(Done done) {
+    withDevice([this, done](Result<AdbDevice> device) {
+        if (!device) {
+            done(device.error());
+            return;
+        }
+        adb_->runOn(device.value().serial,
+                    {u"reverse"_s, u"tcp:%1"_s.arg(kPhoneRemotePort), u"tcp:%1"_s.arg(reversePort_)}, kListTimeoutMs,
+                    [this, done](Result<AdbClient::Output> output) {
+            if (!output) {
+                done(output.error());
+                return;
+            }
+            if (output.value().exitCode != 0) {
+                done(Error{ErrorCode::Io, u"adb reverse failed: %1"_s.arg(output.value().errorText().simplified())});
+                return;
+            }
+            done(u"localhost:%1 on the phone leads to this PC's port %2."_s.arg(kPhoneRemotePort).arg(reversePort_));
+        });
+    });
+}
+
 void AndroidDevice::applyReverse(const QString &serial) {
     adb_->runOn(serial, {u"reverse"_s, u"tcp:%1"_s.arg(kPhoneRemotePort), u"tcp:%1"_s.arg(reversePort_)},
                 kListTimeoutMs, [](Result<AdbClient::Output> output) {

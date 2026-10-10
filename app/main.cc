@@ -1,6 +1,7 @@
 #include "app/AppController.h"
 #include "app/GlobalShortcuts.h"
 #include "app/MainWindow.h"
+#include "app/PhoneLink.h"
 #include "app/RemoteBridge.h"
 #include "app/SingleInstance.h"
 #include "app/TrayIcon.h"
@@ -179,6 +180,10 @@ int main(int argc, char *argv[]) {
     const QCommandLineOption settingsShotsOption(
         u"screenshot-settings"_s, u"Save a picture of every Settings tab into <dir>, then quit."_s, u"dir"_s);
     parser.addOption(settingsShotsOption);
+    const QCommandLineOption pairPhoneOption(
+        u"pair-phone"_s,
+        u"Pair Nexa Phone on the phone connected through adb: a pairing code is started here and handed to the app over adb."_s);
+    parser.addOption(pairPhoneOption);
     parser.process(app);
 
     // One Nexa per user: a second start hands what it was asked to do to the running one and
@@ -189,7 +194,8 @@ int main(int argc, char *argv[]) {
         for (const QString &file : parser.values(voiceFileOption)) voiceFiles.append(QFileInfo(file).absoluteFilePath());
         const QJsonObject handOver{{u"say"_s, QJsonArray::fromStringList(parser.values(sayOption))},
                                    {u"voiceFile"_s, voiceFiles},
-                                   {u"ask"_s, QJsonArray::fromStringList(parser.values(askOption))}};
+                                   {u"ask"_s, QJsonArray::fromStringList(parser.values(askOption))},
+                                   {u"pairPhone"_s, parser.isSet(pairPhoneOption)}};
         if (instance.handOver(handOver)) {
             qCInfo(lcApp) << "Nexa is already running: handed over to it";
             return 0;
@@ -347,6 +353,22 @@ int main(int argc, char *argv[]) {
                          applyAndroid(updated.android);
                          applyRemote(updated);
                      });
+
+    // Nexa Phone paired over adb (--pair-phone, Settings → Android): the web remote is switched on
+    // if it is not, the code is made here and carried to the app by adb, and the outcome is told.
+    PhoneLink phoneLink(&phone, &pairing, &remote);
+    QObject::connect(&phoneLink, &PhoneLink::progress, &controller,
+                     [&controller](const QString &message) { controller.report(message, false); });
+    const auto pairPhone = [&controller, &phoneLink] {
+        if (!controller.config().remote.enabled) {
+            Config enabled = controller.config();
+            enabled.remote.enabled = true;
+            controller.updateConfig(enabled);
+        }
+        phoneLink.pair([&controller](Result<QString> result) {
+            controller.report(result ? result.value() : result.error().message, !result.isOk());
+        });
+    };
     // Hotkeys that work from any window. The compositor grants them (GNOME asks once) and the
     // user can change them in Settings → Keyboard; without the portal, the in-window shortcuts
     // (Ctrl+M, Esc, Ctrl+Alt+Esc) still work.
@@ -359,6 +381,7 @@ int main(int argc, char *argv[]) {
                                    .discovery = &discovery,
                                    .remote = &remote,
                                    .pairing = &pairing,
+                                   .phoneLink = &phoneLink,
                                    .shortcuts = &shortcuts},
                       AuditLog::defaultPath());
     window.show();
@@ -434,6 +457,7 @@ int main(int argc, char *argv[]) {
         QTimer::singleShot(1500, &window, [&window, directory] { window.snapshotSettings(directory); });
         QTimer::singleShot(3500, &app, &QCoreApplication::quit);
     }
+    if (parser.isSet(pairPhoneOption)) QTimer::singleShot(2000, &controller, pairPhone);
 
     // A later start: take over its requests. Without any, it means "show me Nexa" and the window
     // comes forward; with some, it is a script or a shortcut at work, and the window only comes
@@ -445,13 +469,15 @@ int main(int argc, char *argv[]) {
             return values;
         };
         const QStringList say = strings(u"say"_s), voiceFiles = strings(u"voiceFile"_s), asks = strings(u"ask"_s);
-        if (say.isEmpty() && voiceFiles.isEmpty() && asks.isEmpty()) {
+        const bool pairThePhone = message.value(u"pairPhone"_s).toBool();
+        if (say.isEmpty() && voiceFiles.isEmpty() && asks.isEmpty() && !pairThePhone) {
             window.show();
             window.raise();
             window.activateWindow();
             return;
         }
         if (!window.isVisible()) window.show();
+        if (pairThePhone) pairPhone();
         queue(say, voiceFiles, asks, 250);
     });
     return app.exec();

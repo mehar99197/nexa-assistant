@@ -56,8 +56,7 @@ MessageDelegate::Shape MessageDelegate::shape(const QStyleOptionViewItem &option
     Shape shape;
     shape.font = option.font;
     if (isSmall(kind)) {
-        shape.font = QFontDatabase::systemFont(QFontDatabase::FixedFont);
-        shape.font.setPointSizeF(option.font.pointSizeF() * 0.85);
+        shape.font = NexaTheme::scaled(option.font, 0.85, QFontDatabase::systemFont(QFontDatabase::FixedFont).family());
     }
     const QFontMetrics metrics(shape.font);
     if (hasBubble(kind)) {

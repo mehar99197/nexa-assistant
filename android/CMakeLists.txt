@@ -21,6 +21,7 @@ endif()
 # The screens and what they need, as a library so the tests can drive them.
 add_library(nexa_phone_ui STATIC
     ChatPage.h ChatPage.cc
+    LaunchIntent.h LaunchIntent.cc
     MessageDelegate.h MessageDelegate.cc
     PairPage.h PairPage.cc
     PhoneSettings.h PhoneSettings.cc

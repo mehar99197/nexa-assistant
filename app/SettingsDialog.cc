@@ -7,6 +7,7 @@
 #include "remote/RemoteServer.h"
 #include "system/android/AdbDiscovery.h"
 #include "system/android/AndroidDevice.h"
+#include "app/PhoneLink.h"
 #include "system/helper/HelperClient.h"
 #include "voice/VoiceBackends.h"
 #include "voice/tts/ITextToSpeech.h"
@@ -578,6 +579,34 @@ QWidget *SettingsDialog::buildAndroidTab() {
     connectRow->addWidget(connectButton);
     connectRow->addWidget(disconnectButton);
 
+    // Nexa Phone, the app, paired without a finger on either side: the code travels over adb.
+    auto *linkButton = new QPushButton(tr("Pair Nexa Phone over adb"), page);
+    linkButton->setToolTip(tr("Starts a pairing code here and hands it to the Nexa Phone app on the connected "
+                              "phone, which pairs by itself (the web remote is switched on if it is off)."));
+    linkButton->setEnabled(status_.phoneLink != nullptr);
+    connect(linkButton, &QPushButton::clicked, this, [this, linkButton] {
+        if (!status_.phoneLink) return;
+        if (!config_.remote.enabled) {
+            showPhoneResult(tr("Switch the web remote on (Remote tab) and press OK first; then pair Nexa Phone."), false);
+            return;
+        }
+        linkButton->setEnabled(false);
+        const QPointer<SettingsDialog> self(this);
+        const QMetaObject::Connection watch =
+            connect(status_.phoneLink, &PhoneLink::progress, this, [self](const QString &message) {
+                if (self) self->showPhoneResult(message, true);
+            });
+        status_.phoneLink->pair([self, linkButton, watch](Result<QString> result) {
+            if (!self) return;
+            QObject::disconnect(watch);
+            linkButton->setEnabled(true);
+            self->showPhoneResult(result ? result.value() : result.error().message, result.isOk());
+        });
+    });
+    auto *linkRow = new QHBoxLayout;
+    linkRow->addWidget(linkButton);
+    linkRow->addStretch();
+
     auto *form = new QFormLayout;
     form->addRow(tr("Phone:"), stateRow);
     form->addRow(tr("Remembered:"), rememberRow);
@@ -585,6 +614,7 @@ QWidget *SettingsDialog::buildAndroidTab() {
     form->addRow(tr("Seen by adb:"), phoneList_);
     form->addRow(tr("Pair:"), pairRow);
     form->addRow(tr("Connect:"), connectRow);
+    form->addRow(tr("Nexa Phone:"), linkRow);
 
     auto *layout = new QVBoxLayout(page);
     layout->addLayout(form);

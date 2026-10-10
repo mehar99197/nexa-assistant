@@ -245,6 +245,30 @@ TEST_CASE("The phone app pairs, chats, cancels and forgets, through adb's plain 
     CHECK(QTest::qWaitFor([&f] { return f.server.clientCount() == 0; }, 5000));
 }
 
+TEST_CASE("Handed the address and the code by the PC, the phone app pairs by itself") {
+    if (!haveOpenssl()) SKIP("openssl is needed to make the certificate");
+    Fixture f;
+    REQUIRE(f.wired());
+    REQUIRE(f.start());
+    f.window.show();
+    f.window.start();
+    CHECK(f.pages->currentWidget() == f.pair);
+
+    // What app/PhoneLink puts in the launch intent: the adb address, the code, a name.
+    f.pairing.startPairing();
+    f.window.pairWith(u"localhost:%1"_s.arg(f.port + 1), f.pairing.code(), u"Nexa app on Test phone"_s);
+    REQUIRE(QTest::qWaitFor([&f] { return f.onChat(); }, 10'000));
+    CHECK(f.settings.isPaired());
+    REQUIRE(f.pairing.devices().size() == 1);
+    CHECK(f.pairing.devices().first().name == u"Nexa app on Test phone"_s);
+    CHECK(f.pairing.code().isEmpty());       // spent
+
+    // A wrong code leaves it on the pairing page, saying so.
+    f.window.pairWith(u"localhost:%1"_s.arg(f.port + 1), u"000000"_s, {});
+    REQUIRE(QTest::qWaitFor([&f] { return !f.pairError().isEmpty(); }, 10'000));
+    CHECK(f.pages->currentWidget() == f.pair);
+}
+
 TEST_CASE("Over the network the phone app shows Nexa's fingerprint and trusts it once") {
     if (!haveOpenssl()) SKIP("openssl is needed to make the certificate");
     const QString lan = RemoteServer::lanAddress();

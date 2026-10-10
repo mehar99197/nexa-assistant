@@ -82,6 +82,8 @@ public:
     // Where the phone's http://localhost:7777 should lead on the PC: the web remote's loopback port.
     // Applied to the phone in use now, and to every phone that connects later.
     void setReversePort(int pcPort);
+    // Sets that route up on the phone in use right now and says whether it took.
+    void reverse(Done done);
 
 signals:
     // A different phone — or none — is now the one in use.

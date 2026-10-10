@@ -54,8 +54,21 @@ cmake -S android -B "$BUILD_DIR" -G Ninja -DCMAKE_BUILD_TYPE=Release \
     -DANDROID_ABI=arm64-v8a -DANDROID_PLATFORM=android-28
 cmake --build "$BUILD_DIR" --target nexa-phone_make_apk
 
-built="$(find "$BUILD_DIR" -name '*.apk' -newer "$BUILD_DIR/CMakeCache.txt" | head -n 1)"
-[ -n "$built" ] || { echo "no APK came out of the build" >&2; exit 1; }
+# What gets signed is androiddeployqt's own output, by name. Never "the newest APK in the tree":
+# this script's previous nexa-phone.apk lives there too, and on 2026-10-11 a day of "new" APKs
+# were that first one signed again — the phone kept running the old app.
+built="$BUILD_DIR/android-build/nexa-phone.apk"
+[ -f "$built" ] || built="$(find "$BUILD_DIR/android-build/build/outputs" -name '*.apk' 2>/dev/null | head -n 1)"
+[ -n "$built" ] && [ -f "$built" ] || { echo "no APK came out of the build" >&2; exit 1; }
+# The library inside it must be what gradle just stripped from this build, byte for byte.
+stripped="$(find "$BUILD_DIR/android-build/build/intermediates/stripped_native_libs" -name 'libnexa-phone_arm64-v8a.so' -print -quit 2>/dev/null || true)"
+if [ -n "$stripped" ]; then
+    packaged_sum="$(unzip -p "$built" lib/arm64-v8a/libnexa-phone_arm64-v8a.so | md5sum | cut -d' ' -f1)"
+    if [ "$packaged_sum" != "$(md5sum "$stripped" | cut -d' ' -f1)" ]; then
+        echo "the APK's libnexa-phone is not the one just built" >&2
+        exit 1
+    fi
+fi
 
 # A release build comes out unsigned, and a phone installs nothing unsigned. Without a key of
 # your own (KEYSTORE, KEYSTORE_ALIAS, KEYSTORE_PASS), it is signed with the usual Android debug

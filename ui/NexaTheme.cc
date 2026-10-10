@@ -7,6 +7,8 @@
 #include <QStyleFactory>
 #include <QStyleHints>
 
+#include <algorithm>
+#include <cmath>
 #include <utility>
 
 using namespace Qt::StringLiterals;
@@ -91,6 +93,17 @@ QString NexaTheme::schemeKey(ThemeScheme scheme) {
 
 QString NexaTheme::monoFamily() {
     return QFontDatabase::systemFont(QFontDatabase::FixedFont).family();
+}
+
+QFont NexaTheme::scaled(const QFont &base, double factor, const QString &family) {
+    QFont font = base;
+    if (!family.isEmpty()) font.setFamily(family);
+    if (base.pointSizeF() > 0) {
+        font.setPointSizeF(base.pointSizeF() * factor);
+    } else if (base.pixelSize() > 0) {
+        font.setPixelSize(std::max(6, int(std::lround(base.pixelSize() * factor))));
+    }
+    return font;
 }
 
 QString NexaTheme::styleSheet(ThemeScheme scheme) {

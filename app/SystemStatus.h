@@ -12,6 +12,7 @@ class AndroidDevice;
 class GlobalShortcuts;
 class HelperClient;
 class PairingManager;
+class PhoneLink;
 class RemoteServer;
 
 // What the GUI needs to show about the parts of Nexa that live outside it: the root helper,
@@ -26,6 +27,7 @@ struct SystemStatus {
     AdbDiscovery *discovery{nullptr};
     RemoteServer *remote{nullptr};
     PairingManager *pairing{nullptr};
+    PhoneLink *phoneLink{nullptr};          // pairs Nexa Phone over adb (Settings → Android)
     GlobalShortcuts *shortcuts{nullptr};
 };
 

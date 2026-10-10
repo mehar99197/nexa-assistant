@@ -5,6 +5,7 @@
 #include "PhoneSettings.h"
 #include "Recorder.h"
 #include "SpeechPlayer.h"
+#include "core/Logging.h"
 
 #include <QApplication>
 #include <QMessageBox>
@@ -94,7 +95,15 @@ void PhoneWindow::start() {
     client_->connectToNexa();
 }
 
+void PhoneWindow::pairWith(const QString &address, const QString &code, const QString &name) {
+    showPairPage();
+    pair_->setAddress(address);
+    if (!name.isEmpty()) pair_->setDeviceName(name);
+    onPairRequested(address, code, pair_->deviceName());
+}
+
 void PhoneWindow::showPairPage(const QString &reason) {
+    if (!reason.isEmpty()) qWarning().noquote() << "nexa pairing:" << reason;
     pair_->setBusy(false);
     pair_->setError(reason);
     pages_->setCurrentWidget(pair_);
@@ -148,11 +157,13 @@ void PhoneWindow::pairAfterTrust(const RemoteEndpoint &endpoint, const QString &
 }
 
 void PhoneWindow::pairNow(const RemoteEndpoint &endpoint, const QString &code, const QString &name) {
+    qWarning().noquote() << "nexa pairing: asking" << endpoint.url(u"/api/pair"_s);
     client_->pair(code, name, [this, endpoint](Result<QString> token) {
         if (!token) {
             showPairPage(token.error().message);
             return;
         }
+        qWarning().noquote() << "nexa pairing: paired with" << endpoint.host;
         settings_->save(endpoint, token.value(), client_->pinnedFingerprint());
         pair_->setBusy(false);
         pair_->setError({});

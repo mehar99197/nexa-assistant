@@ -80,6 +80,8 @@ public:
     CoreMode coreMode() const { return coreMode_; }
     CoreNodes litNodes() const { return litNodes_; }
     QString offlineReason() const { return offlineReason_; }    // why the core shows Offline
+    // A line for the status bar (and the phones, when it is an error) from outside the controller.
+    void report(const QString &message, bool isError) { emit statusChanged(message, isError); }
 
     void setConfirmer(ToolExecutor::Confirmer confirmer);
     VoicePipeline *voice() const { return services_.voice; }

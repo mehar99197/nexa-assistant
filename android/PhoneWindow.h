@@ -36,6 +36,8 @@ public:
     void setScheme(ThemeScheme scheme);
     // Paired: connect. Otherwise the pairing page.
     void start();
+    // The PC handed over where it is and the code (over adb): pair as if they had been typed.
+    void pairWith(const QString &address, const QString &code, const QString &name);
 
 private:
     void showPairPage(const QString &reason = {});
