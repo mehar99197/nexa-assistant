@@ -8,11 +8,14 @@ add_executable(nexa_tests
     FakeHttpServer.h
     QtStringMakers.h
     AgentTest.cc
+    AnthropicProviderTest.cc
+    ChatTestUtil.h
     CombinedInputBackendTest.cc
     ConfigStoreTest.cc
     ConversationTest.cc
     DesktopEntryTest.cc
     FileAccessTest.cc
+    GeminiProviderTest.cc
     IntentRouterTest.cc
     KeyMapTest.cc
     LocalCommandRunnerTest.cc
@@ -33,6 +36,7 @@ add_executable(nexa_tests
     SessionGrantsTest.cc ../helper/SessionGrants.cc
     SseParserTest.cc
     SystemPureTest.cc
+    TextToolParserTest.cc
     ToolCallAccumulatorTest.cc
     TtsFileRendererTest.cc
     VoicePipelineTest.cc

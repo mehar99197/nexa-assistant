@@ -52,6 +52,7 @@ QJsonObject ProviderConfig::toJson() const {
         {u"sttModel"_s, sttModel},
         {u"ttsModel"_s, ttsModel},
         {u"ttsVoice"_s, ttsVoice},
+        {u"textTools"_s, textTools},
     };
 }
 
@@ -67,6 +68,7 @@ ProviderConfig ProviderConfig::fromJson(const QJsonObject &json) {
     config.sttModel = json.value(u"sttModel"_s).toString();
     config.ttsModel = json.value(u"ttsModel"_s).toString();
     config.ttsVoice = json.value(u"ttsVoice"_s).toString();
+    config.textTools = json.value(u"textTools"_s).toBool(false);
     return config;
 }
 

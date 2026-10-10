@@ -8,11 +8,21 @@ qt_add_executable(nexa_assistant
     MainWindow.h MainWindow.cc
     MicButton.h MicButton.cc
     RemoteBridge.h RemoteBridge.cc
+    SingleInstance.h SingleInstance.cc
+    TrayIcon.h TrayIcon.cc
     SettingsDialog.h SettingsDialog.cc
     UnixSignals.h UnixSignals.cc
 )
 
 set_target_properties(nexa_assistant PROPERTIES OUTPUT_NAME nexa-assistant)
+
+# The window and tray icon, built in so it shows even before the desktop entry is installed.
+set_source_files_properties("${PROJECT_SOURCE_DIR}/packaging/org.nexa.Assistant.svg"
+    PROPERTIES QT_RESOURCE_ALIAS nexa.svg)
+qt_add_resources(nexa_assistant "nexa_icons"
+    PREFIX "/nexa"
+    FILES "${PROJECT_SOURCE_DIR}/packaging/org.nexa.Assistant.svg"
+)
 
 target_link_libraries(nexa_assistant PRIVATE
     nexa_core

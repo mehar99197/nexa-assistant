@@ -23,6 +23,7 @@ struct ProviderConfig {
     QString sttModel;           // speech recognition (empty: no cloud recognition)
     QString ttsModel;           // speech output (empty: no cloud voice)
     QString ttsVoice;           // voice name; a language code for gtts/*
+    bool textTools{false};      // the model cannot call tools: describe them in the prompt instead
 
     QJsonObject toJson() const;
     static ProviderConfig fromJson(const QJsonObject &json);

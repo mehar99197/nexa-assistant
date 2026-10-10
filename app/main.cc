@@ -2,6 +2,8 @@
 #include "app/GlobalShortcuts.h"
 #include "app/MainWindow.h"
 #include "app/RemoteBridge.h"
+#include "app/SingleInstance.h"
+#include "app/TrayIcon.h"
 #include "app/SystemStatus.h"
 #include "app/UnixSignals.h"
 #include "core/agent/Agent.h"
@@ -49,6 +51,9 @@
 #include <QFileInfo>
 #include <QMessageBox>
 #include <QStandardPaths>
+#include <QIcon>
+#include <QJsonArray>
+#include <QJsonObject>
 #include <QTimer>
 
 #include <functional>
@@ -144,6 +149,8 @@ int main(int argc, char *argv[]) {
     // Never "nexa": that desktop id (and /usr/bin/nexa) belongs to Nexa Download Manager. The
     // reverse-DNS form is also what the portal needs to grant global hotkeys.
     QApplication::setDesktopFileName(u"org.nexa.Assistant"_s);
+    // The installed theme icon when there is one, else the copy built into Nexa.
+    QApplication::setWindowIcon(QIcon::fromTheme(u"org.nexa.Assistant"_s, QIcon(u":/nexa/nexa.svg"_s)));
 
     QCommandLineParser parser;
     parser.setApplicationDescription(u"Nexa — AI assistant for the Linux desktop"_s);
@@ -158,7 +165,26 @@ int main(int argc, char *argv[]) {
     parser.addOption(voiceFileOption);
     const QCommandLineOption sayOption(u"say"_s, u"Say <text> aloud on start-up (tests the voice)."_s, u"text"_s);
     parser.addOption(sayOption);
+    const QCommandLineOption newInstanceOption(
+        u"new-instance"_s, u"Start even when Nexa is already running (for testing); this copy takes no requests from later ones."_s);
+    parser.addOption(newInstanceOption);
     parser.process(app);
+
+    // One Nexa per user: a second start hands what it was asked to do to the running one and
+    // leaves, before building anything heavy.
+    SingleInstance instance(u"nexa-assistant"_s);
+    if (!parser.isSet(newInstanceOption)) {
+        QJsonArray voiceFiles;
+        for (const QString &file : parser.values(voiceFileOption)) voiceFiles.append(QFileInfo(file).absoluteFilePath());
+        const QJsonObject handOver{{u"say"_s, QJsonArray::fromStringList(parser.values(sayOption))},
+                                   {u"voiceFile"_s, voiceFiles},
+                                   {u"ask"_s, QJsonArray::fromStringList(parser.values(askOption))}};
+        if (instance.handOver(handOver)) {
+            qCInfo(lcApp) << "Nexa is already running: handed over to it";
+            return 0;
+        }
+        instance.listen();
+    }
 
     UnixSignals unixSignals;
     QObject::connect(&unixSignals, &UnixSignals::received, &app, [](int signal) {
@@ -303,8 +329,19 @@ int main(int argc, char *argv[]) {
                                    .phone = &phone,
                                    .discovery = &discovery,
                                    .remote = &remote,
-                                   .pairing = &pairing});
+                                   .pairing = &pairing,
+                                   .shortcuts = &shortcuts});
     window.show();
+    // Nexa in the top bar where the desktop shows tray icons; then closing the window only hides
+    // it, and the hotkeys, wake word and web remote keep working.
+    TrayIcon tray(&window, &controller);
+    if (tray.isVisible()) {
+        QApplication::setQuitOnLastWindowClosed(false);
+        window.setCloseToTray([&tray] {
+            tray.noteHidden();
+            return true;
+        });
+    }
     shortcuts.bind({
         {u"talk"_s, QObject::tr("Talk to Nexa (hold to speak)"), u"CTRL+ALT+space"_s},
         {u"panic"_s, QObject::tr("Stop everything Nexa is doing"), u"CTRL+ALT+Escape"_s},
@@ -313,22 +350,9 @@ int main(int argc, char *argv[]) {
     if (!startupWarning.isEmpty()) QMessageBox::warning(&window, QObject::tr("Nexa settings"), startupWarning);
     QTimer::singleShot(0, &controller, &AppController::start);
 
-    // Scripted start-up (--say, --voice-file, --ask): one step at a time, each once Nexa is idle
-    // again — reply finished and spoken.
+    // Scripted requests (--say, --voice-file, --ask, from this start or handed over by a later
+    // one): one step at a time, each once Nexa is idle again — reply finished and spoken.
     QList<std::function<void()>> steps;
-    for (const QString &text : parser.values(sayOption)) steps.append([&voice, text] { voice.speak(text); });
-    for (const QString &path : parser.values(voiceFileOption)) {
-        steps.append([&voice, &window, path] {
-            const Result<QByteArray> recording = loadRecording(path);
-            if (recording) {
-                voice.submitRecording(recording.value());
-            } else {
-                QMessageBox::warning(&window, QObject::tr("Nexa"),
-                                     QObject::tr("Cannot read %1: %2").arg(path, recording.error().message));
-            }
-        });
-    }
-    for (const QString &text : parser.values(askOption)) steps.append([&controller, text] { controller.submit(text); });
     std::function<void()> runNext = [&controller, &voice, &steps] {
         if (!steps.isEmpty() && !controller.isBusy() && voice.state() == VoiceState::Idle) steps.takeFirst()();
     };
@@ -339,6 +363,35 @@ int main(int argc, char *argv[]) {
     QObject::connect(&voice, &VoicePipeline::stateChanged, &controller, [later](VoiceState state) {
         if (state == VoiceState::Idle) later();
     });
-    if (!steps.isEmpty()) QTimer::singleShot(800, runNext);
+    const auto queue = [&](const QStringList &say, const QStringList &voiceFiles, const QStringList &ask, int delayMs) {
+        for (const QString &text : say) steps.append([&voice, text] { voice.speak(text); });
+        for (const QString &file : voiceFiles) {
+            steps.append([&voice, &window, file] {
+                const Result<QByteArray> recording = loadRecording(file);
+                if (recording) {
+                    voice.submitRecording(recording.value());
+                } else {
+                    QMessageBox::warning(&window, QObject::tr("Nexa"),
+                                         QObject::tr("Cannot read %1: %2").arg(file, recording.error().message));
+                }
+            });
+        }
+        for (const QString &text : ask) steps.append([&controller, text] { controller.submit(text); });
+        if (!steps.isEmpty()) QTimer::singleShot(delayMs, runNext);
+    };
+    queue(parser.values(sayOption), parser.values(voiceFileOption), parser.values(askOption), 800);
+
+    // A later start: bring the window forward and take over its requests.
+    QObject::connect(&instance, &SingleInstance::messageReceived, &window, [&](const QJsonObject &message) {
+        window.show();
+        window.raise();
+        window.activateWindow();
+        const auto strings = [&message](const QString &key) {
+            QStringList values;
+            for (const QJsonValue &value : message.value(key).toArray()) values.append(value.toString());
+            return values;
+        };
+        queue(strings(u"say"_s), strings(u"voiceFile"_s), strings(u"ask"_s), 250);
+    });
     return app.exec();
 }

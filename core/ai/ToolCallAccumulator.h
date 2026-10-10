@@ -15,6 +15,7 @@ struct ToolCallFragment {
     QString id;
     QString name;
     QString argumentsDelta;
+    QString signature;          // see ToolCall::signature
 };
 
 // Merges streamed tool-call fragments into complete calls (pure). Serves every provider: OpenAI

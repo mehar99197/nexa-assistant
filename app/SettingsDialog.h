@@ -95,6 +95,7 @@ private:
     QLineEdit *sttModelEdit_{nullptr};
     QLineEdit *ttsModelEdit_{nullptr};
     QLineEdit *ttsVoiceEdit_{nullptr};
+    QCheckBox *textToolsCheck_{nullptr};
     QPushButton *testButton_{nullptr};
     QLabel *testResult_{nullptr};
     QComboBox *sttCombo_{nullptr};

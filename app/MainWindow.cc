@@ -17,6 +17,7 @@
 #include <QCompleter>
 #include <QHBoxLayout>
 #include <QInputDialog>
+#include <QCloseEvent>
 #include <QKeyEvent>
 #include <QLabel>
 #include <QLineEdit>
@@ -276,6 +277,15 @@ void MainWindow::connectVoice() {
         if (id == kTalkShortcut) voice->releaseHold();
     });
     connect(shortcuts_, &GlobalShortcuts::registered, this, &MainWindow::showHotkeys);
+}
+
+void MainWindow::closeEvent(QCloseEvent *event) {
+    if (closeToTray_ && closeToTray_()) {
+        event->ignore();
+        hide();
+        return;
+    }
+    QMainWindow::closeEvent(event);
 }
 
 void MainWindow::showHotkeys() {

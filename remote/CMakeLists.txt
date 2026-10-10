@@ -12,7 +12,10 @@ add_library(nexa_remote STATIC
     TlsIdentity.h TlsIdentity.cc
 )
 
-# The page, built in: the server hands out these files and nothing from the disk.
+# The page, built in: the server hands out these files and nothing from the disk. The icon is the
+# one Nexa itself uses.
+set_source_files_properties("${PROJECT_SOURCE_DIR}/packaging/org.nexa.Assistant.svg"
+    PROPERTIES QT_RESOURCE_ALIAS icon.svg)
 qt_add_resources(nexa_remote "nexa_web"
     PREFIX "/nexa/web"
     BASE web
@@ -23,7 +26,7 @@ qt_add_resources(nexa_remote "nexa_web"
         web/sw.js
         web/style.css
         web/manifest.json
-        web/icon.svg
+        "${PROJECT_SOURCE_DIR}/packaging/org.nexa.Assistant.svg"
 )
 
 target_link_libraries(nexa_remote

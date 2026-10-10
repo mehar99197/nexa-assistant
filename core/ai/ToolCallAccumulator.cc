@@ -20,6 +20,7 @@ int ToolCallAccumulator::add(const ToolCallFragment &fragment) {
     ToolCall &call = existing != calls_.end() ? existing->second : calls_[slot];
     if (call.id.isEmpty()) call.id = fragment.id;
     if (call.name.isEmpty()) call.name = fragment.name;
+    if (!fragment.signature.isEmpty()) call.signature = fragment.signature;
     call.argumentsJson += fragment.argumentsDelta;
     return slot;
 }

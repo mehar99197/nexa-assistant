@@ -3,7 +3,7 @@
 #include "core/Result.h"
 #include "core/ai/ChatStream.h"
 #include "core/ai/IAiProvider.h"
-#include "core/ai/ToolCallAccumulator.h"
+#include "core/ai/SseChatStream.h"
 #include "core/config/Config.h"
 
 #include <QJsonObject>
@@ -20,14 +20,9 @@ class HttpClient;
 class OpenAiProvider : public IAiProvider {
     Q_OBJECT
 public:
-    // What one stream chunk (or a whole non-streamed completion) contributes to the reply.
-    struct Delta {
-        QString text;
-        QList<ToolCallFragment> toolFragments;
-        std::optional<FinishReason> finishReason;
-        bool done{false};                           // the "[DONE]" sentinel
-        std::optional<Error> error;
-    };
+    // What one stream chunk (or a whole non-streamed completion) contributes to the reply; "done"
+    // is the "[DONE]" sentinel.
+    using Delta = StreamDelta;
 
     OpenAiProvider(ProviderConfig config, HttpClient *http, QObject *parent = nullptr);
 

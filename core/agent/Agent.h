@@ -64,6 +64,9 @@ private:
     int maxSteps_{8};
     quint64 generation_{0};
     bool running_{false};
+    // The provider cannot call tools natively: they are described in the prompt and read back out
+    // of the reply, which is therefore shown once complete rather than as it streams.
+    bool textTools_{false};
 };
 
 } // namespace nexa

@@ -19,7 +19,9 @@ Debug build (`-Werror`): `cmake --preset debug && cmake --build build-debug`. Sa
 Verbose logs: `QT_LOGGING_RULES="nexa.*.debug=true" ./build/app/nexa-assistant` (categories `nexa.app`,
 `nexa.config`, `nexa.net`, `nexa.ai`, `nexa.voice`).
 Scripted run: `./build/app/nexa-assistant --ask "open calculator" --ask "volume 50"` — submits each request in
-turn, exactly as if typed. `--say "<text>"` speaks, `--voice-file <wav>` feeds a recording in as a spoken
+turn, exactly as if typed. **If Nexa is already running, the requests go to that copy** (single instance, through a
+socket in `$XDG_RUNTIME_DIR`); add `--new-instance` for a separate test copy — it still reads the real config, so
+run it with `QT_QPA_PLATFORM=offscreen` to keep it off the user's screen. `--say "<text>"` speaks, `--voice-file <wav>` feeds a recording in as a spoken
 request; the three run in that order, one at a time.
 The binary is **nexa-assistant** and the desktop id **org.nexa.Assistant** — `nexa`, `/usr/bin/nexa` and
 `nexa.desktop` belong to Nexa Download Manager, a different product. `scripts/install-desktop-entry.sh`
@@ -52,15 +54,18 @@ models over its slow `auto/*` combos).
 ## Layout
 
 - `core/` — no Qt Widgets, no syscalls: `Result.h`, `Logging`, `config/`, `net/` (HttpClient, SseParser),
-  `ai/` (providers, streams, registry), `agent/` (Agent loop, Conversation), `tools/` (ToolSpec, ITool,
-  FunctionTool, ToolRegistry, ToolExecutor = policy → confirm → invoke → audit), `intent/` (IntentRouter +
-  PC fast-path handlers), `policy/` (PolicyEngine, PanicController), `audit/` (AuditLog).
+  `ai/` (OpenAiProvider, AnthropicProvider, GeminiProvider — each maps ChatRequest to its own wire format and
+  decodes its own events; SseChatStream is the stream all three share; ToolCallAccumulator; the registry),
+  `agent/` (Agent loop, Conversation), `tools/` (ToolSpec, ITool, FunctionTool, ToolRegistry, ToolExecutor =
+  policy → confirm → invoke → audit, TextToolParser for models without native tools), `intent/` (IntentRouter +
+  PC and phone fast-path handlers), `policy/` (PolicyEngine, PanicController), `audit/` (AuditLog).
 - `system/` — touches the PC: `commands/` (LocalCommandRunner, process groups), `apps/` (DesktopEntry,
   DesktopEntryIndex = IAppCatalog, AppLauncher), `audio/` (wpctl), `media/` (MPRIS), `screen/` (portal
   screenshots), `files/` (FileAccess, confined to home and /tmp), `info/` (SystemInfo); `SystemTools.cc`
   defines every PC tool the model sees.
-- `app/` — Qt Widgets GUI (MainWindow, ChatView, ActionLogDock, SettingsDialog) and the AppController
-  mediator; `main.cc` is the composition root.
+- `app/` — Qt Widgets GUI (MainWindow, ChatView, ActionLogDock, SettingsDialog, TrayIcon) and the AppController
+  mediator; SingleInstance (one copy per user), RemoteBridge (the web remote's view of the app); `main.cc` is
+  the composition root.
 - `tests/` — Catch2 v3 (custom `TestMain.cc` with a QCoreApplication), one `<Class>Test.cc` per tested
   class; `FakeHttpServer.h` for provider tests; `AgentTest.cc` uses a scripted fake model.
 - `voice/` — microphone to speech and back: `capture/` (AudioCapture, AudioConverter → 16 kHz mono Int16,

@@ -29,8 +29,13 @@ public:
     MainWindow(AppController *controller, ProviderRegistry *registry, ToolExecutor *executor, HttpClient *http,
                GlobalShortcuts *shortcuts, SystemStatus status, QWidget *parent = nullptr);
 
+    void openSettings();
+    // Asked when the window is closed: true means "hidden to the tray, keep running".
+    void setCloseToTray(std::function<bool()> hide) { closeToTray_ = std::move(hide); }
+
 protected:
     bool eventFilter(QObject *watched, QEvent *event) override;
+    void closeEvent(QCloseEvent *event) override;
 
 private:
     void buildUi();
@@ -39,7 +44,6 @@ private:
     void showVoiceState(VoiceState state);
     void showHotkeys();
     void sendOrStop();
-    void openSettings();
     void promptForApiKey(const QString &providerName);
     void confirm(const QString &question, std::function<void(bool)> answer);
     void showModels(const QStringList &models, const QString &current);
@@ -62,6 +66,7 @@ private:
     QLabel *statusLabel_{nullptr};
     QLabel *voiceLabel_{nullptr};
     bool promptingForKey_{false};
+    std::function<bool()> closeToTray_;
 };
 
 } // namespace nexa

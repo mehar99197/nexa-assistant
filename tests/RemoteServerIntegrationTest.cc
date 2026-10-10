@@ -189,6 +189,10 @@ TEST_CASE("The page is served over HTTPS and over loopback, with a strict policy
     CHECK(policy.contains("default-src 'self'"));
     CHECK(f.get(f.lan(u"/"_s)).first == 200);
     CHECK(f.get(f.local(u"/app.js"_s)).first == 200);
+    // Nexa's own icon, built in under the page's name for it.
+    const auto [iconStatus, icon] = f.get(f.local(u"/icon.svg"_s));
+    CHECK(iconStatus == 200);
+    CHECK(icon.contains("<svg"));
 
     CHECK(f.get(f.local(u"/config.json"_s)).first == 404);
     CHECK(f.get(f.local(u"/..%2F..%2Fetc%2Fpasswd"_s)).first == 404);

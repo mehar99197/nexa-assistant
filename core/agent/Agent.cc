@@ -3,6 +3,7 @@
 #include "core/Logging.h"
 #include "core/agent/Conversation.h"
 #include "core/ai/IAiProvider.h"
+#include "core/tools/TextToolParser.h"
 #include "core/tools/ToolExecutor.h"
 #include "core/tools/ToolRegistry.h"
 
@@ -53,9 +54,24 @@ void Agent::requestStep() {
         return;
     }
     ++step_;
-    stream_ = provider_->chat(conversation_->buildRequest(model_, registry_->specs()));
+    const QList<ToolSpec> tools = registry_->specs();
+    textTools_ = !provider_->capabilities().nativeTools;
+    ChatRequest request;
+    if (textTools_) {
+        request = conversation_->buildRequest(model_);
+        request.messages = TextToolParser::asText(request.messages);
+        const QString convention = TextToolParser::instructions(tools);
+        if (!request.messages.isEmpty() && request.messages.first().role == Role::System) {
+            request.messages.first().text += u"\n\n"_s + convention;
+        } else {
+            request.messages.prepend(ChatMessage{.role = Role::System, .text = convention});
+        }
+    } else {
+        request = conversation_->buildRequest(model_, tools);
+    }
+    stream_ = provider_->chat(request);
     ChatStream *stream = stream_.get();
-    connect(stream, &ChatStream::textDelta, this, &Agent::textDelta);
+    if (!textTools_) connect(stream, &ChatStream::textDelta, this, &Agent::textDelta);
     connect(stream, &ChatStream::finished, this, [this, stream](FinishReason reason) { onStepFinished(stream, reason); });
     connect(stream, &ChatStream::failed, this, [this, stream](const Error &error) {
         if (stream != stream_.get()) return;
@@ -66,9 +82,23 @@ void Agent::requestStep() {
 
 void Agent::onStepFinished(ChatStream *stream, FinishReason reason) {
     if (stream != stream_.get()) return;
-    const QString text = stream->text();
-    const QList<ToolCall> calls = stream->toolCalls();
+    QString text = stream->text();
+    QList<ToolCall> calls = stream->toolCalls();
     stream_.reset();
+
+    // Calls written as text: the convention for providers without tools, and a habit of some
+    // models even with them.
+    if (calls.isEmpty()) {
+        QStringList known;
+        for (const ToolSpec &spec : registry_->specs()) known.append(spec.name);
+        TextToolParser::Parsed parsed = TextToolParser::parse(text, known);
+        if (!parsed.calls.isEmpty()) {
+            for (qsizetype i = 0; i < parsed.calls.size(); ++i) parsed.calls[i].id = u"text_%1_%2"_s.arg(step_).arg(i + 1);
+            text = parsed.text;
+            calls = parsed.calls;
+        }
+    }
+    if (textTools_ && !text.isEmpty()) emit textDelta(text);
 
     if (calls.isEmpty()) {
         if (!text.isEmpty()) conversation_->addAssistant(text);

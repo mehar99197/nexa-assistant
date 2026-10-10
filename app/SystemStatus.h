@@ -9,6 +9,7 @@ namespace nexa {
 
 class AdbDiscovery;
 class AndroidDevice;
+class GlobalShortcuts;
 class HelperClient;
 class PairingManager;
 class RemoteServer;
@@ -25,6 +26,7 @@ struct SystemStatus {
     AdbDiscovery *discovery{nullptr};
     RemoteServer *remote{nullptr};
     PairingManager *pairing{nullptr};
+    GlobalShortcuts *shortcuts{nullptr};
 };
 
 } // namespace nexa

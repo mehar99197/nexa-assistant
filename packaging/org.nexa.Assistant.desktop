@@ -7,8 +7,8 @@ Comment=Ask an AI assistant to run commands, open apps and look at your screen
 # The id is org.nexa.Assistant, never nexa: that one belongs to Nexa Download Manager. GNOME's
 # global-shortcuts provider also insists on a reverse-DNS id (it must contain a dot).
 Exec=nexa-assistant
-# Nexa has no icon of its own yet; system-run exists in every icon theme.
-Icon=system-run
+# packaging/org.nexa.Assistant.svg, installed into the user's icon theme by install-desktop-entry.sh.
+Icon=org.nexa.Assistant
 Terminal=false
 Categories=Utility;
 Keywords=AI;assistant;chat;voice;automation;

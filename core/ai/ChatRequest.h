@@ -19,6 +19,11 @@ struct ToolCall {
     QString id;
     QString name;
     QString argumentsJson;                              // JSON object text as produced by the model
+    // Opaque to Nexa, owed back to the provider with the call: Gemini's thoughtSignature, without
+    // which its thinking models refuse the next turn of a tool conversation.
+    QString signature;
+
+    bool operator==(const ToolCall &) const = default;
 };
 
 struct ChatMessage {

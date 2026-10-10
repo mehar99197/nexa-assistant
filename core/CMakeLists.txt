@@ -6,12 +6,15 @@ add_library(nexa_core STATIC
     net/HttpClient.h net/HttpClient.cc
     net/MultipartForm.h net/MultipartForm.cc
     net/SseParser.h net/SseParser.cc
+    ai/AnthropicProvider.h ai/AnthropicProvider.cc
     ai/ChatRequest.h ai/ChatRequest.cc
     ai/ChatStream.h ai/ChatStream.cc
+    ai/GeminiProvider.h ai/GeminiProvider.cc
     ai/IAiProvider.h
     ai/ToolCallAccumulator.h ai/ToolCallAccumulator.cc
     ai/OpenAiProvider.h ai/OpenAiProvider.cc
     ai/ProviderRegistry.h ai/ProviderRegistry.cc
+    ai/SseChatStream.h ai/SseChatStream.cc
     agent/Agent.h agent/Agent.cc
     agent/Conversation.h agent/Conversation.cc
     audit/AuditLog.h audit/AuditLog.cc
@@ -23,6 +26,7 @@ add_library(nexa_core STATIC
     policy/PolicyEngine.h policy/PolicyEngine.cc
     tools/FunctionTool.h tools/FunctionTool.cc
     tools/ITool.h
+    tools/TextToolParser.h tools/TextToolParser.cc
     tools/ToolArguments.h tools/ToolArguments.cc
     tools/ToolExecutor.h tools/ToolExecutor.cc
     tools/ToolRegistry.h tools/ToolRegistry.cc

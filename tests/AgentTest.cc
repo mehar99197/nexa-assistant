@@ -55,7 +55,7 @@ public:
 
     QString id() const override { return u"scripted"_s; }
     QString displayName() const override { return u"Scripted"_s; }
-    Capabilities capabilities() const override { return {}; }
+    Capabilities capabilities() const override { return {.nativeTools = nativeTools}; }
     void listModels(std::function<void(Result<QStringList>)> done) override { done(QStringList{u"m"_s}); }
 
     std::shared_ptr<ChatStream> chat(const ChatRequest &request) override {
@@ -73,6 +73,7 @@ public:
 
     QList<Reply> script;
     std::optional<Reply> repeat;
+    bool nativeTools{true};
     QList<ChatRequest> requests;
     ScriptedStream *lastStream{nullptr};
 };
@@ -262,4 +263,61 @@ TEST_CASE("ToolExecutor asks for confirmation and honours the answer") {
     f.executor.execute(u"look"_s, {}, u"gui"_s, [&](Result<ToolResult> r) { readOnly = std::move(r); });
     CHECK(readOnly->isOk());
     CHECK(questions.size() == 2);
+}
+
+TEST_CASE("A model that cannot call tools is taught the convention, and its calls are read from the text") {
+    Fixture f;
+    f.provider.nativeTools = false;
+    f.provider.script = {
+        {u"Let me echo that.\n<tool_call>{\"name\": \"echo\", \"arguments\": {\"msg\": \"x\"}}</tool_call>"_s, {}, {}},
+        {u"It said: echoed x"_s, {}, {}},
+    };
+    QStringList shown;
+    QObject::connect(&f.agent, &Agent::textDelta, [&shown](const QString &delta) { shown.append(delta); });
+    f.agent.run(&f.provider, &f.conversation, u"m"_s, u"gui"_s);
+    REQUIRE(f.waitDone());
+    CHECK(f.finish == FinishReason::Stop);
+    CHECK(f.toolRuns == QStringList{u"echo:ok"_s});
+
+    // No native tools: they are described in the system prompt instead.
+    REQUIRE(f.provider.requests.size() == 2);
+    const ChatRequest &first = f.provider.requests[0];
+    CHECK(first.tools.isEmpty());
+    REQUIRE(first.messages.first().role == Role::System);
+    CHECK(first.messages.first().text.startsWith(u"system prompt"_s));
+    CHECK(first.messages.first().text.contains(u"<tool_call>"_s));
+    CHECK(first.messages.first().text.contains(u"- echo: Echo"_s));
+
+    // The second request carries the call and its result as text, with no "tool" role in sight.
+    const ChatRequest &second = f.provider.requests[1];
+    bool resultAsText = false;
+    for (const ChatMessage &message : second.messages) {
+        CHECK(message.role != Role::Tool);
+        CHECK(message.toolCalls.isEmpty());
+        if (message.role == Role::User && message.text.contains(u"<tool_result name=\"echo\">"_s)) {
+            resultAsText = message.text.contains(u"echoed x"_s);
+        }
+    }
+    CHECK(resultAsText);
+
+    // The person sees the words, never the call markup — the reply is shown once it is complete.
+    CHECK(shown == QStringList{u"Let me echo that."_s, u"It said: echoed x"_s});
+}
+
+TEST_CASE("A call a native model writes as text is still made") {
+    Fixture f;
+    f.provider.script = {
+        {u"<tool_call>{\"name\": \"echo\", \"arguments\": {\"msg\": \"y\"}}</tool_call>"_s, {}, {}},
+        {u"ok"_s, {}, {}},
+    };
+    f.agent.run(&f.provider, &f.conversation, u"m"_s, u"gui"_s);
+    REQUIRE(f.waitDone());
+    CHECK(f.toolRuns == QStringList{u"echo:ok"_s});
+    const QList<ChatMessage> &messages = f.conversation.messages();
+    // hello, the call (no leftover markup), its result, the answer
+    REQUIRE(messages.size() == 4);
+    CHECK(messages[1].text.isEmpty());
+    REQUIRE(messages[1].toolCalls.size() == 1);
+    CHECK(messages[1].toolCalls[0].id == u"text_1_1"_s);
+    CHECK(messages[2].text == u"echoed y"_s);
 }

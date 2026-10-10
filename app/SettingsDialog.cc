@@ -1,6 +1,7 @@
 #include "app/SettingsDialog.h"
 
 #include "core/ai/IAiProvider.h"
+#include "app/GlobalShortcuts.h"
 #include "remote/PairingManager.h"
 #include "remote/QrCode.h"
 #include "remote/RemoteServer.h"
@@ -164,6 +165,10 @@ QWidget *SettingsDialog::buildProvidersTab() {
     ttsModelEdit_->setPlaceholderText(tr("none — e.g. tts-1"));
     ttsVoiceEdit_ = new QLineEdit(providerForm_);
     ttsVoiceEdit_->setPlaceholderText(tr("e.g. alloy (a language code such as en for gtts/default)"));
+    textToolsCheck_ = new QCheckBox(tr("This model cannot call tools — describe them in the prompt instead"),
+                                    providerForm_);
+    textToolsCheck_->setToolTip(tr("For models without function calling, such as many small local ones: Nexa "
+                                   "lists the tools in the system prompt and reads the calls out of the reply."));
     testButton_ = new QPushButton(tr("&Test connection"), providerForm_);
     connect(testButton_, &QPushButton::clicked, this, &SettingsDialog::testConnection);
     testResult_ = new QLabel(providerForm_);
@@ -178,6 +183,7 @@ QWidget *SettingsDialog::buildProvidersTab() {
     form->addRow(tr("Speech recognition:"), sttModelEdit_);
     form->addRow(tr("Speech output:"), ttsModelEdit_);
     form->addRow(tr("Voice:"), ttsVoiceEdit_);
+    form->addRow(QString(), textToolsCheck_);
     form->addRow(testButton_, testResult_);
 
     connect(nameEdit_, &QLineEdit::textEdited, this, [this](const QString &name) {
@@ -937,10 +943,31 @@ QWidget *SettingsDialog::buildGeneralTab() {
     auto *restore = new QPushButton(tr("Restore default"), page);
     connect(restore, &QPushButton::clicked, this, [this] { systemPromptEdit_->setPlainText(defaultSystemPrompt()); });
 
+    // The keys the desktop hands Nexa. GNOME lets the user choose them, so they are shown, not set.
+    QString hotkeys;
+    if (status_.shortcuts && status_.shortcuts->isRegistered()) {
+        const auto describe = [this](const QString &id) {
+            const QString key = status_.shortcuts->trigger(id);
+            return key.isEmpty() ? tr("no key yet") : key;
+        };
+        hotkeys = tr("Talk: %1 · Stop everything: %2").arg(describe(u"talk"_s), describe(u"panic"_s));
+    } else {
+        hotkeys = tr("not available — the desktop did not grant global hotkeys");
+    }
+    auto *hotkeyLabel = new QLabel(
+        tr("Hotkeys that work from any window: %1.\nChange them in GNOME Settings → Keyboard → Keyboard Shortcuts "
+           "→ Nexa Assistant. Inside Nexa: Ctrl+M talks, Esc stops the reply, Ctrl+Alt+Esc stops everything.")
+            .arg(hotkeys),
+        page);
+    hotkeyLabel->setWordWrap(true);
+    hotkeyLabel->setTextInteractionFlags(Qt::TextSelectableByMouse);
+
     auto *layout = new QVBoxLayout(page);
     layout->addWidget(new QLabel(tr("System prompt (sent at the start of every conversation):"), page));
     layout->addWidget(systemPromptEdit_, 1);
     layout->addWidget(restore, 0, Qt::AlignRight);
+    layout->addSpacing(8);
+    layout->addWidget(hotkeyLabel);
     return page;
 }
 
@@ -983,6 +1010,7 @@ void SettingsDialog::showProvider(int row) {
     sttModelEdit_->setText(provider.sttModel);
     ttsModelEdit_->setText(provider.ttsModel);
     ttsVoiceEdit_->setText(provider.ttsVoice);
+    textToolsCheck_->setChecked(provider.textTools);
     showKeyCheck_->setChecked(false);
 }
 
@@ -997,6 +1025,7 @@ void SettingsDialog::storeProvider() {
     provider.sttModel = sttModelEdit_->text().trimmed();
     provider.ttsModel = ttsModelEdit_->text().trimmed();
     provider.ttsVoice = ttsVoiceEdit_->text().trimmed();
+    provider.textTools = textToolsCheck_->isChecked();
 }
 
 void SettingsDialog::addProvider(const ProviderPreset &preset) {

@@ -1,5 +1,7 @@
 #include "core/ai/ProviderRegistry.h"
 
+#include "core/ai/AnthropicProvider.h"
+#include "core/ai/GeminiProvider.h"
 #include "core/ai/OpenAiProvider.h"
 
 using namespace Qt::StringLiterals;
@@ -10,7 +12,12 @@ ProviderRegistry::ProviderRegistry(HttpClient *http) : http_(http) {
     registerKind(kKindOpenAiCompatible, [](const ProviderConfig &config, HttpClient *client) {
         return std::make_unique<OpenAiProvider>(config, client);
     });
-    // Anthropic and Gemini kinds arrive in milestone M7.
+    registerKind(kKindAnthropic, [](const ProviderConfig &config, HttpClient *client) {
+        return std::make_unique<AnthropicProvider>(config, client);
+    });
+    registerKind(kKindGemini, [](const ProviderConfig &config, HttpClient *client) {
+        return std::make_unique<GeminiProvider>(config, client);
+    });
 }
 
 void ProviderRegistry::registerKind(const QString &kind, Factory factory) {
@@ -48,7 +55,8 @@ QList<ProviderPreset> ProviderRegistry::presets() {
         {u"together"_s, openAi, u"Together AI"_s, u"https://api.together.xyz/v1"_s, true},
         {u"custom"_s, openAi, u"Custom (OpenAI-compatible)"_s, u"http://localhost:8080/v1"_s, false},
         {u"anthropic"_s, kKindAnthropic, u"Anthropic"_s, u"https://api.anthropic.com/v1"_s, true},
-        {u"gemini"_s, kKindGemini, u"Google Gemini"_s, u"https://generativelanguage.googleapis.com/v1beta"_s, true},
+        {u"gemini"_s, kKindGemini, u"Google Gemini"_s, u"https://generativelanguage.googleapis.com/v1beta"_s, true,
+         u"gemini-2.5-flash"_s},
     };
 }
 
