@@ -79,6 +79,10 @@ public:
 
     void cancelAll();
 
+    // Where the phone's http://localhost:7777 should lead on the PC: the web remote's loopback port.
+    // Applied to the phone in use now, and to every phone that connects later.
+    void setReversePort(int pcPort);
+
 signals:
     // A different phone — or none — is now the one in use.
     void deviceChanged(const QString &description);
@@ -87,6 +91,7 @@ private:
     void chooseFrom(const QList<AdbDevice> &devices, std::function<void(Result<AdbDevice>)> done);
     void contacts(std::function<void(Result<QList<phonelookup::Contact>>)> done);
     void adopt(const AdbDevice &device);
+    void applyReverse(const QString &serial);
 
     AdbClient *adb_;
     QString preferred_;
@@ -101,6 +106,7 @@ private:
     QSize screen_;
     QSize lastScreenSize_;
     double lastScale_{1.0};
+    int reversePort_{7778};
     QThreadPool decoder_;
 };
 

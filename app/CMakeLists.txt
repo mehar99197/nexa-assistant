@@ -7,6 +7,7 @@ qt_add_executable(nexa_assistant
     GlobalShortcuts.h GlobalShortcuts.cc
     MainWindow.h MainWindow.cc
     MicButton.h MicButton.cc
+    RemoteBridge.h RemoteBridge.cc
     SettingsDialog.h SettingsDialog.cc
     UnixSignals.h UnixSignals.cc
 )
@@ -17,6 +18,7 @@ target_link_libraries(nexa_assistant PRIVATE
     nexa_core
     nexa_system
     nexa_voice
+    nexa_remote
     nexa_options
     Qt6::Widgets
 )

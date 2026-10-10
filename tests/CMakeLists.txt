@@ -18,17 +18,23 @@ add_executable(nexa_tests
     LocalCommandRunnerTest.cc
     OpenAiProviderTest.cc
     OpenAiStreamTest.cc
+    PairingManagerTest.cc
     PhoneIntentTest.cc
     PhoneLookupTest.cc
     PolicyEngineTest.cc
     PortalInputBackendTest.cc
+    QrCodeTest.cc
     RemoteDesktopSessionTest.cc
+    RemoteProtocolTest.cc
+    RemoteServerTest.cc
+    RemoteServerIntegrationTest.cc
     # The helper's own authorisation record. Pure enough to test here without any root privilege,
     # and worth testing: it is what keeps the password prompt from coming back.
     SessionGrantsTest.cc ../helper/SessionGrants.cc
     SseParserTest.cc
     SystemPureTest.cc
     ToolCallAccumulatorTest.cc
+    TtsFileRendererTest.cc
     VoicePipelineTest.cc
     VoicePureTest.cc
     VoiceTestAudio.h
@@ -39,6 +45,7 @@ target_link_libraries(nexa_tests PRIVATE
     nexa_proto
     nexa_system
     nexa_voice
+    nexa_remote
     nexa_options
     Qt6::Test
     Catch2::Catch2

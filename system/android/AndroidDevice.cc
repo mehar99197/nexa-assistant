@@ -22,9 +22,9 @@ constexpr int kConnectTimeoutMs = 20'000;
 constexpr qint64 kDevicesFreshMs = 3'000;
 constexpr qint64 kAppsFreshMs = 10 * 60'000;
 constexpr qint64 kContactsFreshMs = 5 * 60'000;
-// Where the web remote listens. Reversed at connect, so the phone can open http://localhost:7777
-// over the adb link — a secure context for the microphone, with no certificate to accept.
-constexpr int kRemotePort = 7777;
+// What the phone opens for the web remote. Reversed at connect to the remote's loopback port, so
+// the page arrives over the adb link — a secure context for the microphone, no certificate to accept.
+constexpr int kPhoneRemotePort = 7777;
 
 const QString kNoPhone = u"No phone is connected. Pair it in Settings → Android (on the phone: Developer options → "
                           "Wireless debugging), or plug it in with USB debugging on."_s;
@@ -141,9 +141,18 @@ void AndroidDevice::adopt(const AdbDevice &device) {
                        : u"%1 %2"_s.arg(device.displayModel(), device.isWireless() ? u"over Wi-Fi"_s : u"over USB"_s);
     qCInfo(lcApp).noquote() << "phone:" << (description_.isEmpty() ? u"none"_s : description_);
     emit deviceChanged(description_);
-    if (device.serial.isEmpty()) return;
-    const QString port = u"tcp:%1"_s.arg(kRemotePort);
-    adb_->runOn(device.serial, {u"reverse"_s, port, port}, kListTimeoutMs, [](Result<AdbClient::Output> output) {
+    if (!device.serial.isEmpty()) applyReverse(device.serial);
+}
+
+void AndroidDevice::setReversePort(int pcPort) {
+    if (pcPort == reversePort_) return;
+    reversePort_ = pcPort;
+    if (!currentSerial_.isEmpty()) applyReverse(currentSerial_);
+}
+
+void AndroidDevice::applyReverse(const QString &serial) {
+    adb_->runOn(serial, {u"reverse"_s, u"tcp:%1"_s.arg(kPhoneRemotePort), u"tcp:%1"_s.arg(reversePort_)},
+                kListTimeoutMs, [](Result<AdbClient::Output> output) {
         if (!output || output.value().exitCode != 0) qCDebug(lcApp) << "adb reverse failed";
     });
 }

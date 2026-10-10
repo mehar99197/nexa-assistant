@@ -7,6 +7,7 @@
 #include "app/MicButton.h"
 #include "app/SettingsDialog.h"
 #include "core/tools/ToolExecutor.h"
+#include "remote/RemoteServer.h"
 #include "system/android/AndroidDevice.h"
 #include "system/helper/HelperClient.h"
 #include "voice/pipeline/VoicePipeline.h"
@@ -177,6 +178,22 @@ void MainWindow::buildUi() {
         showPhone(status_.phone->currentDescription());
         connect(status_.phone, &AndroidDevice::deviceChanged, phoneLabel, showPhone);
         statusBar()->addPermanentWidget(phoneLabel);
+    }
+    if (status_.remote) {
+        // Shown only while the web remote runs: then it matters who can reach Nexa.
+        auto *remoteLabel = new QLabel(this);
+        RemoteServer *remote = status_.remote;
+        const auto showRemote = [remoteLabel, remote] {
+            remoteLabel->setVisible(remote->isRunning());
+            const int clients = remote->clientCount();
+            remoteLabel->setText(clients == 0 ? tr("Remote: waiting") : tr("Remote: %n phone(s)", nullptr, clients));
+            remoteLabel->setToolTip(tr("The web remote is on: %1").arg(
+                remote->lanUrl().isEmpty() ? remote->localUrl() : remote->lanUrl()));
+        };
+        showRemote();
+        connect(remote, &RemoteServer::runningChanged, remoteLabel, showRemote);
+        connect(remote, &RemoteServer::clientsChanged, remoteLabel, showRemote);
+        statusBar()->addPermanentWidget(remoteLabel);
     }
 
     auto *stop = new QAction(this);

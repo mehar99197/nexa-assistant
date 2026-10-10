@@ -1,6 +1,7 @@
 #include "app/AppController.h"
 #include "app/GlobalShortcuts.h"
 #include "app/MainWindow.h"
+#include "app/RemoteBridge.h"
 #include "app/SystemStatus.h"
 #include "app/UnixSignals.h"
 #include "core/agent/Agent.h"
@@ -17,6 +18,9 @@
 #include "core/tools/ToolExecutor.h"
 #include "core/tools/ToolRegistry.h"
 #include "system/SystemTools.h"
+#include "remote/PairingManager.h"
+#include "remote/RemoteServer.h"
+#include "remote/TlsIdentity.h"
 #include "system/android/AdbClient.h"
 #include "system/android/AdbDiscovery.h"
 #include "system/android/AndroidDevice.h"
@@ -251,8 +255,43 @@ int main(int argc, char *argv[]) {
     AppController controller(
         AppServices{&store, &providers, &tools, &executor, &router, &agent, &panic, &policy, &voice, &http},
         std::move(config), SystemInfo::summary());
-    QObject::connect(&controller, &AppController::configChanged, &app,
-                     [applyAndroid](const Config &updated) { applyAndroid(updated.android); });
+
+    // The web remote: a phone's browser talks to Nexa. Off until Settings → Remote switches it on;
+    // then every request it makes goes through the controller like one typed here.
+    PairingManager pairing(PairingManager::defaultPath());
+    TlsIdentity tlsIdentity(TlsIdentity::defaultDirectory());
+    RemoteBridge remoteBridge(&controller, &http);
+    RemoteServer remote(&pairing, &remoteBridge, &tlsIdentity);
+    QObject::connect(&controller, &AppController::userMessageAccepted, &remote, &RemoteServer::onUserMessage);
+    QObject::connect(&controller, &AppController::replyStarted, &remote, &RemoteServer::onReplyStarted);
+    QObject::connect(&controller, &AppController::replyDelta, &remote, &RemoteServer::onReplyDelta);
+    QObject::connect(&controller, &AppController::replyStep, &remote, &RemoteServer::onReplyStep);
+    QObject::connect(&controller, &AppController::replyFailed, &remote, &RemoteServer::onReplyFailed);
+    QObject::connect(&controller, &AppController::busyChanged, &remote, &RemoteServer::onBusyChanged);
+    QObject::connect(&controller, &AppController::statusChanged, &remote, &RemoteServer::onStatus);
+    QObject::connect(&controller, &AppController::replyFinished, &remote, [&remote](FinishReason reason, bool) {
+        remote.onReplyFinished(reason == FinishReason::Stop        ? u"stop"_s
+                               : reason == FinishReason::Cancelled ? u"cancelled"_s
+                                                                   : u"other"_s);
+    });
+    const auto applyRemote = [&remote, &remoteBridge, &phone](const Config &updated) {
+        remoteBridge.applyConfig(updated);
+        if (!updated.remote.enabled) {
+            remote.stop();
+            return;
+        }
+        phone.setReversePort(updated.remote.port + 1);
+        if (remote.isRunning() && remote.port() == updated.remote.port) return;
+        remote.start(updated.remote.port, [](Result<QString> started) {
+            qCInfo(lcApp).noquote() << (started ? started.value() : started.error().message);
+        });
+    };
+    applyRemote(controller.config());
+
+    QObject::connect(&controller, &AppController::configChanged, &app, [applyAndroid, applyRemote](const Config &updated) {
+        applyAndroid(updated.android);
+        applyRemote(updated);
+    });
     // Hotkeys that work from any window. The compositor grants them (GNOME asks once) and the
     // user can change them in Settings → Keyboard; without the portal, the in-window shortcuts
     // (Ctrl+M, Esc, Ctrl+Alt+Esc) still work.
@@ -262,7 +301,9 @@ int main(int argc, char *argv[]) {
                                    .inputSummary = [&input] { return input.summary(); },
                                    .inputNotes = [&input] { return input.notes(); },
                                    .phone = &phone,
-                                   .discovery = &discovery});
+                                   .discovery = &discovery,
+                                   .remote = &remote,
+                                   .pairing = &pairing});
     window.show();
     shortcuts.bind({
         {u"talk"_s, QObject::tr("Talk to Nexa (hold to speak)"), u"CTRL+ALT+space"_s},

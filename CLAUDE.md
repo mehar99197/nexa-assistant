@@ -92,7 +92,15 @@ models over its slow `auto/*` combos).
   model is single-quoted for the phone's `sh`), `PhoneLookup` (spoken name → app or contact). The phone is
   remembered by hardware serial (`config.android.serial`); `core/intent/PhoneIntents` is its fast path and
   needs the phone named before it acts on a name ("call mom" goes to the model).
-- `remote/` arrives with M6 (see ARCHITECTURE.md → File tree).
+- `remote/` — the web remote (Settings → Remote, off by default): `RemoteServer` (QHttpServer: the page from Qt
+  resources, `/api/pair`, `/speech/<id>.wav`, and the WebSocket at `/ws`; TLS on `port`, plain HTTP on loopback
+  only at `port + 1` for `adb reverse`), `RemoteSession` (one browser: hello with a token within 10 s, rate
+  limits), `PairingManager` (six-digit single-use codes → tokens stored as SHA-256 in
+  `~/.config/nexa/remote-devices.json`), `RemoteProtocol` (pure JSON messages; a binary frame is one spoken
+  utterance), `TlsIdentity` (self-signed cert in `~/.config/nexa/tls`), `QrCode`, and `IRemoteHost` — implemented
+  by `app/RemoteBridge`, so remote/ depends only on core. The page itself is `remote/web/` (strict CSP: no inline
+  script or style; server text only through `textContent`). Phone requests carry the source `phone` or
+  `phone-voice`.
 - `packaging/` — `org.nexa.Assistant.desktop`, the helper's polkit policy, D-Bus and systemd files, and
   `install-helper.sh` / `uninstall-helper.sh`; `scripts/` — model and engine downloads, desktop-entry install.
 - Runtime files: `~/.config/nexa/config.json` (settings, 0600), `~/.local/share/nexa/audit.jsonl` (every action,

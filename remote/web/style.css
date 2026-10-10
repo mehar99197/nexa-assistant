@@ -1,0 +1,134 @@
+/* Nexa's web remote: the same dark look as the PC app, sized for a thumb. */
+
+:root {
+  --bg: #16181d;
+  --panel: #1f2229;
+  --line: #2c3039;
+  --text: #e8eaed;
+  --muted: #9aa0a6;
+  --accent: #2bb3a0;
+  --warn: #e09b2d;
+  --bad: #e5534b;
+  --rec: #e5534b;
+}
+
+* { box-sizing: border-box; }
+
+html, body {
+  margin: 0;
+  height: 100%;
+  background: var(--bg);
+  color: var(--text);
+  font: 16px/1.45 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+}
+
+body {
+  display: flex;
+  flex-direction: column;
+  padding: env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left);
+}
+
+header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--line);
+}
+
+.brand { font-weight: 700; letter-spacing: 0.02em; }
+.status { color: var(--muted); font-size: 13px; text-align: right; }
+.status.ok { color: var(--accent); }
+.status.warn { color: var(--warn); }
+.status.rec { color: var(--rec); }
+
+/* ---- pairing */
+
+#pair { padding: 20px 16px; max-width: 520px; margin: 0 auto; width: 100%; }
+#pair h1 { font-size: 22px; margin: 8px 0 12px; }
+#pair p { color: var(--muted); }
+#pair-form { display: grid; gap: 10px; margin-top: 16px; }
+#pair-code { font-size: 28px; letter-spacing: 0.3em; text-align: center; }
+
+input, textarea {
+  width: 100%;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--panel);
+  color: var(--text);
+  font: inherit;
+}
+input:focus, textarea:focus { outline: 2px solid var(--accent); outline-offset: -1px; }
+
+button {
+  min-width: 48px;
+  min-height: 48px;
+  padding: 0 16px;
+  border: 0;
+  border-radius: 10px;
+  background: var(--accent);
+  color: #06201c;
+  font: inherit;
+  font-weight: 600;
+  touch-action: manipulation;
+}
+button:active { filter: brightness(0.9); }
+
+.error { color: var(--bad); }
+
+/* ---- conversation */
+
+#chat { flex: 1; display: flex; flex-direction: column; min-height: 0; }
+
+#messages {
+  flex: 1;
+  overflow-y: auto;
+  list-style: none;
+  margin: 0;
+  padding: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+#messages li {
+  max-width: 88%;
+  padding: 9px 12px;
+  border-radius: 14px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+#messages li.user { align-self: flex-end; background: #234a44; }
+#messages li.user.from-pc { background: #2c3039; }
+#messages li.nexa { align-self: flex-start; background: var(--panel); }
+#messages li.step, #messages li.heard {
+  align-self: flex-start;
+  background: none;
+  padding: 2px 4px;
+  color: var(--muted);
+  font-size: 13px;
+}
+#messages li.step::before { content: "✓ "; color: var(--accent); }
+#messages li.step.failed::before { content: "✗ "; color: var(--bad); }
+#messages li.error { align-self: stretch; max-width: none; background: none; color: var(--bad); font-size: 14px; }
+
+#ask {
+  display: flex;
+  gap: 8px;
+  padding: 10px;
+  border-top: 1px solid var(--line);
+  background: var(--bg);
+}
+#text { flex: 1; resize: none; max-height: 30vh; }
+#send.stop { background: var(--bad); color: #fff; }
+
+#talk { background: var(--panel); color: var(--text); font-size: 20px; user-select: none; -webkit-user-select: none; }
+#talk.recording { background: var(--rec); color: #fff; animation: pulse 1s ease-in-out infinite; }
+
+@keyframes pulse {
+  50% { box-shadow: 0 0 0 8px rgba(229, 83, 75, 0.25); }
+}
+
+[hidden] { display: none !important; }

@@ -112,6 +112,18 @@ AndroidConfig AndroidConfig::fromJson(const QJsonObject &json) {
     return config;
 }
 
+QJsonObject RemoteConfig::toJson() const {
+    return QJsonObject{{u"enabled"_s, enabled}, {u"port"_s, port}};
+}
+
+RemoteConfig RemoteConfig::fromJson(const QJsonObject &json) {
+    RemoteConfig config;
+    config.enabled = json.value(u"enabled"_s).toBool(false);
+    // Two ports are used (port and port + 1), both above the privileged range.
+    config.port = std::clamp(json.value(u"port"_s).toInt(7777), 1024, 65534);
+    return config;
+}
+
 QJsonObject Config::toJson() const {
     QJsonObject json = extra;
     QJsonArray list;
@@ -123,6 +135,7 @@ QJsonObject Config::toJson() const {
     json.insert(u"policy"_s, QJsonObject{{u"mode"_s, policyMode}});
     json.insert(u"voice"_s, voice.toJson());
     json.insert(u"android"_s, android.toJson());
+    json.insert(u"remote"_s, remote.toJson());
     return json;
 }
 
@@ -141,10 +154,12 @@ Config Config::fromJson(const QJsonObject &json) {
     config.policyMode = json.value(u"policy"_s).toObject().value(u"mode"_s).toString(u"autonomous"_s);
     config.voice = VoiceConfig::fromJson(json.value(u"voice"_s).toObject());
     config.android = AndroidConfig::fromJson(json.value(u"android"_s).toObject());
+    config.remote = RemoteConfig::fromJson(json.value(u"remote"_s).toObject());
 
     config.extra = json;
     for (const QString &key :
-         {u"version"_s, u"providers"_s, u"activeProvider"_s, u"systemPrompt"_s, u"policy"_s, u"voice"_s, u"android"_s}) {
+         {u"version"_s, u"providers"_s, u"activeProvider"_s, u"systemPrompt"_s, u"policy"_s, u"voice"_s, u"android"_s,
+          u"remote"_s}) {
         config.extra.remove(key);
     }
     return config;

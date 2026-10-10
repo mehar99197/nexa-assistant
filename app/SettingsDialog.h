@@ -16,6 +16,8 @@ class QListWidget;
 class QPlainTextEdit;
 class QPushButton;
 class QSlider;
+class QSpinBox;
+class QTimer;
 
 namespace nexa {
 
@@ -53,6 +55,11 @@ private:
     void connectPhone();
     void disconnectPhones();
     void showPhoneResult(const QString &text, bool ok);
+    QWidget *buildRemoteTab();
+    void showRemote();
+    void startPairing();
+    void showPairing();
+    void showPairedDevices();
     QWidget *buildPolicyTab();
     QWidget *buildGeneralTab();
     void populateProviders();
@@ -116,6 +123,16 @@ private:
     QLineEdit *pairCode_{nullptr};
     QLineEdit *connectAddress_{nullptr};
     QLabel *phoneResult_{nullptr};
+    QCheckBox *remoteEnabled_{nullptr};
+    QSpinBox *remotePort_{nullptr};
+    QLabel *remoteState_{nullptr};
+    QLabel *remoteFingerprint_{nullptr};
+    QPushButton *pairButton_{nullptr};
+    QLabel *qrLabel_{nullptr};
+    QLabel *pairCodeLabel_{nullptr};
+    QListWidget *pairedList_{nullptr};
+    QPushButton *revokeButton_{nullptr};
+    QTimer *pairCountdown_{nullptr};
     QComboBox *policyCombo_{nullptr};
     QPlainTextEdit *systemPromptEdit_{nullptr};
 };

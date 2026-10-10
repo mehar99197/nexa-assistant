@@ -64,8 +64,19 @@ struct AndroidConfig {
     bool operator==(const AndroidConfig &) const = default;
 };
 
-// Typed view of ~/.config/nexa/config.json. Sections owned by later milestones (remote) stay in
-// `extra` and are written back unchanged, so no build drops settings it does not understand.
+// Settings → Remote: the web remote a phone's browser talks to. Off until the user switches it on.
+struct RemoteConfig {
+    bool enabled{false};
+    int port{7777};                 // HTTPS on the network; plain HTTP on loopback at port + 1
+
+    QJsonObject toJson() const;
+    static RemoteConfig fromJson(const QJsonObject &json);
+
+    bool operator==(const RemoteConfig &) const = default;
+};
+
+// Typed view of ~/.config/nexa/config.json. Sections this build does not know stay in `extra` and
+// are written back unchanged, so no build drops settings it does not understand.
 struct Config {
     // 2: providers carry speech models (sttModel, ttsModel, ttsVoice).
     static constexpr int kVersion = 2;
@@ -77,6 +88,7 @@ struct Config {
     QString policyMode{QStringLiteral("autonomous")};   // autonomous | confirm-risky | confirm-all
     VoiceConfig voice;
     AndroidConfig android;
+    RemoteConfig remote;
     QJsonObject extra;
 
     QJsonObject toJson() const;

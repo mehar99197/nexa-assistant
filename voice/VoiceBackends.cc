@@ -127,8 +127,23 @@ Result<std::unique_ptr<ITextToSpeech>> VoiceBackends::createTextToSpeech(const V
         return std::unique_ptr<ITextToSpeech>(std::make_unique<SpeechdTtsBackend>(voice.speechdVoice, voice.ttsRate));
     }
 
-    const bool automatic = backend != u"cloud"_s && backend != u"piper"_s;
+    QStringList problems;
+    std::vector<std::unique_ptr<ISpeechSynthesizer>> chain = createSynthesizers(voice, provider, http, &problems);
+    if (!chain.empty()) return std::unique_ptr<ITextToSpeech>(std::make_unique<SynthesizedSpeech>(std::move(chain)));
+    if (backend != u"cloud"_s && backend != u"piper"_s) {
+        return std::unique_ptr<ITextToSpeech>(std::make_unique<SpeechdTtsBackend>(voice.speechdVoice, voice.ttsRate));
+    }
+    return Error{ErrorCode::NotFound, u"No speech output: %1."_s.arg(problems.join(u"; "_s))};
+}
+
+std::vector<std::unique_ptr<ISpeechSynthesizer>> VoiceBackends::createSynthesizers(const VoiceConfig &voice,
+                                                                                   const ProviderConfig *provider,
+                                                                                   HttpClient *http,
+                                                                                   QStringList *problemsOut) {
+    const QString backend = voice.ttsBackend;
     std::vector<std::unique_ptr<ISpeechSynthesizer>> chain;
+    if (backend == u"off"_s) return chain;
+    const bool automatic = backend != u"cloud"_s && backend != u"piper"_s;
     QStringList problems;
 
     if (automatic || backend == u"cloud"_s) {
@@ -155,11 +170,8 @@ Result<std::unique_ptr<ITextToSpeech>> VoiceBackends::createTextToSpeech(const V
         }
     }
 
-    if (!chain.empty()) return std::unique_ptr<ITextToSpeech>(std::make_unique<SynthesizedSpeech>(std::move(chain)));
-    if (automatic) {
-        return std::unique_ptr<ITextToSpeech>(std::make_unique<SpeechdTtsBackend>(voice.speechdVoice, voice.ttsRate));
-    }
-    return Error{ErrorCode::NotFound, u"No speech output: %1."_s.arg(problems.join(u"; "_s))};
+    if (problemsOut) *problemsOut = problems;
+    return chain;
 }
 
 } // namespace nexa

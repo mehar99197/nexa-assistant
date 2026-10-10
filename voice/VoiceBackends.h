@@ -7,11 +7,13 @@
 #include <QStringList>
 
 #include <memory>
+#include <vector>
 
 namespace nexa {
 
 class HttpClient;
 class ISpeechRecognizer;
+class ISpeechSynthesizer;
 class ITextToSpeech;
 
 // Factory for the voice backends chosen in Settings → Voice. "auto" means the active provider's
@@ -35,6 +37,13 @@ public:
     static Result<std::unique_ptr<ITextToSpeech>> createTextToSpeech(const VoiceConfig &voice,
                                                                       const ProviderConfig *provider,
                                                                       HttpClient *http);
+    // The engines that hand back audio instead of playing it — the provider's voice, Piper — in the
+    // order Settings → Voice asks for. Empty when speech is off. speech-dispatcher can only play,
+    // so with it the others are used the way "auto" would. `problems` says what was left out.
+    static std::vector<std::unique_ptr<ISpeechSynthesizer>> createSynthesizers(const VoiceConfig &voice,
+                                                                               const ProviderConfig *provider,
+                                                                               HttpClient *http,
+                                                                               QStringList *problems = nullptr);
 };
 
 } // namespace nexa

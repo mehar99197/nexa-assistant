@@ -1,6 +1,9 @@
 #include "app/SettingsDialog.h"
 
 #include "core/ai/IAiProvider.h"
+#include "remote/PairingManager.h"
+#include "remote/QrCode.h"
+#include "remote/RemoteServer.h"
 #include "system/android/AdbDiscovery.h"
 #include "system/android/AndroidDevice.h"
 #include "system/helper/HelperClient.h"
@@ -24,7 +27,10 @@
 #include <QFileInfo>
 #include <QPushButton>
 #include <QSignalBlocker>
+#include <QPixmap>
 #include <QSlider>
+#include <QSpinBox>
+#include <QTimer>
 #include <QTabWidget>
 #include <QToolButton>
 #include <QVBoxLayout>
@@ -68,6 +74,7 @@ SettingsDialog::SettingsDialog(Config config, ProviderRegistry *registry, HttpCl
     tabs->addTab(buildVoiceTab(), tr("Voice"));
     tabs->addTab(buildHelperTab(), tr("Helper"));
     tabs->addTab(buildAndroidTab(), tr("Android"));
+    tabs->addTab(buildRemoteTab(), tr("Remote"));
     tabs->addTab(buildPolicyTab(), tr("Policy"));
     tabs->addTab(buildGeneralTab(), tr("General"));
 
@@ -85,6 +92,8 @@ SettingsDialog::SettingsDialog(Config config, ProviderRegistry *registry, HttpCl
 SettingsDialog::~SettingsDialog() {
     // Discovery polls often only while someone is looking at the result.
     if (status_.discovery) status_.discovery->setWatched(false);
+    // A pairing code lives only as long as it is on screen.
+    if (status_.pairing) status_.pairing->stopPairing();
 }
 
 void SettingsDialog::accept() {
@@ -94,6 +103,8 @@ void SettingsDialog::accept() {
     config_.policyMode = policyCombo_->currentData().toString();
     storeVoice();
     config_.android.autoReconnect = phoneReconnect_->isChecked();
+    config_.remote.enabled = remoteEnabled_->isChecked();
+    config_.remote.port = remotePort_->value();
     QDialog::accept();
 }
 
@@ -722,6 +733,175 @@ void SettingsDialog::disconnectPhones() {
 void SettingsDialog::showPhoneResult(const QString &text, bool ok) {
     phoneResult_->setText(text);
     phoneResult_->setStyleSheet(ok ? u"color: #2bb3a0;"_s : u"color: #e5534b;"_s);
+}
+
+// Settings → Remote: the web remote, so the phone's browser can talk to Nexa. Off by default, and
+// a phone gets in only by pairing with a code shown here.
+QWidget *SettingsDialog::buildRemoteTab() {
+    auto *page = new QWidget(this);
+
+    remoteEnabled_ = new QCheckBox(tr("Let my phone use Nexa through its web browser"), page);
+    remoteEnabled_->setChecked(config_.remote.enabled);
+    remotePort_ = new QSpinBox(page);
+    remotePort_->setRange(1024, 65534);
+    remotePort_->setValue(config_.remote.port);
+    remotePort_->setToolTip(tr("HTTPS on the network; the next port up serves the phone over adb"));
+
+    remoteState_ = new QLabel(page);
+    remoteState_->setWordWrap(true);
+    remoteState_->setTextInteractionFlags(Qt::TextSelectableByMouse);
+    remoteFingerprint_ = new QLabel(page);
+    remoteFingerprint_->setWordWrap(true);
+    remoteFingerprint_->setTextInteractionFlags(Qt::TextSelectableByMouse);
+    remoteFingerprint_->setToolTip(tr("The phone's browser shows this certificate as untrusted, because Nexa made it "
+                                      "itself. Its details there should show this same SHA-256 fingerprint."));
+
+    pairButton_ = new QPushButton(tr("&Pair a phone"), page);
+    connect(pairButton_, &QPushButton::clicked, this, &SettingsDialog::startPairing);
+    qrLabel_ = new QLabel(page);
+    qrLabel_->setAlignment(Qt::AlignCenter);
+    pairCodeLabel_ = new QLabel(page);
+    pairCodeLabel_->setWordWrap(true);
+    pairCodeLabel_->setTextInteractionFlags(Qt::TextSelectableByMouse);
+    pairCountdown_ = new QTimer(this);
+    pairCountdown_->setInterval(1000);
+    connect(pairCountdown_, &QTimer::timeout, this, &SettingsDialog::showPairing);
+
+    pairedList_ = new QListWidget(page);
+    pairedList_->setMinimumHeight(90);
+    revokeButton_ = new QPushButton(tr("Re&voke"), page);
+    revokeButton_->setToolTip(tr("Shuts that phone out at once; it has to pair again to come back."));
+    connect(revokeButton_, &QPushButton::clicked, this, [this] {
+        const QListWidgetItem *item = pairedList_->currentItem();
+        if (status_.pairing && item) status_.pairing->revoke(item->data(Qt::UserRole).toString());
+    });
+
+    auto *help = new QLabel(
+        tr("With this on, Nexa runs a small web server. Pair a phone once and its browser can send requests — typed or "
+           "spoken — and sees the whole conversation; everything still goes through the Actions panel, the audit log "
+           "and the policy, exactly as if it had been typed here.\n\n"
+           "On the same Wi-Fi the phone opens the https address. The first time, its browser warns that the "
+           "connection is not private, because Nexa signed its own certificate: compare the fingerprint above with "
+           "the one the browser shows, then continue. A phone connected with adb (Settings → Android) can open "
+           "http://localhost:7777 instead, with no warning.\n\n"
+           "If the phone cannot connect, the PC's firewall may be blocking the port."),
+        page);
+    help->setWordWrap(true);
+
+    auto *enableRow = new QHBoxLayout;
+    enableRow->addWidget(remoteEnabled_, 1);
+    enableRow->addWidget(new QLabel(tr("Port:"), page));
+    enableRow->addWidget(remotePort_);
+    auto *pairRow = new QHBoxLayout;
+    pairRow->addWidget(qrLabel_);
+    pairRow->addWidget(pairCodeLabel_, 1);
+    auto *pairedRow = new QHBoxLayout;
+    pairedRow->addWidget(pairedList_, 1);
+    pairedRow->addWidget(revokeButton_, 0, Qt::AlignTop);
+
+    auto *form = new QFormLayout;
+    form->addRow(tr("Status:"), remoteState_);
+    form->addRow(tr("Certificate:"), remoteFingerprint_);
+    form->addRow(tr("Paired phones:"), pairedRow);
+
+    auto *layout = new QVBoxLayout(page);
+    layout->addLayout(enableRow);
+    layout->addLayout(form);
+    layout->addWidget(pairButton_, 0, Qt::AlignLeft);
+    layout->addLayout(pairRow);
+    layout->addSpacing(8);
+    layout->addWidget(help);
+    layout->addStretch();
+
+    if (status_.remote) {
+        connect(status_.remote, &RemoteServer::runningChanged, this, &SettingsDialog::showRemote);
+        connect(status_.remote, &RemoteServer::clientsChanged, this, &SettingsDialog::showRemote);
+    }
+    if (status_.pairing) {
+        connect(status_.pairing, &PairingManager::devicesChanged, this, &SettingsDialog::showPairedDevices);
+        connect(status_.pairing, &PairingManager::codeChanged, this, &SettingsDialog::showPairing);
+    }
+    showRemote();
+    showPairedDevices();
+    showPairing();
+    return page;
+}
+
+void SettingsDialog::showRemote() {
+    RemoteServer *remote = status_.remote;
+    const bool running = remote && remote->isRunning();
+    pairButton_->setEnabled(running && status_.pairing);
+    remoteState_->setStyleSheet({});
+    if (!running) {
+        remoteState_->setText(config_.remote.enabled && remote && !remote->problem().isEmpty()
+                                  ? remote->problem()
+                                  : tr("Off. Tick the box above and press OK to start it."));
+        remoteFingerprint_->setText(tr("—"));
+        return;
+    }
+    QStringList lines;
+    if (const QString lan = remote->lanUrl(); !lan.isEmpty()) lines.append(tr("On the Wi-Fi: %1").arg(lan));
+    lines.append(tr("Over adb: %1").arg(remote->localUrl()));
+    const int clients = remote->clientCount();
+    lines.append(clients == 0 ? tr("No phone connected right now.") : tr("%n phone(s) connected.", nullptr, clients));
+    if (!remote->problem().isEmpty()) lines.append(remote->problem());
+    remoteState_->setText(lines.join(u'\n'));
+    remoteState_->setStyleSheet(u"color: #2bb3a0;"_s);
+    const QString fingerprint = remote->fingerprint();
+    remoteFingerprint_->setText(fingerprint.isEmpty() ? tr("none — HTTPS is not running") : u"SHA-256 "_s + fingerprint);
+}
+
+void SettingsDialog::startPairing() {
+    if (!status_.pairing) return;
+    status_.pairing->startPairing();
+    pairCountdown_->start();
+}
+
+void SettingsDialog::showPairing() {
+    PairingManager *pairing = status_.pairing;
+    const QString code = pairing ? pairing->code() : QString();
+    if (code.isEmpty()) {
+        pairCountdown_->stop();
+        qrLabel_->clear();
+        qrLabel_->hide();
+        pairCodeLabel_->setText(pairing && !pairing->devices().isEmpty()
+                                    ? QString()
+                                    : tr("No phone is paired yet."));
+        return;
+    }
+    if (!status_.remote) return;
+    // The network address when HTTPS runs; otherwise the one a phone on adb opens.
+    const QString base = !status_.remote->lanUrl().isEmpty() ? status_.remote->lanUrl() : status_.remote->localUrl();
+    const QString link = base + u"/#pair="_s + code;
+    if (qrLabel_->isHidden() || qrLabel_->property("link").toString() != link) {
+        qrLabel_->setPixmap(QPixmap::fromImage(qrCode(link, 5)));
+        qrLabel_->setProperty("link", link);
+        qrLabel_->show();
+    }
+    const qint64 left = std::max<qint64>(0, QDateTime::currentDateTimeUtc().secsTo(pairing->codeExpires()));
+    pairCodeLabel_->setText(tr("Scan this with the phone's camera, or open %1 on the phone and enter\n\n"
+                               "%2 %3\n\nThe code works once, for %4:%5 more.")
+                                .arg(base, code.left(3), code.mid(3))
+                                .arg(left / 60)
+                                .arg(left % 60, 2, 10, u'0'));
+}
+
+void SettingsDialog::showPairedDevices() {
+    pairedList_->clear();
+    const QList<PairedDevice> devices = status_.pairing ? status_.pairing->devices() : QList<PairedDevice>{};
+    for (const PairedDevice &device : devices) {
+        auto *item = new QListWidgetItem(tr("%1 — paired %2, last seen %3")
+                                             .arg(device.name,
+                                                  device.paired.toLocalTime().toString(u"d MMM yyyy"_s),
+                                                  device.lastSeen.toLocalTime().toString(u"d MMM HH:mm"_s)),
+                                         pairedList_);
+        item->setData(Qt::UserRole, device.id);
+    }
+    revokeButton_->setEnabled(!devices.isEmpty());
+    if (devices.isEmpty()) {
+        auto *item = new QListWidgetItem(tr("None"), pairedList_);
+        item->setFlags(Qt::NoItemFlags);
+    }
 }
 
 QWidget *SettingsDialog::buildPolicyTab() {

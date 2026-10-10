@@ -36,9 +36,10 @@ QString stepText(const QString &tool, const QString &summary, qint64 elapsedMs) 
     return u"%1 — %2 · %3 ms"_s.arg(tool, summary).arg(elapsedMs);
 }
 
-// Spoken requests are marked for the model, whose reply is then read out (see systemPrompt()).
+// Spoken requests — at the PC or into the phone — are marked for the model, whose reply is then
+// read out (see systemPrompt()).
 QString forModel(const QString &prompt, const QString &source) {
-    return source == u"voice"_s ? u"[voice] "_s + prompt : prompt;
+    return source == u"voice"_s || source == u"phone-voice"_s ? u"[voice] "_s + prompt : prompt;
 }
 
 } // namespace

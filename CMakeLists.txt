@@ -19,7 +19,7 @@ option(NEXA_BUILD_WHISPER "Build local speech recognition with whisper.cpp (down
 option(NEXA_WERROR "Treat compiler warnings as errors" OFF)
 option(NEXA_SANITIZE "Build with AddressSanitizer + UndefinedBehaviorSanitizer" OFF)
 
-find_package(Qt6 6.6 REQUIRED COMPONENTS Core Gui Widgets Network DBus Multimedia TextToSpeech)
+find_package(Qt6 6.6 REQUIRED COMPONENTS Core Gui Widgets Network DBus Multimedia TextToSpeech HttpServer WebSockets)
 qt_standard_project_setup(REQUIRES 6.6)
 
 # Compile settings shared by every Nexa target (never applied to third-party code).
@@ -45,6 +45,7 @@ add_subdirectory(core)
 add_subdirectory(proto)
 add_subdirectory(system)
 add_subdirectory(voice)
+add_subdirectory(remote)
 add_subdirectory(app)
 add_subdirectory(helper)
 

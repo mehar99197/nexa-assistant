@@ -10,6 +10,8 @@ namespace nexa {
 class AdbDiscovery;
 class AndroidDevice;
 class HelperClient;
+class PairingManager;
+class RemoteServer;
 
 // What the GUI needs to show about the parts of Nexa that live outside it: the root helper,
 // whichever backend can type and click, and the phone. All of them can change while Nexa runs —
@@ -21,6 +23,8 @@ struct SystemStatus {
     std::function<QStringList()> inputNotes;    // every candidate and why it was or was not used
     AndroidDevice *phone{nullptr};
     AdbDiscovery *discovery{nullptr};
+    RemoteServer *remote{nullptr};
+    PairingManager *pairing{nullptr};
 };
 
 } // namespace nexa

@@ -21,6 +21,7 @@ add_library(nexa_voice STATIC
     tts/SentenceChunker.h tts/SentenceChunker.cc
     tts/SpeechdTtsBackend.h tts/SpeechdTtsBackend.cc
     tts/SynthesizedSpeech.h tts/SynthesizedSpeech.cc
+    tts/TtsFileRenderer.h tts/TtsFileRenderer.cc
 )
 
 target_link_libraries(nexa_voice
