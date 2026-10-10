@@ -1,6 +1,7 @@
 #include "app/SettingsDialog.h"
 
 #include "core/ai/IAiProvider.h"
+#include "system/helper/HelperClient.h"
 #include "voice/VoiceBackends.h"
 #include "voice/tts/ITextToSpeech.h"
 #include "voice/tts/SpeechdTtsBackend.h"
@@ -48,14 +49,20 @@ QStringList installedWhisperModels() {
 
 } // namespace
 
-SettingsDialog::SettingsDialog(Config config, ProviderRegistry *registry, HttpClient *http, QWidget *parent)
-    : QDialog(parent), config_(std::move(config)), registry_(registry), http_(http) {
+SettingsDialog::SettingsDialog(Config config, ProviderRegistry *registry, HttpClient *http, SystemStatus status,
+                               QWidget *parent)
+    : QDialog(parent),
+      config_(std::move(config)),
+      registry_(registry),
+      http_(http),
+      status_(std::move(status)) {
     setWindowTitle(tr("Settings"));
     resize(820, 580);
 
     auto *tabs = new QTabWidget(this);
     tabs->addTab(buildProvidersTab(), tr("Providers"));
     tabs->addTab(buildVoiceTab(), tr("Voice"));
+    tabs->addTab(buildHelperTab(), tr("Helper"));
     tabs->addTab(buildPolicyTab(), tr("Policy"));
     tabs->addTab(buildGeneralTab(), tr("General"));
 
@@ -305,6 +312,85 @@ void SettingsDialog::testVoice() {
     connect(testSpeech_.get(), &ITextToSpeech::finished, this, [this] { voiceTestResult_->setText(tr("Done.")); });
     voiceTestResult_->setText(tr("Speaking with %1…").arg(testSpeech_->name()));
     testSpeech_->speak(tr("Hello! This is how Nexa sounds."));
+}
+
+// Settings → Helper: whether the root-privileged part is installed, what it is needed for, and
+// how to add or remove it. Also why typing and clicking do or do not work, which is otherwise
+// invisible — on Wayland without the helper they silently go nowhere.
+QWidget *SettingsDialog::buildHelperTab() {
+    auto *page = new QWidget(this);
+
+    helperState_ = new QLabel(page);
+    helperState_->setWordWrap(true);
+    helperState_->setTextInteractionFlags(Qt::TextSelectableByMouse);
+    inputState_ = new QLabel(page);
+    inputState_->setWordWrap(true);
+    inputState_->setTextInteractionFlags(Qt::TextSelectableByMouse);
+
+    helperTestButton_ = new QPushButton(tr("&Test the helper"), page);
+    helperTestButton_->setToolTip(tr("Starts the helper and asks for its version. This needs no password."));
+    connect(helperTestButton_, &QPushButton::clicked, this, &SettingsDialog::testHelper);
+
+    auto *explanation = new QLabel(
+        tr("The helper is a small program that runs as root, started only when it is needed and stopping again "
+           "after ten idle minutes. Nexa uses it for two things: running commands as an administrator, and "
+           "typing and clicking for you (on Wayland nothing else can reach other windows).\n\n"
+           "Every single call asks polkit first, so you type your own password — once per session, into the "
+           "desktop's own prompt, never into Nexa. Each action is written to the Actions panel, to "
+           "~/.local/share/nexa/audit.jsonl and to the system journal. The helper cannot read your keyboard or "
+           "your screen: it only sends events.\n\n"
+           "Install it with:  sudo ./packaging/install-helper.sh\n"
+           "Remove it with:   sudo ./packaging/uninstall-helper.sh\n"
+           "See what it did:  journalctl -u nexa-helper"),
+        page);
+    explanation->setWordWrap(true);
+    explanation->setTextInteractionFlags(Qt::TextSelectableByMouse);
+
+    auto *form = new QFormLayout;
+    form->addRow(tr("Root helper:"), helperState_);
+    form->addRow(tr("Typing and clicking:"), inputState_);
+
+    auto *layout = new QVBoxLayout(page);
+    layout->addLayout(form);
+    layout->addWidget(helperTestButton_, 0, Qt::AlignLeft);
+    layout->addSpacing(8);
+    layout->addWidget(explanation);
+    layout->addStretch();
+    showHelperStatus();
+    return page;
+}
+
+void SettingsDialog::showHelperStatus() {
+    if (HelperClient::isInstalled()) {
+        helperState_->setText(tr("Installed."));
+        helperState_->setStyleSheet(u"color: #2bb3a0;"_s);
+    } else {
+        helperState_->setText(tr("Not installed — Nexa cannot run commands as root, and on Wayland it cannot "
+                                 "type or click."));
+        helperState_->setStyleSheet(u"color: #e09b2d;"_s);
+    }
+    QStringList lines;
+    if (status_.inputSummary) lines.append(status_.inputSummary());
+    if (status_.inputNotes) lines += status_.inputNotes();
+    inputState_->setText(lines.isEmpty() ? tr("unknown") : lines.join(u'\n'));
+}
+
+void SettingsDialog::testHelper() {
+    if (!status_.helper) return;
+    helperTestButton_->setEnabled(false);
+    helperState_->setStyleSheet({});
+    helperState_->setText(tr("Starting the helper…"));
+    status_.helper->probe([this](Result<QString> version) {
+        helperTestButton_->setEnabled(true);
+        if (version) {
+            helperState_->setText(tr("Working — helper version %1.").arg(version.value()));
+            helperState_->setStyleSheet(u"color: #2bb3a0;"_s);
+        } else {
+            helperState_->setText(version.error().message);
+            helperState_->setStyleSheet(u"color: #e5534b;"_s);
+        }
+        if (status_.inputSummary) showHelperStatus();
+    });
 }
 
 QWidget *SettingsDialog::buildPolicyTab() {

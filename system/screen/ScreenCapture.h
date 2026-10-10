@@ -36,6 +36,11 @@ public:
     // Downscale so the long side is ≤ maxSide, then JPEG-encode (pure).
     static Shot encode(const QImage &image, int maxSide = 1280, int quality = 80);
 
+    // Geometry of the most recent screenshot, so the pointer tools can turn a coordinate read off
+    // that image into a screen pixel. An invalid size until one has been taken.
+    QSize lastScreenSize() const { return lastScreenSize_; }
+    double lastScale() const { return lastScale_; }
+
 private slots:
     void onResponse(uint response, const QVariantMap &results);
 
@@ -45,6 +50,8 @@ private:
     void finish(Result<Shot> result);
 
     Done pending_;
+    QSize lastScreenSize_;
+    double lastScale_{1.0};
     QString requestPath_;
     QTimer timeout_;
     QThreadPool pool_;

@@ -1,5 +1,7 @@
 #pragma once
 
+#include "app/SystemStatus.h"
+
 #include <QMainWindow>
 
 #include <functional>
@@ -25,7 +27,7 @@ class MainWindow : public QMainWindow {
     Q_OBJECT
 public:
     MainWindow(AppController *controller, ProviderRegistry *registry, ToolExecutor *executor, HttpClient *http,
-               GlobalShortcuts *shortcuts, QWidget *parent = nullptr);
+               GlobalShortcuts *shortcuts, SystemStatus status, QWidget *parent = nullptr);
 
 protected:
     bool eventFilter(QObject *watched, QEvent *event) override;
@@ -49,6 +51,7 @@ private:
     ToolExecutor *executor_;
     HttpClient *http_;
     GlobalShortcuts *shortcuts_;
+    SystemStatus status_;
     ChatView *chatView_{nullptr};
     ActionLogDock *actionLog_{nullptr};
     MicButton *micButton_{nullptr};

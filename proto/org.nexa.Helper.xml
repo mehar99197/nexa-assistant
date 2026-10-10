@@ -1,0 +1,115 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  The contract between Nexa and its root helper (nexa-helper), and the single source of truth for
+  both sides: the client proxy and the service adaptor are generated from this file, so they cannot
+  drift apart.
+
+  Every method below is privileged. The helper authorises each call against polkit, using the
+  caller's unique bus name as the subject — never an identity the caller supplied — and refuses the
+  call if polkit says no. The two actions are declared in packaging/org.nexa.helper.policy:
+
+      org.nexa.helper.run-command    RunCommand, CancelJob
+      org.nexa.helper.inject-input   TypeText, PressKeys, Mouse*
+
+  Both are auth_admin_keep, so the user is asked for a password once per session.
+
+  Input is written, never read: there is no method here that reports keystrokes, pointer position
+  or window contents. The helper is an output device only.
+-->
+<node>
+  <interface name="org.nexa.Helper">
+
+    <!-- Reachability check. Not privileged: it only says the helper is alive. -->
+    <method name="Ping"/>
+
+    <!-- Helper version, so Nexa can warn when the installed helper is older than itself. -->
+    <method name="Version">
+      <arg name="version" type="s" direction="out"/>
+    </method>
+
+    <!--
+      Runs argv as root, in its own process group, and returns a job id at once. Output arrives as
+      OutputChunk signals and the job ends with Finished. argv is executed directly: there is no
+      shell here, so the caller is responsible for building the words. env entries are "K=V" and
+      are added to the helper's own environment. timeoutMs 0 means the helper's default.
+    -->
+    <method name="RunCommand">
+      <arg name="argv" type="as" direction="in"/>
+      <arg name="cwd" type="s" direction="in"/>
+      <arg name="env" type="as" direction="in"/>
+      <arg name="timeoutMs" type="i" direction="in"/>
+      <arg name="jobId" type="t" direction="out"/>
+    </method>
+
+    <!-- Ends a running job: SIGTERM to its process group, then SIGKILL. -->
+    <method name="CancelJob">
+      <arg name="jobId" type="t" direction="in"/>
+    </method>
+
+    <!-- stream is 1 for stdout and 2 for stderr. -->
+    <signal name="OutputChunk">
+      <arg name="jobId" type="t"/>
+      <arg name="stream" type="y"/>
+      <arg name="data" type="ay"/>
+    </signal>
+
+    <!-- status is "exited", "crashed", "timeout" or "cancelled". -->
+    <signal name="Finished">
+      <arg name="jobId" type="t"/>
+      <arg name="exitCode" type="i"/>
+      <arg name="status" type="s"/>
+    </signal>
+
+    <!--
+      Types UTF-8 text through the virtual keyboard, into whatever window has focus. The keycodes
+      are those of a US layout; the compositor then applies the user's own layout, so a different
+      layout produces different characters. Characters outside printable ASCII cannot be typed this
+      way and are skipped — the reply says which.
+    -->
+    <method name="TypeText">
+      <arg name="utf8" type="s" direction="in"/>
+      <arg name="skipped" type="s" direction="out"/>
+    </method>
+
+    <!--
+      Presses the keycodes in order and releases them in reverse, so modifiers come first. The
+      annotation is what lets qdbusxml2cpp map an array of integers; both sides register the type
+      with qDBusRegisterMetaType.
+    -->
+    <method name="PressKeys">
+      <arg name="keycodes" type="au" direction="in"/>
+      <annotation name="org.qtproject.QtDBus.QtTypeName.In0" value="QList&lt;uint&gt;"/>
+    </method>
+
+    <!-- Moves the pointer by a number of pixels. -->
+    <method name="MouseMove">
+      <arg name="dx" type="i" direction="in"/>
+      <arg name="dy" type="i" direction="in"/>
+    </method>
+
+    <!--
+      Moves the pointer to an absolute position, in the physical pixels of the primary output —
+      the same space as a portal screenshot. screenW and screenH say which screen the coordinates
+      were measured on, so the helper can scale them to its absolute device.
+    -->
+    <method name="MouseMoveAbs">
+      <arg name="x" type="i" direction="in"/>
+      <arg name="y" type="i" direction="in"/>
+      <arg name="screenW" type="i" direction="in"/>
+      <arg name="screenH" type="i" direction="in"/>
+    </method>
+
+    <!-- button is 1 left, 2 right, 3 middle. -->
+    <method name="MouseButton">
+      <arg name="button" type="u" direction="in"/>
+      <arg name="down" type="b" direction="in"/>
+    </method>
+
+    <!-- Scroll steps: positive dy scrolls up, positive dx scrolls right. -->
+    <method name="MouseScroll">
+      <arg name="dx" type="i" direction="in"/>
+      <arg name="dy" type="i" direction="in"/>
+    </method>
+
+  </interface>
+</node>

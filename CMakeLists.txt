@@ -42,9 +42,11 @@ endif()
 
 # Libraries join the build when their milestone starts (see ARCHITECTURE.md → Status).
 add_subdirectory(core)
+add_subdirectory(proto)
 add_subdirectory(system)
 add_subdirectory(voice)
 add_subdirectory(app)
+add_subdirectory(helper)
 
 if(NEXA_BUILD_TESTS)
     enable_testing()

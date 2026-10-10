@@ -1,0 +1,23 @@
+[Unit]
+Description=Nexa root helper (runs commands as root and injects keyboard/mouse events for Nexa)
+Documentation=file:///usr/local/share/doc/nexa/ARCHITECTURE.md
+
+[Service]
+# Started on demand by the system bus, not at boot, and it exits again after ten idle minutes.
+Type=dbus
+BusName=org.nexa.Helper
+ExecStart=/usr/local/libexec/nexa-helper
+Restart=no
+
+# Hardening is deliberately light: the helper's whole purpose is to run arbitrary commands as root
+# and to open /dev/uinput, so the usual sandboxing (ProtectSystem, PrivateDevices, NoNewPrivileges,
+# SystemCallFilter) would either break it or give a false sense of confinement. What actually
+# limits it is polkit: every call needs the password of someone at the active seat.
+# These two cost nothing and still help:
+MemoryDenyWriteExecute=yes
+RestrictRealtime=yes
+
+# Its log is the record of what was allowed and what ran:  journalctl -u nexa-helper
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=nexa-helper

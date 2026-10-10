@@ -150,19 +150,48 @@ TEST_CASE("IntentRouter runs real commands verbatim and ignores chat that starts
 }
 
 TEST_CASE("IntentRouter skips matches whose tool is not available") {
-    Fixture f;
-    CHECK(toolOf(f.router, u"run apt update as root"_s) == u"<none>"_s);   // run_root_command arrives in M3
-    CHECK(toolOf(f.router, u"type Hello World"_s) == u"<none>"_s);          // type_text arrives in M3
+    Fixture f;    // the M2 tool set, without the keyboard, pointer and root tools
+    CHECK(toolOf(f.router, u"run apt update as root"_s) == u"<none>"_s);
+    CHECK(toolOf(f.router, u"type Hello World"_s) == u"<none>"_s);
+}
 
-    Fixture withInput({u"type_text"_s, u"press_keys"_s, u"run_root_command"_s});
-    const auto typed = withInput.router.route(u"type \"Hello, World\""_s);
+TEST_CASE("Typing, key presses and root commands reach their tools once installed") {
+    Fixture f({u"type_text"_s, u"press_keys"_s, u"run_root_command"_s});
+
+    const auto typed = f.router.route(u"type \"Hello, World\""_s);
     REQUIRE(typed.has_value());
+    CHECK(typed->toolName == u"type_text"_s);
     CHECK(typed->arguments.value(u"text"_s).toString() == u"Hello, World"_s);
-    const auto keys = withInput.router.route(u"press ctrl+alt+t"_s);
+    // Case and punctuation are kept exactly: this is text, not a command.
+    const auto sentence = f.router.route(u"type Dear Sam, I'll be late."_s);
+    REQUIRE(sentence.has_value());
+    CHECK(sentence->arguments.value(u"text"_s).toString() == u"Dear Sam, I'll be late."_s);
+
+    // press_keys takes the chord as one string, the way its schema asks for it.
+    const auto keys = f.router.route(u"press ctrl+alt+t"_s);
     REQUIRE(keys.has_value());
-    CHECK(keys->arguments.value(u"keys"_s).toArray().size() == 3);
-    const auto root = withInput.router.route(u"run apt update as root"_s);
+    CHECK(keys->toolName == u"press_keys"_s);
+    CHECK(keys->arguments.value(u"keys"_s).toString() == u"ctrl+alt+t"_s);
+    const auto spaced = f.router.route(u"hit ctrl shift t"_s);
+    REQUIRE(spaced.has_value());
+    CHECK(spaced->arguments.value(u"keys"_s).toString() == u"ctrl+shift+t"_s);
+    const auto single = f.router.route(u"press enter"_s);
+    REQUIRE(single.has_value());
+    CHECK(single->arguments.value(u"keys"_s).toString() == u"enter"_s);
+
+    const auto root = f.router.route(u"run apt update as root"_s);
     REQUIRE(root.has_value());
     CHECK(root->toolName == u"run_root_command"_s);
     CHECK(root->arguments.value(u"command"_s).toString() == u"apt update"_s);
+}
+
+TEST_CASE("The word type only starts typing when it means typing") {
+    Fixture f({u"type_text"_s, u"press_keys"_s});
+    // A noun phrase, not an instruction — these must reach the model instead.
+    CHECK(toolOf(f.router, u"type of file is this"_s) == u"<none>"_s);
+    CHECK(toolOf(f.router, u"type of error you saw"_s) == u"<none>"_s);
+    CHECK(toolOf(f.router, u"types of compression"_s) == u"<none>"_s);
+    // But a real instruction still works, even one that starts with a different word.
+    CHECK(toolOf(f.router, u"type offer accepted"_s) == u"type_text"_s);
+    CHECK(toolOf(f.router, u"type out my address"_s) == u"type_text"_s);
 }

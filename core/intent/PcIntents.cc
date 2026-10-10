@@ -165,6 +165,9 @@ std::optional<IntentMatch> CommandIntent::match(const IntentInput &input) const 
 std::optional<IntentMatch> InputIntent::match(const IntentInput &input) const {
     if (QRegularExpressionMatch m = matchWhole(u"type\\s+(?:out\\s+)?(.+)"_s, input.text, true); m.hasMatch()) {
         QString text = m.captured(1);
+        // "type of thing", "type of error" — a noun phrase, not an instruction to type.
+        static const QRegularExpression nounPhrase(u"^of\\b"_s, QRegularExpression::CaseInsensitiveOption);
+        if (nounPhrase.match(text).hasMatch()) return std::nullopt;
         // Quotes around the payload are delimiters, not text to type.
         if (text.size() >= 2 && (text.front() == u'"' || text.front() == u'\'') && text.back() == text.front()) {
             text = text.mid(1, text.size() - 2);
@@ -175,9 +178,11 @@ std::optional<IntentMatch> InputIntent::match(const IntentInput &input) const {
     }
     if (QRegularExpressionMatch m = matchWhole(u"(?:press|hit)\\s+(?:the\\s+)?(.+?)(?:\\s+keys?)?"_s, input.normalized);
         m.hasMatch()) {
-        QStringList keys = m.captured(1).split(QRegularExpression(u"\\s*\\+\\s*|\\s+"_s), Qt::SkipEmptyParts);
+        const QStringList keys = m.captured(1).split(QRegularExpression(u"\\s*\\+\\s*|\\s+"_s),
+                                                     Qt::SkipEmptyParts);
         if (keys.isEmpty() || keys.size() > 5) return std::nullopt;
-        IntentMatch match = toolMatch(u"press_keys"_s, {{u"keys"_s, QJsonArray::fromStringList(keys)}});
+        // One chord, written the way press_keys takes it.
+        IntentMatch match = toolMatch(u"press_keys"_s, {{u"keys"_s, keys.join(u'+')}});
         match.verbatimPayload = true;  // "ctrl+shift+t" is one chord, not a compound request
         return match;
     }

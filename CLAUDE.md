@@ -33,6 +33,12 @@ Voice engines (optional, no sudo): `scripts/download-whisper-model.sh base.en` f
 provider's speech models (OmniRoute by default). Local recognition is compiled in only with
 `-DNEXA_BUILD_WHISPER=ON` (on in the release and debug presets; whisper.cpp is fetched at configure time).
 
+Root helper (needs sudo — **the user runs it**, as `! sudo ./packaging/install-helper.sh`): installs
+`nexa-helper` so Nexa can run commands as root and type/click on Wayland. The script self-checks with
+`pkaction` and `busctl`, and `uninstall-helper.sh` removes every file it added. Without it, `run_root_command`
+and the input tools report the install command instead of failing quietly. Inspect it with
+`busctl --system introspect org.nexa.Helper /org/nexa/Helper` and `journalctl -u nexa-helper`.
+
 Build dependencies (one-time, needs sudo — the user runs it):
 `sudo apt install -y cmake ninja-build qt6-base-dev qt6-base-dev-tools qt6-multimedia-dev qt6-speech-dev qt6-tools-dev qt6-websockets-dev qt6-httpserver-dev libpolkit-qt6-1-dev libxkbcommon-dev libqrencode-dev adb catch2`
 
@@ -60,8 +66,19 @@ models over its slow `auto/*` combos).
   PiperSynthesizer produce PCM, SynthesizedSpeech chains them and PcmPlayer plays it, SpeechdTtsBackend is the
   fallback, SentenceChunker splits a streamed reply into speakable sentences), `pipeline/` (VoicePipeline state
   machine + WakeWordDetector), `VoiceBackends` builds what Settings → Voice asks for, `VoiceTools` adds `speak`.
-- `proto/ remote/ helper/` arrive with M3, M5 and M6 (see ARCHITECTURE.md → File tree).
-- `packaging/` — `org.nexa.Assistant.desktop`; `scripts/` — model and engine downloads, desktop-entry install.
+- `proto/` — the contract with the root helper: `org.nexa.Helper.xml` (generates the client proxy *and* the
+  service adaptor, so they cannot drift), `HelperTypes.h` (bus names, polkit action ids, error names),
+  `KeyMap` (characters and key names → Linux key codes; US layout, pure, heavily tested).
+- `helper/` — `nexa-helper`, the only part that runs as root: `PolkitAuthorizer` (one check at a time, the
+  caller's bus name as the subject), `JobManager` (root commands in their own process group, streamed output),
+  `UinputDevice` (three virtual devices, write-only), `HelperService` (every privileged method replies late,
+  after polkit). It is started by D-Bus on demand and exits after ten idle minutes.
+- `system/helper/`, `system/commands/RootCommandRunner`, `system/input/` — the client side:
+  `HelperInputBackend` (uinput, reaches every window), `XTestInputBackend` (X11 only — on Wayland it cannot
+  reach native windows), `InputBackendSelector` (picks one and explains why).
+- `remote/` arrives with M6 (see ARCHITECTURE.md → File tree).
+- `packaging/` — `org.nexa.Assistant.desktop`, the helper's polkit policy, D-Bus and systemd files, and
+  `install-helper.sh` / `uninstall-helper.sh`; `scripts/` — model and engine downloads, desktop-entry install.
 - Runtime files: `~/.config/nexa/config.json` (settings, 0600), `~/.local/share/nexa/audit.jsonl` (every action,
   0600), `~/.local/share/nexa/models/` (whisper), `~/.local/share/nexa/piper/` (Piper and its voices).
 
@@ -81,6 +98,11 @@ models over its slow `auto/*` combos).
 - QObjects handed out as `shared_ptr` (e.g. `ChatStream`) use a `deleteLater()` deleter, so they can be released from their own signals.
 - Never log or display API keys/tokens.
 - Every action goes through `ToolExecutor::execute` (fast path and agent alike) — never call a tool directly.
+- The helper is the only root-privileged code, and it is **write-only** for input: never add a method that
+  reads keystrokes, pointer position or window contents. Authorise against the caller's bus name from the
+  message, never an identity the caller sent.
+- Keep the fast path's arguments matching the tool's schema; a mismatch there fails only at runtime, so
+  `tests/IntentRouterTest.cc` asserts the argument shapes.
 - Nothing listens to the microphone unless the user asked: `VoicePipeline` opens it for a press of Talk, and
   continuously only while the wake word is on — and then only a **local** recogniser sees the audio
   (`ISpeechRecognizer::isLocal()`), so room sound never reaches a server.

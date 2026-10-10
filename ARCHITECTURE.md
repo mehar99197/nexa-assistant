@@ -2,14 +2,14 @@
 
 > Living document: the approved plan plus a **Status** section. Update the status table at the end of every milestone.
 
-## Status (updated 2026-10-10, M4)
+## Status (updated 2026-10-10, M3+M4)
 
 | Milestone | State |
 |---|---|
 | M0 — scaffold + docs | ✅ done — CMake skeleton, `ARCHITECTURE.md`, `CLAUDE.md`, presets, `.gitignore` |
 | M1 — streaming chat on OmniRoute | ✅ done 2026-10-09 — verified live: OmniRoute `/v1/models` (3838 models), streamed Markdown replies with styled code, Esc cancel, Settings → Test connection; 51 unit/HTTP tests green (also under ASan/UBSan) |
 | M2 — tools, fast path, agent loop, PC screen | ✅ done 2026-10-10 — verified live: fast path `open calculator` 2 ms, `volume 100` 45 ms, `run uname -sr` 17 ms, `close calculator` 8 ms (no model); compound request → agent ran `open_app` + `get_volume` + `run_command` in one round, all in the Actions panel and `audit.jsonl` (0600); `take a screenshot` → GNOME portal (no prompt, ~4 s) → vision model described the screen; SIGTERM mid-command → clean exit, process group killed; 99 test cases green (also ASan/UBSan, `-Werror`) |
-| M3 — root helper + input injection | ⏳ not started — deferred past M4, see *Deviations* |
+| M3 — root helper + input injection | 🔄 built 2026-10-10 — `nexa-helper` (polkit + uinput + job manager), `proto/` contract with generated proxy *and* adaptor, `HelperClient`, `RootCommandRunner`, the three input backends, six new tools and `packaging/`; 140 test cases green. **Not yet verified live**: installing it needs the user's sudo, and the typing test puts keystrokes into a real window, so both are theirs to run (`sudo ./packaging/install-helper.sh`). Without it Nexa reports the install command instead of failing quietly |
 | M4 — voice | ✅ done 2026-10-10 — verified live: a spoken "open the calculator" acted on it (OmniRoute `anyapi/google/gemini-2.5-flash-lite` heard it, `gtts/default` spoke the reply); offline whisper.cpp `base.en` + Piper did the same end to end in **611 ms**; "what is the capital of France?" went to the agent and was read back; 129 test cases green |
 | M5 — Android bridge (ADB) | ⏳ not started |
 | M6 — web remote (phone → Linux) | ⏳ not started |
@@ -42,6 +42,18 @@
 - M4: the global hotkeys use the portal's `GlobalShortcuts` — the compositor owns the keys and Nexa never reads the keyboard. GNOME 50 needed three things: a D-Bus connection of Nexa's own (the portal binds one app id per connection and Qt has already used the shared one), `org.freedesktop.host.portal.Registry.Register` to declare that id, and a **reverse-DNS** id backed by an installed `.desktop` file — anything else is discarded. Hence `scripts/install-desktop-entry.sh`. GNOME then ignores `preferred_trigger` and lists only shortcuts that already carry a key, so `BindShortcuts` succeeding with an empty list means "registered, assign the keys in Settings → Keyboard"; `ShortcutsChanged` delivers them later, without a restart. Ctrl+M, Esc and Ctrl+Alt+Esc work inside the window regardless.
 - M4: the wake word accepts only a **local** recogniser (`ISpeechRecognizer::isLocal()`), so continuous listening never sends room audio to a server, and utterances without the wake phrase are dropped unlogged. `WakeWordDetector` matches the phrase in a transcript rather than spotting a keyword in audio.
 - M4 added `--say "<text>"` and `--voice-file <wav>` beside `--ask` for scripted verification of the voice path. `voice/tts/TtsFileRenderer` waits for M6.
+- M3: `proto/org.nexa.Helper.xml` generates **both** sides, the client proxy (`qt_add_dbus_interface`) and the service adaptor (`qt_add_dbus_adaptor`), so a method the helper does not implement breaks the build rather than failing at runtime. An array of integers (`au`, PressKeys) needs an explicit `org.qtproject.QtDBus.QtTypeName` annotation and `qDBusRegisterMetaType` on both sides; qdbusxml2cpp rejects it otherwise.
+- M3: `IInputBackend` is **asynchronous**, not the planned `Result<void>`: the first call of a session waits for polkit's password prompt, which can take as long as the user does, and nothing may block the GUI thread.
+- M3: the absolute pointer is a **virtual-machine-style absolute device** with a fixed 0…65535 axis, not `INPUT_PROP_DIRECT` as sketched. A fixed range means the device does not care what resolution the caller measured on, and an absolute device is what makes "point at this pixel" possible at all — relative motion is reshaped by the compositor's pointer acceleration, so it cannot land on a given pixel.
+- M3: **three** uinput devices (keyboard, relative mouse, absolute pointer) rather than two. libinput decides what a device *is* from the events it claims, and a device with both relative and absolute axes is classified unpredictably.
+- M3: `mouse_click` takes an optional position and moves there first, so the agent needs one call instead of two; `mouse_move_abs` and `mouse_click` read coordinates in the **last screenshot's** pixels by default, scaling with the shot's own factor (`ScreenCapture` remembers it), because that is the space the model can actually see.
+- M3: `run_command` refuses a command that starts with `sudo`, `pkexec` or `doas` and points at `run_root_command`. Left alone, the model reached for sudo whenever the helper was missing, and sudo then waits for a password on a terminal that does not exist until the command times out.
+- M3: a missing helper is `ErrorCode::NotSupported`, not `NotFound`. The fast path treats `NotFound` as "I could not find what you named" and quietly re-asks the model, which is right for an unknown app name and wrong for a dead end the user has to fix.
+- M3: Nexa decides what it can do from whether the helper's D-Bus activation file **exists**, and only activates the daemon when a privileged action is actually requested — so launching Nexa never starts root-owned code.
+- M3: `KeyMap` is US-layout only by design (uinput sends key codes and the compositor applies the user's own layout). Its tests caught three real faults: F11 and F12 computed from `KEY_F1` landed on **Num Lock and Scroll Lock** (the F-key codes are not contiguous), modifier order depended on how the chord was written, and "Ctrl+A" was read as Ctrl+Shift+A because of the capital letter.
+- M3: the fast path's `press_keys` sent `["ctrl","s"]` while the tool's schema asks for `"ctrl+s"`; the intent now joins them, and the tool accepts either. `type …` no longer matches a noun phrase such as "type of file".
+- M3: input tools are marked `privileged`, so `confirm-risky` mode asks before synthetic keystrokes even though nothing runs as root. The helper exposes **no** method that reads a key, a button, the pointer or the screen — it is an output device only, and the D-Bus contract says so.
+- M3: `packaging/org.nexa.Helper.conf` lets any local context *send* to the helper, because D-Bus can only answer for the service as a whole. polkit is the real gate: `allow_any`/`allow_inactive` are `no`, so only the person at the active seat can authorise, per action.
 
 
 ## Context

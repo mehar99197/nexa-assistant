@@ -7,6 +7,7 @@
 #include "app/MicButton.h"
 #include "app/SettingsDialog.h"
 #include "core/tools/ToolExecutor.h"
+#include "system/helper/HelperClient.h"
 #include "voice/pipeline/VoicePipeline.h"
 
 #include <QAction>
@@ -38,13 +39,14 @@ const QLatin1StringView kPanicShortcut{"panic"};
 } // namespace
 
 MainWindow::MainWindow(AppController *controller, ProviderRegistry *registry, ToolExecutor *executor,
-                       HttpClient *http, GlobalShortcuts *shortcuts, QWidget *parent)
+                       HttpClient *http, GlobalShortcuts *shortcuts, SystemStatus status, QWidget *parent)
     : QMainWindow(parent),
       controller_(controller),
       registry_(registry),
       executor_(executor),
       http_(http),
-      shortcuts_(shortcuts) {
+      shortcuts_(shortcuts),
+      status_(std::move(status)) {
     setWindowTitle(tr("Nexa"));
     resize(1240, 760);
     buildUi();
@@ -143,6 +145,18 @@ void MainWindow::buildUi() {
     statusBar()->addWidget(statusLabel_, 1);
     voiceLabel_ = new QLabel(this);
     statusBar()->addPermanentWidget(voiceLabel_);
+    if (status_.inputSummary) {
+        auto *inputLabel = new QLabel(status_.inputSummary(), this);
+        inputLabel->setToolTip(status_.inputNotes ? status_.inputNotes().join(u'\n') : QString());
+        statusBar()->addPermanentWidget(inputLabel);
+        // Installing the helper changes this while Nexa runs.
+        if (status_.helper) {
+            connect(status_.helper, &HelperClient::readyChanged, inputLabel, [this, inputLabel] {
+                inputLabel->setText(status_.inputSummary());
+                if (status_.inputNotes) inputLabel->setToolTip(status_.inputNotes().join(u'\n'));
+            });
+        }
+    }
 
     auto *stop = new QAction(this);
     stop->setShortcut(QKeySequence(Qt::Key_Escape));
@@ -291,7 +305,7 @@ void MainWindow::sendOrStop() {
 }
 
 void MainWindow::openSettings() {
-    SettingsDialog dialog(controller_->config(), registry_, http_, this);
+    SettingsDialog dialog(controller_->config(), registry_, http_, status_, this);
     if (dialog.exec() == QDialog::Accepted) controller_->updateConfig(dialog.config());
 }
 

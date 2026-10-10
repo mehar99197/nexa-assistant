@@ -1,0 +1,9 @@
+[D-BUS Service]
+# Lets the system bus start the helper the first time it is called, and hand the start over to
+# systemd so the unit's settings apply. Installed to
+# /usr/share/dbus-1/system-services/org.nexa.Helper.service — Nexa also reads this path to tell
+# whether the helper is installed at all.
+Name=org.nexa.Helper
+Exec=/usr/local/libexec/nexa-helper
+User=root
+SystemdService=nexa-helper.service

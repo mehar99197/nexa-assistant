@@ -142,6 +142,10 @@ void ScreenCapture::finish(Result<Shot> result) {
     if (!pending_) return;
     Done done = std::move(pending_);
     pending_ = nullptr;
+    if (result) {
+        lastScreenSize_ = result.value().realSize;
+        lastScale_ = result.value().scale;
+    }
     qCDebug(lcApp) << "screenshot" << (result ? u"ok"_s : result.error().message);
     done(std::move(result));
 }

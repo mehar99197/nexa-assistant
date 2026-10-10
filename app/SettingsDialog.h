@@ -1,5 +1,6 @@
 #pragma once
 
+#include "app/SystemStatus.h"
 #include "core/ai/ProviderRegistry.h"
 #include "core/config/Config.h"
 
@@ -28,7 +29,8 @@ class ITextToSpeech;
 class SettingsDialog : public QDialog {
     Q_OBJECT
 public:
-    SettingsDialog(Config config, ProviderRegistry *registry, HttpClient *http, QWidget *parent = nullptr);
+    SettingsDialog(Config config, ProviderRegistry *registry, HttpClient *http, SystemStatus status,
+                   QWidget *parent = nullptr);
     ~SettingsDialog() override;
 
     Config config() const { return config_; }
@@ -38,6 +40,9 @@ public:
 private:
     QWidget *buildProvidersTab();
     QWidget *buildVoiceTab();
+    QWidget *buildHelperTab();
+    void showHelperStatus();
+    void testHelper();
     QWidget *buildPolicyTab();
     QWidget *buildGeneralTab();
     void populateProviders();
@@ -56,6 +61,7 @@ private:
     Config config_;
     ProviderRegistry *registry_;
     HttpClient *http_;
+    SystemStatus status_;
     std::unique_ptr<IAiProvider> testProvider_;
     std::unique_ptr<ITextToSpeech> testSpeech_;
     int currentRow_{-1};
@@ -86,6 +92,9 @@ private:
     QCheckBox *wakeCheck_{nullptr};
     QCheckBox *bargeInCheck_{nullptr};
     QLabel *voiceTestResult_{nullptr};
+    QLabel *helperState_{nullptr};
+    QLabel *inputState_{nullptr};
+    QPushButton *helperTestButton_{nullptr};
     QComboBox *policyCombo_{nullptr};
     QPlainTextEdit *systemPromptEdit_{nullptr};
 };

@@ -6,16 +6,28 @@ add_library(nexa_system STATIC
     audio/WpctlAudioController.h audio/WpctlAudioController.cc
     commands/LocalCommandRunner.h commands/LocalCommandRunner.cc
     files/FileAccess.h files/FileAccess.cc
+    helper/HelperClient.h helper/HelperClient.cc
+    commands/RootCommandRunner.h commands/RootCommandRunner.cc
+    input/IInputBackend.h
+    input/HelperInputBackend.h input/HelperInputBackend.cc
+    input/InputBackendSelector.h input/InputBackendSelector.cc
+    input/XTestInputBackend.h input/XTestInputBackend.cc
     info/SystemInfo.h info/SystemInfo.cc
     media/MprisController.h media/MprisController.cc
     screen/ScreenCapture.h screen/ScreenCapture.cc
 )
 
+# X11/XTEST is the fallback input backend, used on X11 sessions and for XWayland windows.
+find_package(X11 REQUIRED COMPONENTS Xtst)
+
 target_link_libraries(nexa_system
     PUBLIC
         nexa_core
+        nexa_proto
         Qt6::Gui
         Qt6::DBus
     PRIVATE
         nexa_options
+        X11::X11
+        X11::Xtst
 )

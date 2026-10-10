@@ -6,13 +6,23 @@
 #include "system/apps/DesktopEntryIndex.h"
 #include "system/audio/WpctlAudioController.h"
 #include "system/commands/LocalCommandRunner.h"
+#include "system/commands/RootCommandRunner.h"
 #include "system/files/FileAccess.h"
+#include "system/input/IInputBackend.h"
 #include "system/info/SystemInfo.h"
 #include "system/media/MprisController.h"
 #include "system/screen/ScreenCapture.h"
 
+#include "proto/KeyMap.h"
+
+#include <QGuiApplication>
+#include <QJsonArray>
+#include <QRegularExpression>
 #include <QJsonDocument>
 #include <QJsonObject>
+#include <QScreen>
+
+#include <cmath>
 
 using namespace Qt::StringLiterals;
 
@@ -22,6 +32,10 @@ namespace {
 
 constexpr int kDefaultTimeoutSeconds = 30;
 constexpr int kMaxTimeoutSeconds = 600;
+constexpr int kDefaultRootTimeoutSeconds = 60;
+// Typing a whole document through a virtual keyboard takes milliseconds per character, so there
+// is a point past which a file would be the better answer.
+constexpr qsizetype kMaxTypedCharacters = 4000;
 
 // Models sometimes send numbers and booleans as strings; accept both.
 std::optional<int> intArg(const QJsonObject &arguments, const QString &key) {
@@ -49,6 +63,26 @@ Result<QString> requiredString(const QJsonObject &arguments, const QString &key)
 
 ToolResult text(const QString &value) {
     return ToolResult{value, std::nullopt};
+}
+
+// What the model sees after a command: how it ended, how long it took, what was run, and its output.
+QString commandReport(const QString &command, const CommandOutput &result, int timeoutSeconds) {
+    QString status = u"exit code %1"_s.arg(result.exitCode);
+    if (result.timedOut) status = u"killed after the %1 s timeout"_s.arg(timeoutSeconds);
+    else if (result.crashed) status = u"terminated by a signal"_s;
+    QString body = result.output.trimmed();
+    if (body.isEmpty()) body = u"(no output)"_s;
+    return u"%1 (%2 s)\n$ %3\n%4"_s.arg(status).arg(result.elapsedMs / 1000.0, 0, 'f', 1).arg(command, body);
+}
+
+// The screen in real pixels, which is the space the portal's screenshots and the helper's absolute
+// pointer both use. A fractionally scaled desktop reports fewer logical pixels than it has.
+QSize screenPixelSize() {
+    const QScreen *screen = QGuiApplication::primaryScreen();
+    if (!screen) return {};
+    const QSize logical = screen->geometry().size();
+    const double ratio = screen->devicePixelRatio();
+    return QSize(int(std::lround(logical.width() * ratio)), int(std::lround(logical.height() * ratio)));
 }
 
 QString volumeText(const VolumeState &state) {
@@ -87,6 +121,15 @@ void addCommandTools(ToolRegistry &registry, LocalCommandRunner *commands) {
             const Result<QString> command = requiredString(arguments, u"command"_s);
             if (!command) {
                 done(command.error());
+                return;
+            }
+            // sudo here would sit waiting for a password on a terminal that does not exist, and
+            // time out. run_root_command is the way to ask for root.
+            static const QRegularExpression elevator(u"^\\s*(sudo|pkexec|doas)\\b"_s);
+            if (elevator.match(command.value()).hasMatch()) {
+                done(Error{ErrorCode::InvalidArgument,
+                           u"Do not use sudo here — there is no terminal to type a password into. Use the "
+                           "run_root_command tool instead, with the command itself."_s});
                 return;
             }
             const QString directory = arguments.value(u"working_directory"_s).toString();
@@ -303,15 +346,287 @@ void addInfoTool(ToolRegistry &registry) {
         }));
 }
 
+// run_root_command: the same shape as run_command, but through nexa-helper. Marked privileged, so
+// the policy engine can ask first and the audit log records it as an elevated action.
+void addRootCommandTool(ToolRegistry &registry, RootCommandRunner *root) {
+    ToolSpec spec{
+        u"run_root_command"_s,
+        u"Run a shell command as root (administrator) on the user's PC. The user is asked for their password the "
+        "first time in a session, then not again. Use it only when the command genuinely needs root, such as "
+        "installing packages or editing system files; prefer run_command otherwise."_s,
+        schema::object({{u"command"_s, schema::string(u"The command line, e.g. \"apt-get -y install htop\""_s)},
+                        {u"timeout_seconds"_s, schema::integer(u"Kill the command after this many seconds "
+                                                               "(default 60)"_s, 1, kMaxTimeoutSeconds)},
+                        {u"working_directory"_s, schema::string(u"Folder to run in"_s)}},
+                       {u"command"_s}),
+    };
+    spec.privileged = true;
+    registry.add(std::make_unique<FunctionTool>(
+        spec,
+        [root](const QJsonObject &arguments, ITool::Done done) {
+            const Result<QString> command = requiredString(arguments, u"command"_s);
+            if (!command) {
+                done(command.error());
+                return;
+            }
+            const int seconds = qBound(1, intArg(arguments, u"timeout_seconds"_s).value_or(kDefaultRootTimeoutSeconds),
+                                       kMaxTimeoutSeconds);
+            root->run(command.value(), arguments.value(u"working_directory"_s).toString(), seconds * 1000,
+                      [command = command.value(), seconds, done](Result<CommandOutput> output) {
+                if (!output) {
+                    done(output.error());
+                    return;
+                }
+                done(text(commandReport(command, output.value(), seconds)));
+            });
+        },
+        [root] { root->cancelAll(); }));
+}
+
+using InputProvider = std::function<IInputBackend *()>;
+
+// Where a pointer tool should go, in real screen pixels. Coordinates are read off the last
+// screenshot by default, because that is what the model can actually see; "screen" takes them as
+// physical pixels instead.
+struct PointerTarget {
+    int x{0};
+    int y{0};
+    QSize screen;
+    QString note;
+};
+
+Result<PointerTarget> pointerTarget(const QJsonObject &arguments, ScreenCapture *capture) {
+    const std::optional<int> x = intArg(arguments, u"x"_s);
+    const std::optional<int> y = intArg(arguments, u"y"_s);
+    if (!x || !y) return Error{ErrorCode::InvalidArgument, u"Both \"x\" and \"y\" are needed."_s};
+
+    const QString space = arguments.value(u"space"_s).toString().trimmed().toLower();
+    const bool imageSpace = space != u"screen"_s;
+    PointerTarget target{*x, *y, screenPixelSize(), {}};
+
+    if (imageSpace && capture && capture->lastScreenSize().isValid()) {
+        const double scale = capture->lastScale();
+        target.screen = capture->lastScreenSize();
+        target.x = int(std::lround(*x * scale));
+        target.y = int(std::lround(*y * scale));
+    } else if (imageSpace) {
+        target.note = u" (no screenshot to measure against, so the numbers were taken as screen pixels)"_s;
+    }
+    if (!target.screen.isValid()) {
+        return Error{ErrorCode::NotSupported, u"The screen size is unknown; take a screenshot first."_s};
+    }
+    target.x = qBound(0, target.x, target.screen.width() - 1);
+    target.y = qBound(0, target.y, target.screen.height() - 1);
+    return target;
+}
+
+void addInputTools(ToolRegistry &registry, const InputProvider &input, ScreenCapture *capture) {
+    // Shared by every tool here: fetch the current backend or explain why there is none.
+    const auto backendOr = [input](ITool::Done &done) -> IInputBackend * {
+        IInputBackend *backend = input();
+        if (!backend) {
+            done(Error{ErrorCode::NotSupported,
+                       u"Nexa cannot type or click on this desktop: the root helper is not installed "
+                       "(sudo ./packaging/install-helper.sh) and there is no X11 fallback."_s});
+        }
+        return backend;
+    };
+    // Every one of these ends the same way: a sentence plus whatever the backend wants to add.
+    const auto finish = [](QString summary, ITool::Done done) {
+        return [summary = std::move(summary), done](Result<QString> note) {
+            if (!note) {
+                done(note.error());
+                return;
+            }
+            done(text(note.value().isEmpty() ? summary : summary + u" "_s + note.value()));
+        };
+    };
+
+    ToolSpec typeSpec{
+        u"type_text"_s,
+        u"Type text on the keyboard, into whichever window has focus. Make sure the right window is focused "
+        "first — open it with open_app, or click into it. Only characters on a US keyboard can be typed; "
+        "anything else is reported back and left out."_s,
+        schema::object({{u"text"_s, schema::string(u"The text to type. Use \\n for Enter."_s)}}, {u"text"_s}),
+    };
+    typeSpec.privileged = true;
+    registry.add(std::make_unique<FunctionTool>(typeSpec, [backendOr, finish](const QJsonObject &arguments,
+                                                                             ITool::Done done) {
+        IInputBackend *backend = backendOr(done);
+        if (!backend) return;
+        const Result<QString> value = requiredString(arguments, u"text"_s);
+        if (!value) {
+            done(value.error());
+            return;
+        }
+        if (value.value().size() > kMaxTypedCharacters) {
+            done(Error{ErrorCode::InvalidArgument,
+                       u"That is %1 characters; type at most %2 at a time, or write a file instead."_s
+                           .arg(value.value().size()).arg(kMaxTypedCharacters)});
+            return;
+        }
+        const QString summary = u"Typed %1 characters with the %2."_s.arg(value.value().size()).arg(backend->name());
+        backend->typeText(value.value(), finish(summary, done));
+    }));
+
+    ToolSpec keysSpec{
+        u"press_keys"_s,
+        u"Press a key or a combination, into whichever window has focus — \"ctrl+s\", \"alt+tab\", \"enter\", "
+        "\"f5\", \"ctrl+shift+t\". Modifiers are ctrl, alt, shift and super."_s,
+        schema::object({{u"keys"_s, schema::string(u"The combination, joined with +"_s)}}, {u"keys"_s}),
+    };
+    keysSpec.privileged = true;
+    registry.add(std::make_unique<FunctionTool>(keysSpec, [backendOr, finish](const QJsonObject &arguments,
+                                                                             ITool::Done done) {
+        IInputBackend *backend = backendOr(done);
+        if (!backend) return;
+        // The schema asks for "ctrl+s", but models sometimes send ["ctrl", "s"].
+        QString chord = arguments.value(u"keys"_s).toString().trimmed();
+        if (chord.isEmpty() && arguments.value(u"keys"_s).isArray()) {
+            QStringList parts;
+            for (const QJsonValue &part : arguments.value(u"keys"_s).toArray()) {
+                if (!part.toString().trimmed().isEmpty()) parts.append(part.toString().trimmed());
+            }
+            chord = parts.join(u'+');
+        }
+        if (chord.isEmpty()) {
+            done(Error{ErrorCode::InvalidArgument, u"Missing \"keys\""_s});
+            return;
+        }
+        const QString keys = chord;
+        const Result<QList<int>> codes = keymap::parseChord(keys);
+        if (!codes) {
+            done(codes.error());
+            return;
+        }
+        backend->pressKeys(codes.value(), finish(u"Pressed %1."_s.arg(keys), done));
+    }));
+
+    ToolSpec moveSpec{
+        u"mouse_move"_s,
+        u"Nudge the mouse pointer by a number of pixels from where it is now. For pointing at something you can "
+        "see, use mouse_move_abs instead."_s,
+        schema::object({{u"dx"_s, schema::integer(u"Pixels right (negative for left)"_s, -10000, 10000)},
+                        {u"dy"_s, schema::integer(u"Pixels down (negative for up)"_s, -10000, 10000)}}),
+    };
+    moveSpec.privileged = true;
+    registry.add(std::make_unique<FunctionTool>(moveSpec, [backendOr, finish](const QJsonObject &arguments,
+                                                                             ITool::Done done) {
+        IInputBackend *backend = backendOr(done);
+        if (!backend) return;
+        const int dx = intArg(arguments, u"dx"_s).value_or(0);
+        const int dy = intArg(arguments, u"dy"_s).value_or(0);
+        if (dx == 0 && dy == 0) {
+            done(Error{ErrorCode::InvalidArgument, u"Give dx, dy, or both."_s});
+            return;
+        }
+        backend->mouseMove(dx, dy, finish(u"Moved the pointer by %1, %2."_s.arg(dx).arg(dy), done));
+    }));
+
+    const QJsonObject pointerArguments{
+        {u"x"_s, schema::integer(u"Horizontal position"_s, 0, 100000)},
+        {u"y"_s, schema::integer(u"Vertical position"_s, 0, 100000)},
+        {u"space"_s, schema::choice(u"Which pixels x and y are measured in: \"image\" (the last screenshot, the "
+                                    "default) or \"screen\""_s, {u"image"_s, u"screen"_s})},
+    };
+
+    ToolSpec moveAbsSpec{
+        u"mouse_move_abs"_s,
+        u"Put the mouse pointer on a particular spot. By default x and y are pixel coordinates in the screenshot "
+        "you last took, so you can point straight at something you can see in it."_s,
+        schema::object(pointerArguments, {u"x"_s, u"y"_s}),
+    };
+    moveAbsSpec.privileged = true;
+    registry.add(std::make_unique<FunctionTool>(moveAbsSpec, [backendOr, finish, capture](const QJsonObject &arguments,
+                                                                                         ITool::Done done) {
+        IInputBackend *backend = backendOr(done);
+        if (!backend) return;
+        const Result<PointerTarget> target = pointerTarget(arguments, capture);
+        if (!target) {
+            done(target.error());
+            return;
+        }
+        const PointerTarget &at = target.value();
+        backend->mouseMoveAbs(at.x, at.y, at.screen.width(), at.screen.height(),
+                              finish(u"Pointer moved to %1, %2 on screen.%3"_s.arg(at.x).arg(at.y).arg(at.note),
+                                     done));
+    }));
+
+    QJsonObject clickArguments = pointerArguments;
+    clickArguments.insert(u"button"_s, schema::choice(u"Which button (default left)"_s,
+                                                      {u"left"_s, u"right"_s, u"middle"_s}));
+    clickArguments.insert(u"count"_s, schema::integer(u"1 for a single click, 2 to double-click"_s, 1, 3));
+    ToolSpec clickSpec{
+        u"mouse_click"_s,
+        u"Click the mouse. Give x and y to move there first (by default they are coordinates in the screenshot you "
+        "last took), or leave them out to click where the pointer already is."_s,
+        schema::object(clickArguments),
+    };
+    clickSpec.privileged = true;
+    registry.add(std::make_unique<FunctionTool>(clickSpec, [backendOr, finish, capture](const QJsonObject &arguments,
+                                                                                       ITool::Done done) {
+        IInputBackend *backend = backendOr(done);
+        if (!backend) return;
+        const QString buttonName = arguments.value(u"button"_s).toString().trimmed().toLower();
+        const int button = buttonName == u"right"_s ? 2 : buttonName == u"middle"_s ? 3 : 1;
+        const int count = qBound(1, intArg(arguments, u"count"_s).value_or(1), 3);
+        const QString what = u"%1 %2 click"_s.arg(count == 2 ? u"Double"_s : u"Single"_s,
+                                                  buttonName.isEmpty() ? u"left"_s : buttonName);
+
+        if (!arguments.contains(u"x"_s) && !arguments.contains(u"y"_s)) {
+            backend->mouseClick(button, count, finish(u"%1 where the pointer was."_s.arg(what), done));
+            return;
+        }
+        const Result<PointerTarget> target = pointerTarget(arguments, capture);
+        if (!target) {
+            done(target.error());
+            return;
+        }
+        const PointerTarget &at = target.value();
+        // Move, then click once the pointer has actually arrived.
+        backend->mouseMoveAbs(at.x, at.y, at.screen.width(), at.screen.height(),
+                              [backend, button, count, at, what, finish, done](Result<QString> moved) {
+            if (!moved) {
+                done(moved.error());
+                return;
+            }
+            backend->mouseClick(button, count,
+                                finish(u"%1 at %2, %3.%4"_s.arg(what).arg(at.x).arg(at.y).arg(at.note), done));
+        });
+    }));
+
+    ToolSpec scrollSpec{
+        u"mouse_scroll"_s,
+        u"Scroll the wheel over whatever is under the pointer."_s,
+        schema::object({{u"dy"_s, schema::integer(u"Steps up; negative scrolls down"_s, -100, 100)},
+                        {u"dx"_s, schema::integer(u"Steps right; negative scrolls left"_s, -100, 100)}}),
+    };
+    scrollSpec.privileged = true;
+    registry.add(std::make_unique<FunctionTool>(scrollSpec, [backendOr, finish](const QJsonObject &arguments,
+                                                                               ITool::Done done) {
+        IInputBackend *backend = backendOr(done);
+        if (!backend) return;
+        const int dy = intArg(arguments, u"dy"_s).value_or(0);
+        const int dx = intArg(arguments, u"dx"_s).value_or(0);
+        if (dx == 0 && dy == 0) {
+            done(Error{ErrorCode::InvalidArgument, u"Give dy (or dx) as a number of steps."_s});
+            return;
+        }
+        backend->mouseScroll(dx, dy, finish(u"Scrolled %1, %2."_s.arg(dx).arg(dy), done));
+    }));
+}
+
 } // namespace
 
 void registerSystemTools(ToolRegistry &registry, const SystemServices &services) {
     if (services.apps) addAppTools(registry, services.apps);
     if (services.commands) addCommandTools(registry, services.commands);
+    if (services.rootCommands) addRootCommandTool(registry, services.rootCommands);
     if (services.audio) addAudioTools(registry, services.audio);
     if (services.media) addMediaTool(registry, services.media);
     if (services.screen) addScreenTool(registry, services.screen);
     if (services.files) addFileTools(registry, services.files);
+    if (services.input) addInputTools(registry, services.input, services.screen);
     addInfoTool(registry);
 }
 

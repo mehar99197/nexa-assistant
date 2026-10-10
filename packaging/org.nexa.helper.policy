@@ -1,0 +1,44 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE policyconfig PUBLIC
+ "-//freedesktop//DTD polkit Policy Configuration 1.0//EN"
+ "http://www.freedesktop.org/software/polkit/policyconfig-1.dtd">
+<!--
+  What Nexa's root helper is allowed to do, and on whose authority. Installed to
+  /usr/share/polkit-1/actions/org.nexa.helper.policy.
+
+  Both actions are auth_admin_keep: the user must prove they are an administrator by typing their
+  own password, and polkit then remembers that for the rest of the session. The prompt comes from
+  the desktop's own authentication agent, so no password is ever seen by Nexa.
+
+  allow_any and allow_inactive are "no", so a remote or background session cannot even ask — only
+  the person sitting at the active seat can authorise anything.
+
+  To see the installed policy, run pkaction with the action id and the verbose flag.
+  To revoke a cached session authorisation: log out, or restart the polkit service.
+-->
+<policyconfig>
+
+  <vendor>Nexa</vendor>
+  <vendor_url>https://github.com/mehar99197/nexa-assistant</vendor_url>
+
+  <action id="org.nexa.helper.run-command">
+    <description>Run a command as an administrator</description>
+    <message>Nexa needs your password to run a command as an administrator.</message>
+    <defaults>
+      <allow_any>no</allow_any>
+      <allow_inactive>no</allow_inactive>
+      <allow_active>auth_admin_keep</allow_active>
+    </defaults>
+  </action>
+
+  <action id="org.nexa.helper.inject-input">
+    <description>Use the keyboard and mouse</description>
+    <message>Nexa needs your password to type and click for you.</message>
+    <defaults>
+      <allow_any>no</allow_any>
+      <allow_inactive>no</allow_inactive>
+      <allow_active>auth_admin_keep</allow_active>
+    </defaults>
+  </action>
+
+</policyconfig>

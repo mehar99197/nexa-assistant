@@ -11,6 +11,7 @@ add_executable(nexa_tests
     DesktopEntryTest.cc
     FileAccessTest.cc
     IntentRouterTest.cc
+    KeyMapTest.cc
     LocalCommandRunnerTest.cc
     OpenAiProviderTest.cc
     OpenAiStreamTest.cc
@@ -25,6 +26,7 @@ add_executable(nexa_tests
 
 target_link_libraries(nexa_tests PRIVATE
     nexa_core
+    nexa_proto
     nexa_system
     nexa_voice
     nexa_options

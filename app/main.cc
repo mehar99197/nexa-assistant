@@ -1,6 +1,7 @@
 #include "app/AppController.h"
 #include "app/GlobalShortcuts.h"
 #include "app/MainWindow.h"
+#include "app/SystemStatus.h"
 #include "app/UnixSignals.h"
 #include "core/agent/Agent.h"
 #include "core/Logging.h"
@@ -18,6 +19,10 @@
 #include "system/apps/DesktopEntryIndex.h"
 #include "system/audio/WpctlAudioController.h"
 #include "system/commands/LocalCommandRunner.h"
+#include "system/commands/RootCommandRunner.h"
+#include "system/helper/HelperClient.h"
+#include "system/input/IInputBackend.h"
+#include "system/input/InputBackendSelector.h"
 #include "system/files/FileAccess.h"
 #include "system/info/SystemInfo.h"
 #include "system/media/MprisController.h"
@@ -82,6 +87,33 @@ Result<QByteArray> loadRecording(const QString &path) {
     return converter.convert(audio.value().samples);
 }
 
+// Which backend types and clicks can change while Nexa runs — installing the helper switches it
+// from XTEST to uinput. Retired backends are kept alive, because a tool call already in flight may
+// still be holding one.
+class InputBackends {
+public:
+    explicit InputBackends(HelperClient *helper) : helper_(helper) { reselect(); }
+
+    IInputBackend *current() const { return current_; }
+    QString summary() const { return summary_; }
+    QStringList notes() const { return notes_; }
+
+    void reselect() {
+        InputBackendSelector::Choice choice = InputBackendSelector::choose(helper_);
+        summary_ = choice.summary;
+        notes_ = choice.notes;
+        current_ = choice.backend.get();
+        if (choice.backend) kept_.push_back(std::move(choice.backend));
+    }
+
+private:
+    HelperClient *helper_;
+    std::vector<std::unique_ptr<IInputBackend>> kept_;
+    IInputBackend *current_{nullptr};
+    QString summary_;
+    QStringList notes_;
+};
+
 bool programExists(const QString &program) {
     if (program.contains(u'/')) return QFileInfo(program).isExecutable();
     return !QStandardPaths::findExecutable(program).isEmpty();
@@ -144,7 +176,23 @@ int main(int argc, char *argv[]) {
     MprisController media;
     FileAccess files;
     ScreenCapture screen;
-    registerSystemTools(tools, SystemServices{&commands, &apps, &audio, &media, &files, &screen});
+
+    // Root commands and input injection go through nexa-helper, which is started by D-Bus only
+    // when one of them is actually used, and authorises every call against polkit.
+    HelperClient helperClient;
+    RootCommandRunner rootCommands(&helperClient);
+    InputBackends input(&helperClient);
+    QObject::connect(&helperClient, &HelperClient::readyChanged, &app, [&input] { input.reselect(); });
+    panic.addHandler([&helperClient] { helperClient.cancelAllJobs(); });
+
+    registerSystemTools(tools, SystemServices{.commands = &commands,
+                                              .apps = &apps,
+                                              .audio = &audio,
+                                              .media = &media,
+                                              .files = &files,
+                                              .screen = &screen,
+                                              .rootCommands = &rootCommands,
+                                              .input = [&input] { return input.current(); }});
 
     // Voice: microphone → recognition → requests; replies → speech (backends built by AppController)
     AudioCapture microphone;
@@ -171,7 +219,10 @@ int main(int argc, char *argv[]) {
     // user can change them in Settings → Keyboard; without the portal, the in-window shortcuts
     // (Ctrl+M, Esc, Ctrl+Alt+Esc) still work.
     GlobalShortcuts shortcuts(QApplication::desktopFileName());
-    MainWindow window(&controller, &providers, &executor, &http, &shortcuts);
+    MainWindow window(&controller, &providers, &executor, &http, &shortcuts,
+                      SystemStatus{.helper = &helperClient,
+                                   .inputSummary = [&input] { return input.summary(); },
+                                   .inputNotes = [&input] { return input.notes(); }});
     window.show();
     shortcuts.bind({
         {u"talk"_s, QObject::tr("Talk to Nexa (hold to speak)"), u"CTRL+ALT+space"_s},

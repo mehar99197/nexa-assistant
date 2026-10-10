@@ -7,7 +7,7 @@ back. The roadmap adds root-level system control and an Android bridge. See
 
 Not to be confused with Nexa Download Manager: this is a separate program, named `nexa-assistant`.
 
-## Current state (milestone M4)
+## Current state (milestones M0–M4)
 
 - **Acts on the PC**: opens and closes apps, runs shell commands, sets the volume, controls media
   players, reads and writes files (home and /tmp only), reports system info, and looks at the screen.
@@ -25,6 +25,10 @@ Not to be confused with Nexa Download Manager: this is a separate program, named
 - **Speech, cloud or offline**: by default the active provider's models (OmniRoute), with whisper.cpp
   and Piper as the fallback — so voice keeps working with no network. Either can be chosen outright in
   Settings → Voice.
+- **Keyboard, mouse and root** (needs the one-time `sudo ./packaging/install-helper.sh`): types and clicks in
+  any window, and runs commands as an administrator after asking for your password once per session. Point at
+  anything you can see — coordinates are read straight off the screenshot Nexa last took. A small helper does
+  this, started only when needed, and it only ever *sends* input; it cannot read your keyboard or screen.
 - Chat with streamed Markdown replies; providers: OmniRoute (default), OpenAI, Ollama, LM Studio, Groq,
   OpenRouter, DeepSeek, Mistral, xAI, Together, or any OpenAI-compatible endpoint.
 - `nexa-assistant --ask "open calculator"` sends requests from the command line (also `--say` and
@@ -48,7 +52,10 @@ when the provider's speech models are unavailable:
 scripts/download-whisper-model.sh base.en    # offline speech recognition (148 MB)
 scripts/download-piper.sh                    # offline voice (26 MB + a 63 MB voice)
 scripts/install-desktop-entry.sh             # puts Nexa in the app grid; needed for the global hotkey
+sudo ./packaging/install-helper.sh           # typing, clicking and root commands
 ```
+
+The helper installs five files and nothing else; `sudo ./packaging/uninstall-helper.sh` removes them all.
 
 On first start Nexa asks for the OmniRoute API key. Settings are stored in
 `~/.config/nexa/config.json`, readable only by you.
