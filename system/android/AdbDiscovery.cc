@@ -2,6 +2,7 @@
 
 #include "core/Logging.h"
 #include "system/android/AdbClient.h"
+#include "system/android/MdnsBrowser.h"
 
 #include <algorithm>
 
@@ -29,8 +30,11 @@ bool sameServices(const QList<MdnsService> &a, const QList<MdnsService> &b) {
 
 } // namespace
 
-AdbDiscovery::AdbDiscovery(AdbClient *adb, QObject *parent) : QObject(parent), adb_(adb) {
+AdbDiscovery::AdbDiscovery(AdbClient *adb, MdnsBrowser *browser, QObject *parent)
+    : QObject(parent), adb_(adb), browser_(browser) {
     connect(&timer_, &QTimer::timeout, this, &AdbDiscovery::poll);
+    // A phone announces itself the moment wireless debugging goes on: no need to wait for the poll.
+    if (browser_) connect(browser_, &MdnsBrowser::changed, this, &AdbDiscovery::refresh);
 }
 
 void AdbDiscovery::setWatched(bool watched) {
@@ -45,6 +49,7 @@ void AdbDiscovery::setBackground(bool enabled) {
 
 void AdbDiscovery::reschedule() {
     const int interval = watched_ ? kWatchedIntervalMs : background_ ? kBackgroundIntervalMs : 0;
+    if (browser_) browser_->setActive(interval != 0);
     if (interval == 0) {
         timer_.stop();
         return;
@@ -52,6 +57,17 @@ void AdbDiscovery::reschedule() {
     if (timer_.isActive() && timer_.interval() == interval) return;
     timer_.start(interval);
     poll();
+}
+
+QList<MdnsService> AdbDiscovery::merged(QList<MdnsService> first, const QList<MdnsService> &second) {
+    for (const MdnsService &candidate : second) {
+        const bool known = std::any_of(first.cbegin(), first.cend(), [&candidate](const MdnsService &service) {
+            return service.name == candidate.name && service.kind == candidate.kind
+                   && service.address() == candidate.address();
+        });
+        if (!known) first.append(candidate);
+    }
+    return first;
 }
 
 void AdbDiscovery::refresh() {
@@ -87,12 +103,14 @@ QString AdbDiscovery::reconnectAddress(const QString &hardwareSerial, const QLis
 void AdbDiscovery::poll() {
     if (polling_) return;
     polling_ = true;
+    if (browser_) browser_->query();
     adb_->run({u"devices"_s, u"-l"_s}, kPollTimeoutMs, [this](Result<AdbClient::Output> devicesOutput) {
         QList<AdbDevice> devices = devicesOutput ? adb::parseDevices(devicesOutput.value().text()) : devices_;
         adb_->run({u"mdns"_s, u"services"_s}, kPollTimeoutMs,
                   [this, devices = std::move(devices)](Result<AdbClient::Output> servicesOutput) mutable {
             QList<MdnsService> services =
                 servicesOutput ? adb::parseMdnsServices(servicesOutput.value().text()) : QList<MdnsService>{};
+            if (browser_) services = merged(std::move(services), browser_->services());
             finishPoll(std::move(devices), std::move(services));
         });
     });

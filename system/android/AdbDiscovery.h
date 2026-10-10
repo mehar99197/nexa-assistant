@@ -10,9 +10,11 @@
 namespace nexa {
 
 class AdbClient;
+class MdnsBrowser;
 
 // Observer of what adb can see: phones connected (`adb devices -l`) and phones offering wireless
-// debugging on the network (`adb mdns services`).
+// debugging on the network (`adb mdns services`, and Nexa's own MdnsBrowser, because Debian's adb
+// has no mDNS at all).
 //
 // With a remembered phone it also reconnects to it when it reappears. The wireless debugging port
 // changes every time the phone switches it on, so a remembered address would go stale; the phone's
@@ -20,7 +22,7 @@ class AdbClient;
 class AdbDiscovery : public QObject {
     Q_OBJECT
 public:
-    explicit AdbDiscovery(AdbClient *adb, QObject *parent = nullptr);
+    explicit AdbDiscovery(AdbClient *adb, MdnsBrowser *browser = nullptr, QObject *parent = nullptr);
 
     // Polling costs two short adb calls, so it runs only when someone needs the answer: often
     // while Settings → Android is open, now and then while a remembered phone should be
@@ -39,6 +41,8 @@ public:
     // connected through it.
     static QString reconnectAddress(const QString &hardwareSerial, const QList<AdbDevice> &devices,
                                     const QList<MdnsService> &services);
+    // Pure: adb's list and the browser's, without the duplicates.
+    static QList<MdnsService> merged(QList<MdnsService> first, const QList<MdnsService> &second);
 
 signals:
     void changed();
@@ -50,6 +54,7 @@ private:
     void reschedule();
 
     AdbClient *adb_;
+    MdnsBrowser *browser_;
     QTimer timer_;
     QString autoConnect_;
     QList<AdbDevice> devices_;

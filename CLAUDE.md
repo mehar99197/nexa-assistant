@@ -95,6 +95,8 @@ models over its slow `auto/*` combos).
   pointer positions in the stream's *pixels*, not the documented logical units (`StreamUnits`).
 - `system/android/` — the phone, through adb: `AdbClient` (one adb process per call, timeouts, cancel),
   `AdbDiscovery` (connected phones and mDNS wireless-debugging offers; reconnects the remembered one),
+  `MdnsBrowser` + `MdnsPacket` (Nexa's own DNS-SD browser — Debian's adb is built without mDNS, so
+  `adb mdns services` never finds anything on this machine; the packet code is pure and tested),
   `AndroidDevice` (which phone, plus every operation), `AndroidTools` (the 18 `android_*` tools), and three pure,
   tested files — `AdbParsers` (adb and shell output), `AdbShell` (command lines; everything from a person or a
   model is single-quoted for the phone's `sh`), `PhoneLookup` (spoken name → app or contact). The phone is

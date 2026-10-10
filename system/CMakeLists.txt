@@ -6,6 +6,8 @@ add_library(nexa_system STATIC
     android/AdbShell.h android/AdbShell.cc
     android/AndroidDevice.h android/AndroidDevice.cc
     android/AndroidTools.h android/AndroidTools.cc
+    android/MdnsBrowser.h android/MdnsBrowser.cc
+    android/MdnsPacket.h android/MdnsPacket.cc
     android/PhoneLookup.h android/PhoneLookup.cc
     apps/AppLauncher.h apps/AppLauncher.cc
     apps/DesktopEntry.h apps/DesktopEntry.cc

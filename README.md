@@ -72,7 +72,9 @@ On first start Nexa asks for the OmniRoute API key. Then:
 - **Your phone, controlled from the PC** — on the phone: Settings → About phone → tap Build number seven
   times; then Developer options → Wireless debugging → "Pair device with pairing code". In Nexa:
   Settings → Android, pick the phone, enter the code, Pair, then Connect. Press "Remember this phone"
-  and Nexa reconnects to it by itself. Over USB, turn on USB debugging and tap Allow — nothing else.
+  and Nexa reconnects to it by itself whenever wireless debugging is on (Nexa finds the phone on the
+  Wi-Fi itself — the port changes every time — so the phone and the PC must be on the same network).
+  Over USB, turn on USB debugging and tap Allow — nothing else.
 - **Nexa, controlled from your phone** — Settings → Remote: tick the box, press OK, then "Pair a phone"
   and scan the QR code with the phone's camera. The first visit warns about the certificate, because
   Nexa made its own: compare the fingerprint shown in Settings with the one the browser shows, then

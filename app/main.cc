@@ -25,6 +25,7 @@
 #include "remote/TlsIdentity.h"
 #include "system/android/AdbClient.h"
 #include "system/android/AdbDiscovery.h"
+#include "system/android/MdnsBrowser.h"
 #include "system/android/AndroidDevice.h"
 #include "system/android/AndroidTools.h"
 #include "system/apps/DesktopEntryIndex.h"
@@ -233,7 +234,8 @@ int main(int argc, char *argv[]) {
     // here starts adb until a phone is remembered or a phone tool is used.
     AdbClient adb;
     AndroidDevice phone(&adb);
-    AdbDiscovery discovery(&adb);
+    MdnsBrowser mdns;                   // finds the phone's wireless debugging even where adb cannot
+    AdbDiscovery discovery(&adb, &mdns);
     registerAndroidTools(tools, &phone, &files);
     panic.addHandler([&phone] { phone.cancelAll(); });
     const auto applyAndroid = [&phone, &discovery](const AndroidConfig &android) {
