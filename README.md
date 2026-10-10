@@ -100,12 +100,15 @@ aqt install-qt all_os android 6.10.2 android_arm64_v8a -m qtwebsockets qtmultime
     --archives qtbase qtsvg qtwebsockets qtmultimedia -O ~/Qt
 # Android SDK: command-line tools from developer.android.com into ~/Android/Sdk/cmdline-tools/latest, then
 sdkmanager "platform-tools" "platforms;android-35" "build-tools;35.0.0" "ndk;27.2.12479018"
-scripts/build-phone-apk.sh                 # configures with the kit, builds, and prints the APK's path
-adb install -r build-android/android-build/build/outputs/apk/debug/android-build-debug.apk
+sudo apt install -y openjdk-21-jdk-headless   # a JDK with javac (the JRE is not enough); or a Temurin JDK in ~/Android/jdk-21
+scripts/build-phone-apk.sh                    # configures with the kit, builds, signs, prints the APK's path
+adb install -r build-android/nexa-phone.apk
 ```
 
 The host tools come from the system's own Qt (it is the same version, and Debian ships
-`androiddeployqt`), so no desktop kit is downloaded.
+`androiddeployqt`), so no desktop kit is downloaded. The first build fetches Gradle and the Android
+plugin (about 600 MB). The APK is signed with the usual Android debug key unless `KEYSTORE`,
+`KEYSTORE_ALIAS` and `KEYSTORE_PASS` name your own.
 
 ## Security, in brief
 

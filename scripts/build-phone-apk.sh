@@ -54,6 +54,27 @@ cmake -S android -B "$BUILD_DIR" -G Ninja -DCMAKE_BUILD_TYPE=Release \
     -DANDROID_ABI=arm64-v8a -DANDROID_PLATFORM=android-28
 cmake --build "$BUILD_DIR" --target nexa-phone_make_apk
 
-apk="$(find "$BUILD_DIR" -name '*.apk' -newer "$BUILD_DIR/CMakeCache.txt" | head -n 1)"
+built="$(find "$BUILD_DIR" -name '*.apk' -newer "$BUILD_DIR/CMakeCache.txt" | head -n 1)"
+[ -n "$built" ] || { echo "no APK came out of the build" >&2; exit 1; }
+
+# A release build comes out unsigned, and a phone installs nothing unsigned. Without a key of
+# your own (KEYSTORE, KEYSTORE_ALIAS, KEYSTORE_PASS), it is signed with the usual Android debug
+# key — made here if there is none — which is enough for adb install and for updates over it.
+build_tools="$(ls -d "$ANDROID_SDK_ROOT"/build-tools/* | sort -V | tail -n 1)"
+KEYSTORE="${KEYSTORE:-$HOME/.android/debug.keystore}"
+KEYSTORE_ALIAS="${KEYSTORE_ALIAS:-androiddebugkey}"
+KEYSTORE_PASS="${KEYSTORE_PASS:-android}"
+if [ ! -f "$KEYSTORE" ]; then
+    mkdir -p "$(dirname "$KEYSTORE")"
+    "$JAVA_HOME/bin/keytool" -genkeypair -keystore "$KEYSTORE" -storepass "$KEYSTORE_PASS" \
+        -alias "$KEYSTORE_ALIAS" -keypass "$KEYSTORE_PASS" -keyalg RSA -keysize 2048 -validity 10000 \
+        -dname "CN=Android Debug,O=Android,C=US" >/dev/null
+fi
+apk="$BUILD_DIR/nexa-phone.apk"
+"$build_tools/zipalign" -f -p 4 "$built" "$BUILD_DIR/nexa-phone-aligned.apk"
+"$build_tools/apksigner" sign --ks "$KEYSTORE" --ks-key-alias "$KEYSTORE_ALIAS" \
+    --ks-pass "pass:$KEYSTORE_PASS" --key-pass "pass:$KEYSTORE_PASS" \
+    --out "$apk" "$BUILD_DIR/nexa-phone-aligned.apk"
+rm -f "$BUILD_DIR/nexa-phone-aligned.apk" "$apk.idsig"
 echo "APK: $apk"
 echo "install with: adb install -r \"$apk\""
