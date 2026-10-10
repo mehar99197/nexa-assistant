@@ -32,7 +32,15 @@ void IntentRouter::add(std::unique_ptr<IIntentHandler> handler) {
 }
 
 IntentInput IntentRouter::prepare(const QString &text) {
-    QString stripped = text.trimmed();
+    QString raw = text.trimmed();
+    for (bool changed = true; changed;) {
+        const QString before = raw;
+        raw.remove(leadingFiller());
+        raw = raw.trimmed();
+        changed = raw != before;
+    }
+
+    QString stripped = raw;
     for (bool changed = true; changed;) {
         const QString before = stripped;
         stripped.remove(leadingFiller());
@@ -43,7 +51,7 @@ IntentInput IntentRouter::prepare(const QString &text) {
 
     QString normalized = stripped.toLower().simplified();
     while (!normalized.isEmpty() && QStringView(u".!?").contains(normalized.back())) normalized.chop(1);
-    return IntentInput{stripped, normalized.trimmed()};
+    return IntentInput{stripped, normalized.trimmed(), raw};
 }
 
 bool IntentRouter::isCompound(const QString &normalized) {

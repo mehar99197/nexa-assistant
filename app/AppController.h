@@ -65,6 +65,8 @@ public:
     void submit(const QString &text, const QString &source = QStringLiteral("gui"));
     // Takes a screenshot and asks the model about it (default: describe the screen).
     void askAboutScreen(const QString &question);
+    // The same for the phone's screen.
+    void askAboutPhone(const QString &question);
     void cancel();                                  // the current reply and its speech
     void cancelReply();                             // the current reply only
     void panic();                                   // everything: replies, tools, child processes, voice
@@ -76,6 +78,8 @@ public:
 
 signals:
     void providerChanged(const QString &name);
+    // Settings were saved; the parts of Nexa outside the controller (the phone) follow them.
+    void configChanged(const nexa::Config &config);
     void modelsChanged(const QStringList &models, const QString &current);
     void statusChanged(const QString &message, bool isError);
     void apiKeyRequired(const QString &providerName);
@@ -91,6 +95,7 @@ signals:
 
 private:
     void runFastPath(const QString &prompt, const IntentMatch &match, const QString &source);
+    void askAboutPicture(const QString &tool, const QString &question, const QString &fallback);
     void runAgent(const QString &source);
     bool canUseModel(bool report);
     void applyVoiceConfig();

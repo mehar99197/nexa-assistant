@@ -18,10 +18,12 @@ add_library(nexa_core STATIC
     intent/IIntentHandler.h
     intent/IntentRouter.h intent/IntentRouter.cc
     intent/PcIntents.h intent/PcIntents.cc
+    intent/PhoneIntents.h intent/PhoneIntents.cc
     policy/PanicController.h policy/PanicController.cc
     policy/PolicyEngine.h policy/PolicyEngine.cc
     tools/FunctionTool.h tools/FunctionTool.cc
     tools/ITool.h
+    tools/ToolArguments.h tools/ToolArguments.cc
     tools/ToolExecutor.h tools/ToolExecutor.cc
     tools/ToolRegistry.h tools/ToolRegistry.cc
     tools/ToolSpec.h tools/ToolSpec.cc

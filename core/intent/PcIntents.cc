@@ -163,7 +163,8 @@ std::optional<IntentMatch> CommandIntent::match(const IntentInput &input) const 
 }
 
 std::optional<IntentMatch> InputIntent::match(const IntentInput &input) const {
-    if (QRegularExpressionMatch m = matchWhole(u"type\\s+(?:out\\s+)?(.+)"_s, input.text, true); m.hasMatch()) {
+    // Dictated words are typed as said, a final "now" or "thanks" included.
+    if (QRegularExpressionMatch m = matchWhole(u"type\\s+(?:out\\s+)?(.+)"_s, input.raw, true); m.hasMatch()) {
         QString text = m.captured(1);
         // "type of thing", "type of error" — a noun phrase, not an instruction to type.
         static const QRegularExpression nounPhrase(u"^of\\b"_s, QRegularExpression::CaseInsensitiveOption);

@@ -52,9 +52,20 @@ struct VoiceConfig {
     bool operator==(const VoiceConfig &) const = default;
 };
 
-// Typed view of ~/.config/nexa/config.json. Sections owned by later milestones (android,
-// remote) stay in `extra` and are written back unchanged, so no build drops settings it does
-// not understand.
+// Settings → Android. The phone is remembered by its hardware serial, which is the same over USB
+// and over Wi-Fi; the wireless debugging address changes every time it is switched on.
+struct AndroidConfig {
+    QString serial;                 // empty: whichever single phone is connected
+    bool autoReconnect{true};       // reconnect to it whenever it offers wireless debugging
+
+    QJsonObject toJson() const;
+    static AndroidConfig fromJson(const QJsonObject &json);
+
+    bool operator==(const AndroidConfig &) const = default;
+};
+
+// Typed view of ~/.config/nexa/config.json. Sections owned by later milestones (remote) stay in
+// `extra` and are written back unchanged, so no build drops settings it does not understand.
 struct Config {
     // 2: providers carry speech models (sttModel, ttsModel, ttsVoice).
     static constexpr int kVersion = 2;
@@ -65,6 +76,7 @@ struct Config {
     QString systemPrompt{defaultSystemPrompt()};
     QString policyMode{QStringLiteral("autonomous")};   // autonomous | confirm-risky | confirm-all
     VoiceConfig voice;
+    AndroidConfig android;
     QJsonObject extra;
 
     QJsonObject toJson() const;

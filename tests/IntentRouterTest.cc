@@ -166,6 +166,14 @@ TEST_CASE("Typing, key presses and root commands reach their tools once installe
     const auto sentence = f.router.route(u"type Dear Sam, I'll be late."_s);
     REQUIRE(sentence.has_value());
     CHECK(sentence->arguments.value(u"text"_s).toString() == u"Dear Sam, I'll be late."_s);
+    // So are the words the politeness filter would otherwise take for padding: dropping them
+    // would change the text without saying so.
+    const auto now = f.router.route(u"please type see you now"_s);
+    REQUIRE(now.has_value());
+    CHECK(now->arguments.value(u"text"_s).toString() == u"see you now"_s);
+    const auto thanks = f.router.route(u"type thank you"_s);
+    REQUIRE(thanks.has_value());
+    CHECK(thanks->arguments.value(u"text"_s).toString() == u"thank you"_s);
 
     // press_keys takes the chord as one string, the way its schema asks for it.
     const auto keys = f.router.route(u"press ctrl+alt+t"_s);

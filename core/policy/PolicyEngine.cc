@@ -50,7 +50,7 @@ PolicyDecision PolicyEngine::evaluate(const ToolSpec &spec, const QJsonObject &a
     PolicyDecision decision;
     decision.reason = destructiveReason(commandOf(arguments));
     decision.destructive = !decision.reason.isEmpty();
-    if (spec.privileged && decision.reason.isEmpty()) decision.reason = u"runs as root"_s;
+    if (spec.privileged && decision.reason.isEmpty()) decision.reason = spec.risk.isEmpty() ? u"runs as root"_s : spec.risk;
 
     switch (mode_) {
     case PolicyMode::Autonomous:

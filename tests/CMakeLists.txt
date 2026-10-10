@@ -3,6 +3,8 @@ find_package(Qt6 REQUIRED COMPONENTS Test)
 
 add_executable(nexa_tests
     TestMain.cc
+    AdbParsersTest.cc
+    AdbShellTest.cc
     FakeHttpServer.h
     QtStringMakers.h
     AgentTest.cc
@@ -16,6 +18,8 @@ add_executable(nexa_tests
     LocalCommandRunnerTest.cc
     OpenAiProviderTest.cc
     OpenAiStreamTest.cc
+    PhoneIntentTest.cc
+    PhoneLookupTest.cc
     PolicyEngineTest.cc
     PortalInputBackendTest.cc
     RemoteDesktopSessionTest.cc

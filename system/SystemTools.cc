@@ -1,6 +1,7 @@
 #include "system/SystemTools.h"
 
 #include "core/tools/FunctionTool.h"
+#include "core/tools/ToolArguments.h"
 #include "core/tools/ToolRegistry.h"
 #include "system/apps/AppLauncher.h"
 #include "system/apps/DesktopEntryIndex.h"
@@ -37,33 +38,7 @@ constexpr int kDefaultRootTimeoutSeconds = 60;
 // is a point past which a file would be the better answer.
 constexpr qsizetype kMaxTypedCharacters = 4000;
 
-// Models sometimes send numbers and booleans as strings; accept both.
-std::optional<int> intArg(const QJsonObject &arguments, const QString &key) {
-    const QJsonValue value = arguments.value(key);
-    if (value.isDouble()) return int(value.toDouble());
-    bool ok = false;
-    const int parsed = value.toString().trimmed().toInt(&ok);
-    return ok ? std::optional<int>(parsed) : std::nullopt;
-}
-
-std::optional<bool> boolArg(const QJsonObject &arguments, const QString &key) {
-    const QJsonValue value = arguments.value(key);
-    if (value.isBool()) return value.toBool();
-    const QString text = value.toString().trimmed().toLower();
-    if (text == u"true" || text == u"yes" || text == u"1") return true;
-    if (text == u"false" || text == u"no" || text == u"0") return false;
-    return std::nullopt;
-}
-
-Result<QString> requiredString(const QJsonObject &arguments, const QString &key) {
-    const QString value = arguments.value(key).toString().trimmed();
-    if (value.isEmpty()) return Error{ErrorCode::InvalidArgument, u"Missing \"%1\""_s.arg(key)};
-    return value;
-}
-
-ToolResult text(const QString &value) {
-    return ToolResult{value, std::nullopt};
-}
+using namespace toolargs;
 
 // What the model sees after a command: how it ended, how long it took, what was run, and its output.
 QString commandReport(const QString &command, const CommandOutput &result, int timeoutSeconds) {
@@ -451,6 +426,7 @@ void addInputTools(ToolRegistry &registry, const InputProvider &input, ScreenCap
         schema::object({{u"text"_s, schema::string(u"The text to type. Use \\n for Enter."_s)}}, {u"text"_s}),
     };
     typeSpec.privileged = true;
+    typeSpec.risk = u"types on your keyboard"_s;
     registry.add(std::make_unique<FunctionTool>(typeSpec, [backendOr, finish](const QJsonObject &arguments,
                                                                              ITool::Done done) {
         IInputBackend *backend = backendOr(done);
@@ -477,6 +453,7 @@ void addInputTools(ToolRegistry &registry, const InputProvider &input, ScreenCap
         schema::object({{u"keys"_s, schema::string(u"The combination, joined with +"_s)}}, {u"keys"_s}),
     };
     keysSpec.privileged = true;
+    keysSpec.risk = u"presses keys for you"_s;
     registry.add(std::make_unique<FunctionTool>(keysSpec, [backendOr, finish](const QJsonObject &arguments,
                                                                              ITool::Done done) {
         IInputBackend *backend = backendOr(done);
@@ -511,6 +488,7 @@ void addInputTools(ToolRegistry &registry, const InputProvider &input, ScreenCap
                         {u"dy"_s, schema::integer(u"Pixels down (negative for up)"_s, -10000, 10000)}}),
     };
     moveSpec.privileged = true;
+    moveSpec.risk = u"moves your mouse pointer"_s;
     registry.add(std::make_unique<FunctionTool>(moveSpec, [backendOr, finish](const QJsonObject &arguments,
                                                                              ITool::Done done) {
         IInputBackend *backend = backendOr(done);
@@ -538,6 +516,7 @@ void addInputTools(ToolRegistry &registry, const InputProvider &input, ScreenCap
         schema::object(pointerArguments, {u"x"_s, u"y"_s}),
     };
     moveAbsSpec.privileged = true;
+    moveAbsSpec.risk = u"moves your mouse pointer"_s;
     registry.add(std::make_unique<FunctionTool>(moveAbsSpec, [backendOr, finish, capture](const QJsonObject &arguments,
                                                                                          ITool::Done done) {
         IInputBackend *backend = backendOr(done);
@@ -564,6 +543,7 @@ void addInputTools(ToolRegistry &registry, const InputProvider &input, ScreenCap
         schema::object(clickArguments),
     };
     clickSpec.privileged = true;
+    clickSpec.risk = u"clicks for you"_s;
     registry.add(std::make_unique<FunctionTool>(clickSpec, [backendOr, finish, capture](const QJsonObject &arguments,
                                                                                        ITool::Done done) {
         IInputBackend *backend = backendOr(done);
@@ -603,6 +583,7 @@ void addInputTools(ToolRegistry &registry, const InputProvider &input, ScreenCap
                         {u"dx"_s, schema::integer(u"Steps right; negative scrolls left"_s, -100, 100)}}),
     };
     scrollSpec.privileged = true;
+    scrollSpec.risk = u"scrolls for you"_s;
     registry.add(std::make_unique<FunctionTool>(scrollSpec, [backendOr, finish](const QJsonObject &arguments,
                                                                                ITool::Done done) {
         IInputBackend *backend = backendOr(done);

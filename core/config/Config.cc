@@ -16,6 +16,12 @@ const QStringList &legacyDefaultPrompts() {
     static const QStringList prompts{
         u"You are Nexa, a fast desktop assistant running on the user's Linux PC. "
         "Answer directly and concisely. Use Markdown for code, commands and lists."_s,
+        u"You are Nexa, a fast assistant that operates the user's Linux desktop through tools. "
+        "When the user asks for something a tool can do, do it with the tool instead of explaining how. "
+        "Use open_app for graphical applications and run_command for shell commands (never run_command "
+        "for GUI apps — it waits for them to exit). Call take_screenshot when you need to see the screen. "
+        "Before deleting or overwriting the user's data, make sure that is what they asked for. "
+        "Keep replies short; use Markdown for code and commands."_s,
     };
     return prompts;
 }
@@ -27,6 +33,9 @@ QString defaultSystemPrompt() {
            "When the user asks for something a tool can do, do it with the tool instead of explaining how. "
            "Use open_app for graphical applications and run_command for shell commands (never run_command "
            "for GUI apps — it waits for them to exit). Call take_screenshot when you need to see the screen. "
+           "The user's Android phone, when connected, is reached through the android_* tools: take "
+           "android_screenshot before tapping, and remember that android_sms_send only fills a message in — "
+           "it is sent when Send is tapped. "
            "Before deleting or overwriting the user's data, make sure that is what they asked for. "
            "Keep replies short; use Markdown for code and commands."_s;
 }
@@ -92,6 +101,17 @@ VoiceConfig VoiceConfig::fromJson(const QJsonObject &json) {
     return config;
 }
 
+QJsonObject AndroidConfig::toJson() const {
+    return QJsonObject{{u"serial"_s, serial}, {u"autoReconnect"_s, autoReconnect}};
+}
+
+AndroidConfig AndroidConfig::fromJson(const QJsonObject &json) {
+    AndroidConfig config;
+    config.serial = json.value(u"serial"_s).toString().trimmed();
+    config.autoReconnect = json.value(u"autoReconnect"_s).toBool(true);
+    return config;
+}
+
 QJsonObject Config::toJson() const {
     QJsonObject json = extra;
     QJsonArray list;
@@ -102,6 +122,7 @@ QJsonObject Config::toJson() const {
     json.insert(u"systemPrompt"_s, systemPrompt);
     json.insert(u"policy"_s, QJsonObject{{u"mode"_s, policyMode}});
     json.insert(u"voice"_s, voice.toJson());
+    json.insert(u"android"_s, android.toJson());
     return json;
 }
 
@@ -119,10 +140,11 @@ Config Config::fromJson(const QJsonObject &json) {
     if (legacyDefaultPrompts().contains(config.systemPrompt)) config.systemPrompt = defaultSystemPrompt();
     config.policyMode = json.value(u"policy"_s).toObject().value(u"mode"_s).toString(u"autonomous"_s);
     config.voice = VoiceConfig::fromJson(json.value(u"voice"_s).toObject());
+    config.android = AndroidConfig::fromJson(json.value(u"android"_s).toObject());
 
     config.extra = json;
     for (const QString &key :
-         {u"version"_s, u"providers"_s, u"activeProvider"_s, u"systemPrompt"_s, u"policy"_s, u"voice"_s}) {
+         {u"version"_s, u"providers"_s, u"activeProvider"_s, u"systemPrompt"_s, u"policy"_s, u"voice"_s, u"android"_s}) {
         config.extra.remove(key);
     }
     return config;

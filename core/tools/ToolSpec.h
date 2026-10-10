@@ -12,7 +12,8 @@ struct ToolSpec {
     QString description;
     QJsonObject parameters;     // JSON Schema of the arguments object
     bool mutating{true};        // changes system state (policy + audit)
-    bool privileged{false};     // runs as root
+    bool privileged{false};     // risky enough to confirm in confirm-risky mode
+    QString risk;               // why, in words, when it is not simply "runs as root"
 
     // {"type":"function","function":{name, description, parameters}}
     QJsonObject toOpenAi() const;

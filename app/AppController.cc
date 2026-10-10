@@ -101,6 +101,7 @@ void AppController::updateConfig(const Config &config) {
     conversation_.setSystemPrompt(systemPrompt());
     services_.policy->setMode(PolicyEngine::modeFromString(config_.policyMode));
     persist();
+    emit configChanged(config_);
     start();    // rebuilds the provider and the voice backends
 }
 
@@ -173,12 +174,19 @@ void AppController::submit(const QString &text, const QString &source) {
 }
 
 void AppController::askAboutScreen(const QString &question) {
+    askAboutPicture(u"take_screenshot"_s, question, tr("Describe what is on my screen."));
+}
+
+void AppController::askAboutPhone(const QString &question) {
+    askAboutPicture(u"android_screenshot"_s, question, tr("Describe what is on my phone's screen."));
+}
+
+void AppController::askAboutPicture(const QString &tool, const QString &question, const QString &fallback) {
     if (busy_ || !canUseModel(true)) return;
-    const QString prompt = question.trimmed().isEmpty() ? tr("Describe what is on my screen.") : question.trimmed();
+    const QString prompt = question.trimmed().isEmpty() ? fallback : question.trimmed();
     emit userMessageAccepted(prompt);
     beginReply(u"gui"_s);
-    runFastPath(prompt, IntentMatch{.toolName = u"take_screenshot"_s, .forwardToAgent = true, .agentPrompt = prompt},
-                u"gui"_s);
+    runFastPath(prompt, IntentMatch{.toolName = tool, .forwardToAgent = true, .agentPrompt = prompt}, u"gui"_s);
 }
 
 void AppController::runFastPath(const QString &prompt, const IntentMatch &match, const QString &source) {

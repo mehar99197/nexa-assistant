@@ -7,6 +7,7 @@
 #include "app/MicButton.h"
 #include "app/SettingsDialog.h"
 #include "core/tools/ToolExecutor.h"
+#include "system/android/AndroidDevice.h"
 #include "system/helper/HelperClient.h"
 #include "voice/pipeline/VoicePipeline.h"
 
@@ -90,6 +91,12 @@ void MainWindow::buildUi() {
     seeScreen->setShortcut(QKeySequence(u"Ctrl+Shift+S"_s));
     connect(seeScreen, &QAction::triggered, this, [this] { controller_->askAboutScreen(input_->toPlainText()); });
 
+    QAction *seePhone = toolbar->addAction(QIcon::fromTheme(u"phone"_s, QIcon::fromTheme(u"smartphone"_s)), tr("See phone"));
+    seePhone->setToolTip(tr("Take a screenshot of the phone and ask about it (uses the text in the input box as the "
+                            "question)"));
+    seePhone->setShortcut(QKeySequence(u"Ctrl+Shift+P"_s));
+    connect(seePhone, &QAction::triggered, this, [this] { controller_->askAboutPhone(input_->toPlainText()); });
+
     actionLog_ = new ActionLogDock(this);
     addDockWidget(Qt::RightDockWidgetArea, actionLog_);
     resizeDocks({actionLog_}, {420}, Qt::Horizontal);
@@ -156,6 +163,20 @@ void MainWindow::buildUi() {
                 if (status_.inputNotes) inputLabel->setToolTip(status_.inputNotes().join(u'\n'));
             });
         }
+    }
+
+    if (status_.phone) {
+        // Which phone the android_* tools reach; it changes as phones come and go.
+        auto *phoneLabel = new QLabel(this);
+        const auto showPhone = [phoneLabel](const QString &description) {
+            phoneLabel->setText(description.isEmpty() ? tr("Phone: none") : tr("Phone: %1").arg(description));
+            phoneLabel->setToolTip(description.isEmpty()
+                                       ? tr("No phone is connected. Settings → Android shows how to connect one.")
+                                       : tr("The phone Nexa's android_* tools act on."));
+        };
+        showPhone(status_.phone->currentDescription());
+        connect(status_.phone, &AndroidDevice::deviceChanged, phoneLabel, showPhone);
+        statusBar()->addPermanentWidget(phoneLabel);
     }
 
     auto *stop = new QAction(this);

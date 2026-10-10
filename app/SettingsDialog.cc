@@ -1,6 +1,8 @@
 #include "app/SettingsDialog.h"
 
 #include "core/ai/IAiProvider.h"
+#include "system/android/AdbDiscovery.h"
+#include "system/android/AndroidDevice.h"
 #include "system/helper/HelperClient.h"
 #include "voice/VoiceBackends.h"
 #include "voice/tts/ITextToSpeech.h"
@@ -16,6 +18,8 @@
 #include <QListWidget>
 #include <QMenu>
 #include <QPlainTextEdit>
+#include <QPointer>
+#include <QRegularExpression>
 #include <QDir>
 #include <QFileInfo>
 #include <QPushButton>
@@ -63,6 +67,7 @@ SettingsDialog::SettingsDialog(Config config, ProviderRegistry *registry, HttpCl
     tabs->addTab(buildProvidersTab(), tr("Providers"));
     tabs->addTab(buildVoiceTab(), tr("Voice"));
     tabs->addTab(buildHelperTab(), tr("Helper"));
+    tabs->addTab(buildAndroidTab(), tr("Android"));
     tabs->addTab(buildPolicyTab(), tr("Policy"));
     tabs->addTab(buildGeneralTab(), tr("General"));
 
@@ -77,7 +82,10 @@ SettingsDialog::SettingsDialog(Config config, ProviderRegistry *registry, HttpCl
     populateProviders();
 }
 
-SettingsDialog::~SettingsDialog() = default;
+SettingsDialog::~SettingsDialog() {
+    // Discovery polls often only while someone is looking at the result.
+    if (status_.discovery) status_.discovery->setWatched(false);
+}
 
 void SettingsDialog::accept() {
     storeProvider();
@@ -85,6 +93,7 @@ void SettingsDialog::accept() {
     config_.systemPrompt = systemPromptEdit_->toPlainText().trimmed();
     config_.policyMode = policyCombo_->currentData().toString();
     storeVoice();
+    config_.android.autoReconnect = phoneReconnect_->isChecked();
     QDialog::accept();
 }
 
@@ -403,14 +412,17 @@ void SettingsDialog::showAuthorizationState() {
         authState_->setText(tr("Asked for once per login, by the desktop's own prompt."));
         return;
     }
-    status_.helper->isAuthorized([this](Result<bool> authorized) {
+    // Every answer below can arrive after the dialog is gone.
+    const QPointer<SettingsDialog> self(this);
+    status_.helper->isAuthorized([self](Result<bool> authorized) {
+        if (!self) return;
         if (!authorized) {
-            authState_->setText(authorized.error().message);
+            self->authState_->setText(authorized.error().message);
             return;
         }
-        authState_->setText(authorized.value()
-                                ? tr("Given for this login — nothing will ask again until you log out.")
-                                : tr("Asked for once, the next time Nexa needs the helper."));
+        self->authState_->setText(authorized.value()
+                                      ? tr("Given for this login — nothing will ask again until you log out.")
+                                      : tr("Asked for once, the next time Nexa needs the helper."));
     });
 }
 
@@ -419,30 +431,297 @@ void SettingsDialog::testHelper() {
     helperTestButton_->setEnabled(false);
     helperState_->setStyleSheet({});
     helperState_->setText(tr("Starting the helper…"));
-    status_.helper->probe([this](Result<QString> version) {
-        helperTestButton_->setEnabled(true);
+    const QPointer<SettingsDialog> self(this);
+    status_.helper->probe([self](Result<QString> version) {
+        if (!self) return;
+        self->helperTestButton_->setEnabled(true);
         if (version) {
-            helperState_->setText(tr("Working — helper version %1.").arg(version.value()));
-            helperState_->setStyleSheet(u"color: #2bb3a0;"_s);
+            self->helperState_->setText(tr("Working — helper version %1.").arg(version.value()));
+            self->helperState_->setStyleSheet(u"color: #2bb3a0;"_s);
         } else {
-            helperState_->setText(version.error().message);
-            helperState_->setStyleSheet(u"color: #e5534b;"_s);
+            self->helperState_->setText(version.error().message);
+            self->helperState_->setStyleSheet(u"color: #e5534b;"_s);
         }
-        if (status_.inputSummary) showHelperStatus();
+        if (self->status_.inputSummary) self->showHelperStatus();
     });
 }
 
 void SettingsDialog::forgetAuthorization() {
     if (!status_.helper) return;
     helperForgetButton_->setEnabled(false);
-    status_.helper->forgetAuthorization([this](Result<void> done) {
-        helperForgetButton_->setEnabled(true);
+    const QPointer<SettingsDialog> self(this);
+    status_.helper->forgetAuthorization([self](Result<void> done) {
+        if (!self) return;
+        self->helperForgetButton_->setEnabled(true);
         if (!done) {
-            authState_->setText(done.error().message);
+            self->authState_->setText(done.error().message);
             return;
         }
-        authState_->setText(tr("Forgotten — the next action asks for your password again."));
+        self->authState_->setText(tr("Forgotten — the next action asks for your password again."));
     });
+}
+
+// Settings → Android: which phone Nexa uses, and how to connect one. The steps follow the phone's
+// own wording (Developer options → Wireless debugging → Pair device with pairing code), and what
+// the phone advertises on the network fills the addresses in, so nothing has to be copied by hand.
+QWidget *SettingsDialog::buildAndroidTab() {
+    auto *page = new QWidget(this);
+
+    phoneState_ = new QLabel(page);
+    phoneState_->setWordWrap(true);
+    phoneState_->setTextInteractionFlags(Qt::TextSelectableByMouse);
+    auto *refreshButton = new QPushButton(tr("&Refresh"), page);
+    connect(refreshButton, &QPushButton::clicked, this, [this] {
+        if (status_.discovery) status_.discovery->refresh();
+        showPhone();
+    });
+
+    phoneRemembered_ = new QLabel(page);
+    phoneRemembered_->setWordWrap(true);
+    phoneRememberButton_ = new QPushButton(page);
+    connect(phoneRememberButton_, &QPushButton::clicked, this, &SettingsDialog::rememberPhone);
+    phoneReconnect_ = new QCheckBox(tr("Reconnect to it by itself whenever it offers wireless debugging"), page);
+    phoneReconnect_->setChecked(config_.android.autoReconnect);
+
+    phoneList_ = new QListWidget(page);
+    phoneList_->setMinimumHeight(110);
+    // Picking what the phone advertises fills in the matching address.
+    connect(phoneList_, &QListWidget::currentItemChanged, this, [this](QListWidgetItem *item) {
+        if (!item) return;
+        const QString address = item->data(Qt::UserRole).toString();
+        if (address.isEmpty()) return;
+        if (item->data(Qt::UserRole + 1).toInt() == int(MdnsService::Kind::Pairing)) {
+            pairAddress_->setText(address);
+            pairCode_->setFocus();
+        } else {
+            connectAddress_->setText(address);
+        }
+    });
+
+    pairAddress_ = new QLineEdit(page);
+    pairAddress_->setPlaceholderText(tr("192.168.1.20:41247 — under \"Pair device with pairing code\""));
+    pairCode_ = new QLineEdit(page);
+    pairCode_->setPlaceholderText(tr("6-digit code"));
+    pairCode_->setMaxLength(6);
+    auto *pairButton = new QPushButton(tr("&Pair"), page);
+    connect(pairButton, &QPushButton::clicked, this, &SettingsDialog::pairPhone);
+
+    connectAddress_ = new QLineEdit(page);
+    connectAddress_->setPlaceholderText(tr("192.168.1.20:37135 — at the top of Wireless debugging"));
+    auto *connectButton = new QPushButton(tr("&Connect"), page);
+    connect(connectButton, &QPushButton::clicked, this, &SettingsDialog::connectPhone);
+    auto *disconnectButton = new QPushButton(tr("&Disconnect"), page);
+    disconnectButton->setToolTip(tr("Disconnects every phone connected over Wi-Fi"));
+    connect(disconnectButton, &QPushButton::clicked, this, &SettingsDialog::disconnectPhones);
+
+    phoneResult_ = new QLabel(page);
+    phoneResult_->setWordWrap(true);
+    phoneResult_->setTextInteractionFlags(Qt::TextSelectableByMouse);
+
+    auto *help = new QLabel(
+        tr("On the phone: Settings → About phone → tap Build number seven times to unlock Developer options. "
+           "Then Developer options → Wireless debugging → turn it on → \"Pair device with pairing code\". The phone "
+           "and this PC must be on the same Wi-Fi. Pick the phone in the list above (or type the address it shows), "
+           "enter the code, press Pair, then Connect.\n\n"
+           "Over USB nothing needs pairing: turn on USB debugging and tap Allow on the phone.\n\n"
+           "Nexa can then open apps, tap, type, take screenshots, read notifications and texts, start calls and "
+           "messages, and copy files. Every action goes to the Actions panel and the audit log."),
+        page);
+    help->setWordWrap(true);
+
+    auto *stateRow = new QHBoxLayout;
+    stateRow->addWidget(phoneState_, 1);
+    stateRow->addWidget(refreshButton);
+    auto *rememberRow = new QHBoxLayout;
+    rememberRow->addWidget(phoneRemembered_, 1);
+    rememberRow->addWidget(phoneRememberButton_);
+    auto *pairRow = new QHBoxLayout;
+    pairRow->addWidget(pairAddress_, 2);
+    pairRow->addWidget(pairCode_, 1);
+    pairRow->addWidget(pairButton);
+    auto *connectRow = new QHBoxLayout;
+    connectRow->addWidget(connectAddress_, 1);
+    connectRow->addWidget(connectButton);
+    connectRow->addWidget(disconnectButton);
+
+    auto *form = new QFormLayout;
+    form->addRow(tr("Phone:"), stateRow);
+    form->addRow(tr("Remembered:"), rememberRow);
+    form->addRow(QString(), phoneReconnect_);
+    form->addRow(tr("Seen by adb:"), phoneList_);
+    form->addRow(tr("Pair:"), pairRow);
+    form->addRow(tr("Connect:"), connectRow);
+
+    auto *layout = new QVBoxLayout(page);
+    layout->addLayout(form);
+    layout->addWidget(phoneResult_);
+    layout->addSpacing(8);
+    layout->addWidget(help);
+    layout->addStretch();
+
+    if (status_.discovery) {
+        connect(status_.discovery, &AdbDiscovery::changed, this, &SettingsDialog::showDiscovered);
+        status_.discovery->setWatched(true);
+    }
+    if (status_.phone) connect(status_.phone, &AndroidDevice::deviceChanged, this, &SettingsDialog::showPhone);
+    showDiscovered();
+    showPhone();
+    return page;
+}
+
+void SettingsDialog::showPhone() {
+    const QString remembered = config_.android.serial;
+    phoneRemembered_->setText(remembered.isEmpty()
+                                  ? tr("None — Nexa uses whichever single phone is connected.")
+                                  : tr("The phone with serial number %1.").arg(remembered));
+    phoneRememberButton_->setText(remembered.isEmpty() ? tr("Re&member this phone") : tr("For&get it"));
+    phoneState_->setStyleSheet({});
+    if (!status_.phone) {
+        phoneState_->setText(tr("unavailable"));
+        return;
+    }
+    if (!AdbClient::isInstalled()) {
+        phoneState_->setText(tr("adb is not installed. Install it with: sudo apt install adb"));
+        phoneState_->setStyleSheet(u"color: #e09b2d;"_s);
+        return;
+    }
+    phoneState_->setText(tr("Looking…"));
+    // The answer can arrive after the dialog is gone.
+    const QPointer<SettingsDialog> self(this);
+    status_.phone->info([self](Result<AndroidDevice::Info> info) {
+        if (!self) return;
+        if (!info) {
+            self->phoneState_->setText(info.error().message);
+            self->phoneState_->setStyleSheet(u"color: #e09b2d;"_s);
+            return;
+        }
+        self->phoneState_->setText(info.value().summary());
+        self->phoneState_->setStyleSheet(u"color: #2bb3a0;"_s);
+    });
+}
+
+void SettingsDialog::showDiscovered() {
+    if (!status_.discovery) return;
+    const QListWidgetItem *current = phoneList_->currentItem();
+    const QString selected = current ? current->data(Qt::UserRole).toString() : QString();
+    const QSignalBlocker blocker(phoneList_);       // rebuilding is not the user picking something
+    phoneList_->clear();
+
+    for (const AdbDevice &device : status_.discovery->devices()) {
+        const QString how = !device.isReady()     ? device.state
+                            : device.isWireless() ? tr("connected over Wi-Fi")
+                                                  : tr("connected over USB");
+        new QListWidgetItem(tr("%1 — %2 (%3)").arg(device.displayModel(), how, device.serial), phoneList_);
+    }
+    for (const MdnsService &service : status_.discovery->services()) {
+        if (service.kind == MdnsService::Kind::Other) continue;
+        const QString serial = adb::serialFromServiceName(service.name);
+        const QString name = serial.isEmpty() ? service.name : serial;
+        auto *item = new QListWidgetItem(service.kind == MdnsService::Kind::Pairing
+                                             ? tr("%1 — ready to pair at %2").arg(name, service.address())
+                                             : tr("%1 — wireless debugging at %2").arg(name, service.address()),
+                                         phoneList_);
+        item->setData(Qt::UserRole, service.address());
+        item->setData(Qt::UserRole + 1, int(service.kind));
+        if (service.address() == selected) phoneList_->setCurrentItem(item);
+    }
+    if (phoneList_->count() == 0) {
+        auto *item = new QListWidgetItem(tr("Nothing yet — turn on Wireless debugging on the phone, or plug it in."),
+                                         phoneList_);
+        item->setFlags(Qt::NoItemFlags);
+    }
+}
+
+void SettingsDialog::rememberPhone() {
+    if (!config_.android.serial.isEmpty()) {
+        config_.android.serial.clear();
+        showPhoneResult(tr("Forgotten. Press OK to keep it that way."), true);
+        showPhone();
+        return;
+    }
+    if (!status_.phone) return;
+    phoneRememberButton_->setEnabled(false);
+    const QPointer<SettingsDialog> self(this);
+    status_.phone->info([self](Result<AndroidDevice::Info> info) {
+        if (!self) return;
+        self->phoneRememberButton_->setEnabled(true);
+        if (!info) {
+            self->showPhoneResult(info.error().message, false);
+            return;
+        }
+        if (info.value().hardwareSerial.isEmpty()) {
+            self->showPhoneResult(tr("The phone did not say its serial number, so it cannot be remembered."), false);
+            return;
+        }
+        self->config_.android.serial = info.value().hardwareSerial;
+        self->showPhoneResult(tr("Remembered %1. Press OK to save it.").arg(info.value().model), true);
+        self->showPhone();
+    });
+}
+
+void SettingsDialog::pairPhone() {
+    if (!status_.phone) return;
+    const QString address = pairAddress_->text().trimmed();
+    const QString code = pairCode_->text().trimmed();
+    static const QRegularExpression sixDigits(u"^\\d{6}$"_s);
+    if (address.isEmpty() || !sixDigits.match(code).hasMatch()) {
+        showPhoneResult(tr("Enter the address and the six-digit code the phone shows under \"Pair device with "
+                           "pairing code\"."),
+                        false);
+        return;
+    }
+    showPhoneResult(tr("Pairing…"), true);
+    const QPointer<SettingsDialog> self(this);
+    status_.phone->pair(address, code, [self](Result<QString> result) {
+        if (!self) return;
+        if (!result) {
+            self->showPhoneResult(result.error().message, false);
+            return;
+        }
+        self->pairCode_->clear();
+        self->showPhoneResult(result.value() + u' '
+                                  + tr("Now connect: pick its wireless debugging address in the list, or type the "
+                                       "one at the top of the phone's Wireless debugging screen."),
+                              true);
+        if (self->status_.discovery) self->status_.discovery->refresh();
+    });
+}
+
+void SettingsDialog::connectPhone() {
+    if (!status_.phone) return;
+    const QString address = connectAddress_->text().trimmed();
+    if (address.isEmpty()) {
+        showPhoneResult(tr("Enter the address at the top of the phone's Wireless debugging screen."), false);
+        return;
+    }
+    showPhoneResult(tr("Connecting…"), true);
+    const QPointer<SettingsDialog> self(this);
+    status_.phone->connectTo(address, [self](Result<QString> result) {
+        if (!self) return;
+        if (!result) {
+            self->showPhoneResult(result.error().message, false);
+            return;
+        }
+        self->showPhoneResult(result.value(), true);
+        if (self->status_.discovery) self->status_.discovery->refresh();
+        self->showPhone();
+    });
+}
+
+void SettingsDialog::disconnectPhones() {
+    if (!status_.phone) return;
+    const QPointer<SettingsDialog> self(this);
+    status_.phone->disconnectAll([self](Result<QString> result) {
+        if (!self) return;
+        self->showPhoneResult(result ? result.value() : result.error().message, result.isOk());
+        if (self->status_.discovery) self->status_.discovery->refresh();
+        self->showPhone();
+    });
+}
+
+void SettingsDialog::showPhoneResult(const QString &text, bool ok) {
+    phoneResult_->setText(text);
+    phoneResult_->setStyleSheet(ok ? u"color: #2bb3a0;"_s : u"color: #e5534b;"_s);
 }
 
 QWidget *SettingsDialog::buildPolicyTab() {

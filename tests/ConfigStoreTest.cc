@@ -39,7 +39,10 @@ Config sampleConfig() {
     config.voice.wakeWord = true;
     config.voice.ttsBackend = u"piper"_s;
     config.voice.ttsRate = 0.25;
-    config.extra.insert(u"android"_s, QJsonObject{{u"serial"_s, u"abc123"_s}});
+    config.android.serial = u"R58M12345ABC"_s;
+    config.android.autoReconnect = false;
+    // A section this build does not own yet (the web remote's).
+    config.extra.insert(u"remote"_s, QJsonObject{{u"port"_s, 7777}});
     return config;
 }
 
@@ -69,8 +72,21 @@ TEST_CASE("ConfigStore round-trips providers, prompt and unknown sections") {
     CHECK(loaded.value().active()->id == u"ollama"_s);
     CHECK(loaded.value().voice.wakeWord);
     CHECK(loaded.value().voice.ttsBackend == u"piper"_s);
-    CHECK(loaded.value().extra.value(u"android"_s).toObject().value(u"serial"_s).toString() == u"abc123"_s);
+    CHECK(loaded.value().android.serial == u"R58M12345ABC"_s);
+    CHECK_FALSE(loaded.value().android.autoReconnect);
+    CHECK(loaded.value().extra.value(u"remote"_s).toObject().value(u"port"_s).toInt() == 7777);
     CHECK_FALSE(loaded.value().extra.contains(u"voice"_s));
+    CHECK_FALSE(loaded.value().extra.contains(u"android"_s));
+}
+
+TEST_CASE("A phone remembered before Nexa understood the section is still remembered") {
+    // Earlier builds kept "android" as an unknown section, written back untouched.
+    const Config config = Config::fromJson(QJsonObject{
+        {u"android"_s, QJsonObject{{u"serial"_s, u" abc123 "_s}}},
+    });
+    CHECK(config.android.serial == u"abc123"_s);
+    CHECK(config.android.autoReconnect);            // the default when the file does not say
+    CHECK_FALSE(config.extra.contains(u"android"_s));
 }
 
 TEST_CASE("ConfigStore keeps the file and its directory private") {

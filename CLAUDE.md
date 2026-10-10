@@ -85,6 +85,13 @@ models over its slow `auto/*` combos).
   the pointer — GNOME ignores the helper's absolute device), `XTestInputBackend` (X11 only — on Wayland it
   cannot reach native windows), `InputBackendSelector` (picks one and explains why). Mutter reads portal
   pointer positions in the stream's *pixels*, not the documented logical units (`StreamUnits`).
+- `system/android/` — the phone, through adb: `AdbClient` (one adb process per call, timeouts, cancel),
+  `AdbDiscovery` (connected phones and mDNS wireless-debugging offers; reconnects the remembered one),
+  `AndroidDevice` (which phone, plus every operation), `AndroidTools` (the 18 `android_*` tools), and three pure,
+  tested files — `AdbParsers` (adb and shell output), `AdbShell` (command lines; everything from a person or a
+  model is single-quoted for the phone's `sh`), `PhoneLookup` (spoken name → app or contact). The phone is
+  remembered by hardware serial (`config.android.serial`); `core/intent/PhoneIntents` is its fast path and
+  needs the phone named before it acts on a name ("call mom" goes to the model).
 - `remote/` arrives with M6 (see ARCHITECTURE.md → File tree).
 - `packaging/` — `org.nexa.Assistant.desktop`, the helper's polkit policy, D-Bus and systemd files, and
   `install-helper.sh` / `uninstall-helper.sh`; `scripts/` — model and engine downloads, desktop-entry install.
@@ -120,4 +127,8 @@ models over its slow `auto/*` combos).
 - Spoken requests carry the source `"voice"`; `AppController` prefixes them with `[voice]` so the model answers
   in short plain sentences that read well aloud.
 - New fast-path phrases go into an `IIntentHandler`; they must not swallow ordinary chat (test negatives too).
+  Dictated payloads (text to type, a message) come from `IntentInput::raw`, never `text`: the politeness filter
+  would drop a final "now" or "thanks" from them.
+- Tool arguments are read with `core/tools/ToolArguments` (forgiving about numbers sent as strings). A
+  `privileged` tool also sets `ToolSpec::risk` — the words confirm-risky mode shows when it asks.
 - Every source file is listed explicitly in its target's `CMakeLists.txt` (no globbing). Pure logic (parsers, wire-format mappers) gets Catch2 tests.

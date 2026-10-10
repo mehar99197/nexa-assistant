@@ -1,5 +1,12 @@
 add_library(nexa_system STATIC
     SystemTools.h SystemTools.cc
+    android/AdbClient.h android/AdbClient.cc
+    android/AdbDiscovery.h android/AdbDiscovery.cc
+    android/AdbParsers.h android/AdbParsers.cc
+    android/AdbShell.h android/AdbShell.cc
+    android/AndroidDevice.h android/AndroidDevice.cc
+    android/AndroidTools.h android/AndroidTools.cc
+    android/PhoneLookup.h android/PhoneLookup.cc
     apps/AppLauncher.h apps/AppLauncher.cc
     apps/DesktopEntry.h apps/DesktopEntry.cc
     apps/DesktopEntryIndex.h apps/DesktopEntryIndex.cc

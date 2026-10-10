@@ -8,8 +8,12 @@
 namespace nexa {
 
 struct IntentInput {
-    QString text;               // politeness/wake words stripped, original case (for payloads)
+    QString text;               // politeness/wake words stripped, original case
     QString normalized;         // lower case, single spaces, no trailing punctuation
+    // As said, minus the wake word and opening politeness — nothing removed at the end. Dictated
+    // payloads (text to type, a message to send) come from here: "come home now" must not lose
+    // its "now" to the politeness filter.
+    QString raw;
 };
 
 struct IntentMatch {

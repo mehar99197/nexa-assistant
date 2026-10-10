@@ -10,12 +10,17 @@
 #include "core/config/ConfigStore.h"
 #include "core/intent/IntentRouter.h"
 #include "core/intent/PcIntents.h"
+#include "core/intent/PhoneIntents.h"
 #include "core/net/HttpClient.h"
 #include "core/policy/PanicController.h"
 #include "core/policy/PolicyEngine.h"
 #include "core/tools/ToolExecutor.h"
 #include "core/tools/ToolRegistry.h"
 #include "system/SystemTools.h"
+#include "system/android/AdbClient.h"
+#include "system/android/AdbDiscovery.h"
+#include "system/android/AndroidDevice.h"
+#include "system/android/AndroidTools.h"
 #include "system/apps/DesktopEntryIndex.h"
 #include "system/audio/WpctlAudioController.h"
 #include "system/commands/LocalCommandRunner.h"
@@ -194,6 +199,27 @@ int main(int argc, char *argv[]) {
     QObject::connect(&helperClient, &HelperClient::readyChanged, &app, [&input] { input.reselect(); });
     panic.addHandler([&helperClient] { helperClient.cancelAllJobs(); });
 
+    // The phone, through adb: over USB, or over Wi-Fi once paired in Settings → Android. Nothing
+    // here starts adb until a phone is remembered or a phone tool is used.
+    AdbClient adb;
+    AndroidDevice phone(&adb);
+    AdbDiscovery discovery(&adb);
+    registerAndroidTools(tools, &phone, &files);
+    panic.addHandler([&phone] { phone.cancelAll(); });
+    const auto applyAndroid = [&phone, &discovery](const AndroidConfig &android) {
+        phone.setPreferred(android.serial);
+        const bool reconnect = android.autoReconnect && !android.serial.isEmpty();
+        discovery.setAutoConnect(reconnect ? android.serial : QString());
+        discovery.setBackground(reconnect);
+    };
+    applyAndroid(config.android);
+    // Whatever discovery notices, the phone in use is looked up again, so the status bar follows a
+    // phone that comes or goes without any tool running.
+    QObject::connect(&discovery, &AdbDiscovery::changed, &phone, [&phone] {
+        phone.forgetDevices();
+        phone.withDevice([](Result<AdbDevice>) {});
+    });
+
     registerSystemTools(tools, SystemServices{.commands = &commands,
                                               .apps = &apps,
                                               .audio = &audio,
@@ -212,6 +238,7 @@ int main(int argc, char *argv[]) {
     // Fast path (no model) for common phrases; order = priority
     IntentRouter router([&tools](const QString &tool) { return tools.contains(tool); });
     router.add(std::make_unique<ControlIntent>());
+    router.add(std::make_unique<PhoneIntent>());     // before the PC's: "open youtube on my phone"
     router.add(std::make_unique<MediaIntent>());
     router.add(std::make_unique<AudioIntent>());
     router.add(std::make_unique<ScreenIntent>());
@@ -224,6 +251,8 @@ int main(int argc, char *argv[]) {
     AppController controller(
         AppServices{&store, &providers, &tools, &executor, &router, &agent, &panic, &policy, &voice, &http},
         std::move(config), SystemInfo::summary());
+    QObject::connect(&controller, &AppController::configChanged, &app,
+                     [applyAndroid](const Config &updated) { applyAndroid(updated.android); });
     // Hotkeys that work from any window. The compositor grants them (GNOME asks once) and the
     // user can change them in Settings → Keyboard; without the portal, the in-window shortcuts
     // (Ctrl+M, Esc, Ctrl+Alt+Esc) still work.
@@ -231,7 +260,9 @@ int main(int argc, char *argv[]) {
     MainWindow window(&controller, &providers, &executor, &http, &shortcuts,
                       SystemStatus{.helper = &helperClient,
                                    .inputSummary = [&input] { return input.summary(); },
-                                   .inputNotes = [&input] { return input.notes(); }});
+                                   .inputNotes = [&input] { return input.notes(); },
+                                   .phone = &phone,
+                                   .discovery = &discovery});
     window.show();
     shortcuts.bind({
         {u"talk"_s, QObject::tr("Talk to Nexa (hold to speak)"), u"CTRL+ALT+space"_s},
