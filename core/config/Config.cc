@@ -1,0 +1,150 @@
+#include "core/config/Config.h"
+
+#include <QJsonArray>
+#include <QStringList>
+
+#include <algorithm>
+
+using namespace Qt::StringLiterals;
+
+namespace nexa {
+
+namespace {
+
+// Earlier built-in defaults: configs still holding one of them get the current default.
+const QStringList &legacyDefaultPrompts() {
+    static const QStringList prompts{
+        u"You are Nexa, a fast desktop assistant running on the user's Linux PC. "
+        "Answer directly and concisely. Use Markdown for code, commands and lists."_s,
+    };
+    return prompts;
+}
+
+} // namespace
+
+QString defaultSystemPrompt() {
+    return u"You are Nexa, a fast assistant that operates the user's Linux desktop through tools. "
+           "When the user asks for something a tool can do, do it with the tool instead of explaining how. "
+           "Use open_app for graphical applications and run_command for shell commands (never run_command "
+           "for GUI apps — it waits for them to exit). Call take_screenshot when you need to see the screen. "
+           "Before deleting or overwriting the user's data, make sure that is what they asked for. "
+           "Keep replies short; use Markdown for code and commands."_s;
+}
+
+QJsonObject ProviderConfig::toJson() const {
+    return QJsonObject{
+        {u"id"_s, id},
+        {u"kind"_s, kind},
+        {u"name"_s, name},
+        {u"baseUrl"_s, baseUrl},
+        {u"apiKey"_s, apiKey},
+        {u"defaultModel"_s, defaultModel},
+        {u"requiresKey"_s, requiresKey},
+        {u"sttModel"_s, sttModel},
+        {u"ttsModel"_s, ttsModel},
+        {u"ttsVoice"_s, ttsVoice},
+    };
+}
+
+ProviderConfig ProviderConfig::fromJson(const QJsonObject &json) {
+    ProviderConfig config;
+    config.id = json.value(u"id"_s).toString();
+    config.kind = json.value(u"kind"_s).toString(kKindOpenAiCompatible);
+    config.name = json.value(u"name"_s).toString(config.id);
+    config.baseUrl = json.value(u"baseUrl"_s).toString();
+    config.apiKey = json.value(u"apiKey"_s).toString();
+    config.defaultModel = json.value(u"defaultModel"_s).toString();
+    config.requiresKey = json.value(u"requiresKey"_s).toBool(true);
+    config.sttModel = json.value(u"sttModel"_s).toString();
+    config.ttsModel = json.value(u"ttsModel"_s).toString();
+    config.ttsVoice = json.value(u"ttsVoice"_s).toString();
+    return config;
+}
+
+QJsonObject VoiceConfig::toJson() const {
+    return QJsonObject{
+        {u"sttBackend"_s, sttBackend},
+        {u"whisperModel"_s, whisperModel},
+        {u"language"_s, language},
+        {u"ttsBackend"_s, ttsBackend},
+        {u"piperVoice"_s, piperVoice},
+        {u"speechdVoice"_s, speechdVoice},
+        {u"ttsRate"_s, ttsRate},
+        {u"speakReplies"_s, speakReplies},
+        {u"wakeWord"_s, wakeWord},
+        {u"bargeIn"_s, bargeIn},
+    };
+}
+
+VoiceConfig VoiceConfig::fromJson(const QJsonObject &json) {
+    const VoiceConfig defaults;
+    VoiceConfig config;
+    config.sttBackend = json.value(u"sttBackend"_s).toString(defaults.sttBackend);
+    config.whisperModel = json.value(u"whisperModel"_s).toString(defaults.whisperModel);
+    config.language = json.value(u"language"_s).toString(defaults.language);
+    config.ttsBackend = json.value(u"ttsBackend"_s).toString(defaults.ttsBackend);
+    config.piperVoice = json.value(u"piperVoice"_s).toString();
+    config.speechdVoice = json.value(u"speechdVoice"_s).toString();
+    config.ttsRate = std::clamp(json.value(u"ttsRate"_s).toDouble(0.0), -1.0, 1.0);
+    config.speakReplies = json.value(u"speakReplies"_s).toString(defaults.speakReplies);
+    config.wakeWord = json.value(u"wakeWord"_s).toBool(false);
+    config.bargeIn = json.value(u"bargeIn"_s).toBool(false);
+    return config;
+}
+
+QJsonObject Config::toJson() const {
+    QJsonObject json = extra;
+    QJsonArray list;
+    for (const ProviderConfig &provider : providers) list.append(provider.toJson());
+    json.insert(u"version"_s, version);
+    json.insert(u"providers"_s, list);
+    json.insert(u"activeProvider"_s, activeProvider);
+    json.insert(u"systemPrompt"_s, systemPrompt);
+    json.insert(u"policy"_s, QJsonObject{{u"mode"_s, policyMode}});
+    json.insert(u"voice"_s, voice.toJson());
+    return json;
+}
+
+Config Config::fromJson(const QJsonObject &json) {
+    Config config;
+    config.version = json.value(u"version"_s).toInt(kVersion);
+    const QJsonArray list = json.value(u"providers"_s).toArray();
+    for (const QJsonValue &value : list) {
+        if (!value.isObject()) continue;
+        ProviderConfig provider = ProviderConfig::fromJson(value.toObject());
+        if (!provider.id.isEmpty() && !config.provider(provider.id)) config.providers.append(provider);
+    }
+    config.activeProvider = json.value(u"activeProvider"_s).toString();
+    config.systemPrompt = json.value(u"systemPrompt"_s).toString(defaultSystemPrompt());
+    if (legacyDefaultPrompts().contains(config.systemPrompt)) config.systemPrompt = defaultSystemPrompt();
+    config.policyMode = json.value(u"policy"_s).toObject().value(u"mode"_s).toString(u"autonomous"_s);
+    config.voice = VoiceConfig::fromJson(json.value(u"voice"_s).toObject());
+
+    config.extra = json;
+    for (const QString &key :
+         {u"version"_s, u"providers"_s, u"activeProvider"_s, u"systemPrompt"_s, u"policy"_s, u"voice"_s}) {
+        config.extra.remove(key);
+    }
+    return config;
+}
+
+const ProviderConfig *Config::provider(const QString &id) const {
+    for (const ProviderConfig &candidate : providers) {
+        if (candidate.id == id) return &candidate;
+    }
+    return nullptr;
+}
+
+ProviderConfig *Config::provider(const QString &id) {
+    for (ProviderConfig &candidate : providers) {
+        if (candidate.id == id) return &candidate;
+    }
+    return nullptr;
+}
+
+const ProviderConfig *Config::active() const {
+    if (const ProviderConfig *chosen = provider(activeProvider)) return chosen;
+    return providers.isEmpty() ? nullptr : &providers.first();
+}
+
+} // namespace nexa

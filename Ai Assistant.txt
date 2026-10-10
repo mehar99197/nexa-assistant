@@ -1,0 +1,1 @@
+hi  develop complete ai assistant for my linux in which we can attach ai apis,through with we want to make use for example all providers and models ,who can control my system,keyboard,mouse,speakers,and also root permissions for my help through my voice also run commands also can open any app and make sure make its frontend in qt6 and make it in cpp

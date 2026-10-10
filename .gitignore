@@ -1,0 +1,16 @@
+# Build trees
+/build/
+/build-*/
+CMakeUserPresets.json
+compile_commands.json
+
+# Editor / tooling caches
+/.cache/
+*.user
+.claude/settings.local.json
+
+# Downloaded models and binaries (whisper, piper)
+/models/
+*.bin
+*.gguf
+*.onnx

@@ -1,0 +1,19 @@
+[Desktop Entry]
+Type=Application
+Version=1.4
+Name=Nexa Assistant
+GenericName=AI Assistant
+Comment=Ask an AI assistant to run commands, open apps and look at your screen
+# The id is org.nexa.Assistant, never nexa: that one belongs to Nexa Download Manager. GNOME's
+# global-shortcuts provider also insists on a reverse-DNS id (it must contain a dot).
+Exec=nexa-assistant
+# Nexa has no icon of its own yet; system-run exists in every icon theme.
+Icon=system-run
+Terminal=false
+Categories=Utility;
+Keywords=AI;assistant;chat;voice;automation;
+StartupNotify=true
+# Wayland matches this entry by the app id Qt takes from its name; XWayland windows use the
+# binary name. Neither may be plain "nexa" — Nexa Download Manager claims that WM class.
+StartupWMClass=nexa-assistant
+SingleMainWindow=true
