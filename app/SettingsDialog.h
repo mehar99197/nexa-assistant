@@ -17,6 +17,7 @@ class QPlainTextEdit;
 class QPushButton;
 class QSlider;
 class QSpinBox;
+class QTabWidget;
 class QTimer;
 
 namespace nexa {
@@ -36,6 +37,7 @@ public:
     ~SettingsDialog() override;
 
     Config config() const { return config_; }
+    void showTab(const QString &title);         // e.g. "Policy": open on that page
 
     void accept() override;
 
@@ -83,6 +85,7 @@ private:
     std::unique_ptr<ITextToSpeech> testSpeech_;
     int currentRow_{-1};
 
+    QTabWidget *tabs_{nullptr};
     QListWidget *providerList_{nullptr};
     QComboBox *activeCombo_{nullptr};
     QWidget *providerForm_{nullptr};
@@ -135,6 +138,7 @@ private:
     QPushButton *revokeButton_{nullptr};
     QTimer *pairCountdown_{nullptr};
     QComboBox *policyCombo_{nullptr};
+    QComboBox *themeCombo_{nullptr};
     QPlainTextEdit *systemPromptEdit_{nullptr};
 };
 

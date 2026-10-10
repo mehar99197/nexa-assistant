@@ -87,6 +87,17 @@ struct AgentConfig {
     bool operator==(const AgentConfig &) const = default;
 };
 
+// Settings → General → Appearance, and the toolbar's theme toggle. "system" follows the desktop's
+// own light or dark setting.
+struct UiConfig {
+    QString theme{QStringLiteral("system")};    // system | dark | light
+
+    QJsonObject toJson() const;
+    static UiConfig fromJson(const QJsonObject &json);
+
+    bool operator==(const UiConfig &) const = default;
+};
+
 // Typed view of ~/.config/nexa/config.json. Sections this build does not know stay in `extra` and
 // are written back unchanged, so no build drops settings it does not understand.
 struct Config {
@@ -102,6 +113,7 @@ struct Config {
     AndroidConfig android;
     RemoteConfig remote;
     AgentConfig agent;
+    UiConfig ui;
     QJsonObject extra;
 
     QJsonObject toJson() const;

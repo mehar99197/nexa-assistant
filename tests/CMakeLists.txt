@@ -25,6 +25,7 @@ add_executable(nexa_tests
     PairingManagerTest.cc
     MdnsBrowserTest.cc
     MdnsPacketTest.cc
+    NexaCoreSpecTest.cc
     PhoneIntentTest.cc
     PhoneLookupTest.cc
     PolicyEngineTest.cc
@@ -55,6 +56,7 @@ target_link_libraries(nexa_tests PRIVATE
     nexa_system
     nexa_voice
     nexa_remote
+    nexa_ui
     nexa_phone_ui
     nexa_options
     Qt6::Test

@@ -136,6 +136,17 @@ AgentConfig AgentConfig::fromJson(const QJsonObject &json) {
     return config;
 }
 
+QJsonObject UiConfig::toJson() const {
+    return QJsonObject{{u"theme"_s, theme}};
+}
+
+UiConfig UiConfig::fromJson(const QJsonObject &json) {
+    UiConfig config;
+    const QString theme = json.value(u"theme"_s).toString(config.theme);
+    if (theme == u"dark"_s || theme == u"light"_s || theme == u"system"_s) config.theme = theme;
+    return config;
+}
+
 QJsonObject Config::toJson() const {
     QJsonObject json = extra;
     QJsonArray list;
@@ -149,6 +160,7 @@ QJsonObject Config::toJson() const {
     json.insert(u"android"_s, android.toJson());
     json.insert(u"remote"_s, remote.toJson());
     json.insert(u"agent"_s, agent.toJson());
+    json.insert(u"ui"_s, ui.toJson());
     return json;
 }
 
@@ -169,11 +181,12 @@ Config Config::fromJson(const QJsonObject &json) {
     config.android = AndroidConfig::fromJson(json.value(u"android"_s).toObject());
     config.remote = RemoteConfig::fromJson(json.value(u"remote"_s).toObject());
     config.agent = AgentConfig::fromJson(json.value(u"agent"_s).toObject());
+    config.ui = UiConfig::fromJson(json.value(u"ui"_s).toObject());
 
     config.extra = json;
     for (const QString &key :
          {u"version"_s, u"providers"_s, u"activeProvider"_s, u"systemPrompt"_s, u"policy"_s, u"voice"_s, u"android"_s,
-          u"remote"_s, u"agent"_s}) {
+          u"remote"_s, u"agent"_s, u"ui"_s}) {
         config.extra.remove(key);
     }
     return config;

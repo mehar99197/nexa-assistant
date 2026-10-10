@@ -13,6 +13,7 @@
 #include "remote/RemoteClient.h"
 #include "remote/RemoteServer.h"
 #include "remote/TlsIdentity.h"
+#include "ui/NexaTheme.h"
 
 #include "QtStringMakers.h"
 
@@ -75,6 +76,9 @@ struct Fixture {
         : pairing(directory.filePath(u"devices.json"_s)), tls(directory.filePath(u"tls"_s)),
           server(&pairing, &host, &tls), settings(directory.filePath(u"phone.ini"_s)),
           window(&settings, &client, &recorder, &player) {
+        // The look the app runs with, so the screens (and their pictures) are the real ones.
+        NexaTheme::apply(qApp, ThemeScheme::Dark);
+        window.setScheme(ThemeScheme::Dark);
         pages = window.findChild<QStackedWidget *>();
         pair = window.findChild<PairPage *>();
         chat = window.findChild<ChatPage *>();
@@ -86,11 +90,9 @@ struct Fixture {
         pairButton = pair->findChild<QPushButton *>();
         messages = chat->findChild<QListWidget *>();
         input = chat->findChild<QLineEdit *>();
-        status = chat->findChild<QLabel *>();
-        for (QPushButton *button : chat->findChildren<QPushButton *>()) {
-            if (button->text() == u"➤"_s) send = button;
-            else talk = button;
-        }
+        status = chat->findChild<QLabel *>(u"statusPill"_s);
+        send = chat->findChild<QAbstractButton *>(u"send"_s);
+        talk = chat->findChild<QWidget *>(u"talk"_s);
     }
 
     bool start() {
@@ -135,8 +137,8 @@ struct Fixture {
     QListWidget *messages{nullptr};
     QLineEdit *input{nullptr};
     QLabel *status{nullptr};
-    QPushButton *send{nullptr};
-    QPushButton *talk{nullptr};
+    QAbstractButton *send{nullptr};
+    QWidget *talk{nullptr};             // the Talk button is the Nexa core, not a QPushButton
 };
 
 bool haveOpenssl() {
@@ -147,6 +149,7 @@ bool haveOpenssl() {
 void snapshot(QWidget &widget, const QString &name) {
     const QString directory = qEnvironmentVariable("NEXA_TEST_SCREENSHOTS");
     if (directory.isEmpty()) return;
+    QTest::qWait(50);   // a label that just changed is laid out again on the next turn of the loop
     widget.grab().save(directory + u'/' + name + u".png"_s);
 }
 
@@ -218,12 +221,21 @@ TEST_CASE("The phone app pairs, chats, cancels and forgets, through adb's plain 
 
     // Busy: the send button becomes Stop, and Stop cancels.
     f.server.onBusyChanged(true);
-    REQUIRE(QTest::qWaitFor([&f] { return f.send->text() == u"■"_s; }, 5000));
+    REQUIRE(QTest::qWaitFor([&f] { return f.send->property("busy").toBool(); }, 5000));
+    CHECK(f.send->toolTip() == u"Stop"_s);
     snapshot(f.window, u"phone-chat"_s);
     QTest::mouseClick(f.send, Qt::LeftButton);
     CHECK(QTest::qWaitFor([&f] { return f.host.cancels == 1; }, 5000));
     f.server.onBusyChanged(false);
-    CHECK(QTest::qWaitFor([&f] { return f.send->text() == u"➤"_s; }, 5000));
+    CHECK(QTest::qWaitFor([&f] { return !f.send->property("busy").toBool(); }, 5000));
+
+    // The core on the phone shows the PC's state, by name as well as by colour.
+    f.server.onCoreChanged(u"act"_s, {u"pc"_s, u"tools"_s});
+    QLabel *stateTitle = f.chat->findChild<QLabel *>(u"stateTitle"_s);
+    REQUIRE(stateTitle);
+    CHECK(QTest::qWaitFor([stateTitle] { return stateTitle->text() == u"Acting"_s; }, 5000));
+    f.server.onCoreChanged(u"idle"_s, {});
+    CHECK(QTest::qWaitFor([stateTitle] { return stateTitle->text() == u"Ready"_s; }, 5000));
 
     // Forgetting the PC: unpaired here, gone from Nexa's count, back to the first screen.
     emit f.chat->forgetRequested();

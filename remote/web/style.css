@@ -1,15 +1,45 @@
-/* Nexa's web remote: the same dark look as the PC app, sized for a thumb. */
+/* Nexa's web remote: the PC window's look, sized for a thumb. The tokens are the design's
+   (ui/NexaTheme.cc has the same values); the core is drawn as SVG by app.js and moved here with
+   the timings of ui/NexaCoreSpec.cc. Nothing inline: the page runs under a strict CSP. */
 
 :root {
-  --bg: #16181d;
-  --panel: #1f2229;
-  --line: #2c3039;
-  --text: #e8eaed;
-  --muted: #9aa0a6;
-  --accent: #2bb3a0;
-  --warn: #e09b2d;
-  --bad: #e5534b;
-  --rec: #e5534b;
+  --ground: #0D1014;
+  --panel: #151A21;
+  --panel2: #1B222B;
+  --line: #2A323D;
+  --text: #E7ECF2;
+  --muted: #98A4B3;
+  --nx-idle: #46B7B0;
+  --nx-wake: #6FD38A;
+  --nx-listen: #5BE3D6;
+  --nx-stt: #9DB4FF;
+  --nx-think: #B39DFF;
+  --nx-act: #F0B24B;
+  --nx-speak: #7BE8C0;
+  --nx-fast: #E6FFFB;
+  --nx-error: #FF7A66;
+  --on-accent: #06201C;
+  --mono: ui-monospace, "IBM Plex Mono", "JetBrains Mono", Menlo, Consolas, monospace;
+}
+
+@media (prefers-color-scheme: light) {
+  :root {
+    --ground: #F6F8FA;
+    --panel: #FFFFFF;
+    --panel2: #EEF2F5;
+    --line: #D9E0E7;
+    --text: #141A21;
+    --muted: #5F6B78;
+    --nx-idle: #2A9C95;
+    --nx-wake: #2E9E57;
+    --nx-listen: #1AA99B;
+    --nx-stt: #4F6FD8;
+    --nx-think: #7A5FD1;
+    --nx-act: #C4860F;
+    --nx-speak: #1F9E70;
+    --nx-fast: #0E8F84;
+    --nx-error: #D9483B;
+  }
 }
 
 * { box-sizing: border-box; }
@@ -17,7 +47,7 @@
 html, body {
   margin: 0;
   height: 100%;
-  background: var(--bg);
+  background: var(--ground);
   color: var(--text);
   font: 16px/1.45 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
 }
@@ -33,102 +63,301 @@ header {
   align-items: center;
   justify-content: space-between;
   gap: 12px;
-  padding: 10px 14px;
-  border-bottom: 1px solid var(--line);
+  padding: 12px 16px;
 }
 
-.brand { font-weight: 700; letter-spacing: 0.02em; }
-.status { color: var(--muted); font-size: 13px; text-align: right; }
-.status.ok { color: var(--accent); }
-.status.warn { color: var(--warn); }
-.status.rec { color: var(--rec); }
+.brand { display: flex; align-items: center; gap: 8px; font-weight: 700; font-size: 20px; letter-spacing: 0.01em; }
+.core-mark { width: 28px; height: 28px; }
+
+.pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 12px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--panel);
+  color: var(--muted);
+  font-size: 13px;
+  white-space: nowrap;
+}
+.pill .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--muted); transition: background .35s; }
+.pill.ok .dot { background: var(--nx-wake); }
+.pill.warn .dot { background: var(--nx-act); }
+.pill.bad .dot { background: var(--nx-error); }
+.pill.rec .dot { background: var(--nx-listen); }
 
 /* ---- pairing */
 
-#pair { padding: 20px 16px; max-width: 520px; margin: 0 auto; width: 100%; }
-#pair h1 { font-size: 22px; margin: 8px 0 12px; }
+#pair { padding: 12px 20px 24px; max-width: 520px; margin: 0 auto; width: 100%; }
+.core-pair { width: 140px; height: 140px; margin: 8px auto 12px; }
+#pair h1 { font-size: 24px; margin: 8px 0 10px; text-align: center; }
 #pair p { color: var(--muted); }
 #pair-form { display: grid; gap: 10px; margin-top: 16px; }
-#pair-code { font-size: 28px; letter-spacing: 0.3em; text-align: center; }
+#pair-code { font-family: var(--mono); font-size: 28px; letter-spacing: 0.3em; text-align: center; }
 
 input, textarea {
   width: 100%;
-  padding: 12px;
+  padding: 12px 14px;
   border: 1px solid var(--line);
-  border-radius: 10px;
+  border-radius: 12px;
   background: var(--panel);
   color: var(--text);
   font: inherit;
 }
-input:focus, textarea:focus { outline: 2px solid var(--accent); outline-offset: -1px; }
+input::placeholder, textarea::placeholder { color: var(--muted); }
+input:focus, textarea:focus { outline: 2px solid var(--nx-idle); outline-offset: -1px; }
 
 button {
   min-width: 48px;
   min-height: 48px;
   padding: 0 16px;
-  border: 0;
-  border-radius: 10px;
-  background: var(--accent);
-  color: #06201c;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--panel);
+  color: var(--text);
   font: inherit;
   font-weight: 600;
   touch-action: manipulation;
 }
+button.primary { background: var(--nx-idle); color: var(--on-accent); border-color: transparent; }
 button:active { filter: brightness(0.9); }
 
-.error { color: var(--bad); }
+.error { color: var(--nx-error); }
 
-/* ---- conversation */
+/* ---- the conversation */
 
 #chat { flex: 1; display: flex; flex-direction: column; min-height: 0; }
+
+#presence {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+  padding: 8px 20px 16px;
+  transition: padding .3s ease;
+}
+.core-presence { width: 220px; height: 220px; transition: width .3s ease, height .3s ease; }
+.presence-text h1 { margin: 10px 0 2px; font-size: 24px; color: var(--accent, var(--nx-idle)); transition: color .35s; }
+.presence-text p { margin: 0; color: var(--muted); font-size: 14px; }
+
+/* Once there is a conversation the presence shrinks to one row, so the messages get the room. */
+#chat.has-messages #presence { flex-direction: row; text-align: left; gap: 14px; padding: 4px 16px 10px; border-bottom: 1px solid var(--line); }
+#chat.has-messages .core-presence { width: 64px; height: 64px; }
+#chat.has-messages .presence-text h1 { margin: 0; font-size: 18px; }
+#chat.has-messages .presence-text p { font-size: 13px; }
 
 #messages {
   flex: 1;
   overflow-y: auto;
   list-style: none;
   margin: 0;
-  padding: 12px;
+  padding: 12px 16px;
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: 6px;
 }
-
 #messages li {
   max-width: 88%;
-  padding: 9px 12px;
+  padding: 9px 13px;
   border-radius: 14px;
   white-space: pre-wrap;
   overflow-wrap: anywhere;
 }
-#messages li.user { align-self: flex-end; background: #234a44; }
-#messages li.user.from-pc { background: #2c3039; }
-#messages li.nexa { align-self: flex-start; background: var(--panel); }
+#messages li.meta {
+  padding: 8px 2px 0;
+  font-family: var(--mono);
+  font-size: 11px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--muted);
+  max-width: none;
+}
+#messages li.meta.right { align-self: flex-end; }
+#messages li.meta .detail { text-transform: none; letter-spacing: 0; }
+#messages li.user { align-self: flex-end; background: var(--panel); border: 1px solid var(--line); }
+#messages li.user.from-pc { background: var(--panel2); }
+#messages li.nexa { align-self: flex-start; background: none; padding: 2px 2px 4px; max-width: 100%; }
 #messages li.step, #messages li.heard {
   align-self: flex-start;
   background: none;
   padding: 2px 4px;
   color: var(--muted);
-  font-size: 13px;
+  font-family: var(--mono);
+  font-size: 12px;
 }
-#messages li.step::before { content: "✓ "; color: var(--accent); }
-#messages li.step.failed::before { content: "✗ "; color: var(--bad); }
-#messages li.error { align-self: stretch; max-width: none; background: none; color: var(--bad); font-size: 14px; }
+#messages li.step::before { content: "✓ "; color: var(--nx-idle); }
+#messages li.step.failed::before { content: "✗ "; color: var(--nx-error); }
+#messages li.error { align-self: stretch; max-width: none; background: none; color: var(--nx-error); font-size: 14px; }
 
 #ask {
   display: flex;
-  gap: 8px;
-  padding: 10px;
-  border-top: 1px solid var(--line);
-  background: var(--bg);
+  gap: 10px;
+  padding: 10px 16px 6px;
 }
-#text { flex: 1; resize: none; max-height: 30vh; }
-#send.stop { background: var(--bad); color: #fff; }
-
-#talk { background: var(--panel); color: var(--text); font-size: 20px; user-select: none; -webkit-user-select: none; }
-#talk.recording { background: var(--rec); color: #fff; animation: pulse 1s ease-in-out infinite; }
-
-@keyframes pulse {
-  50% { box-shadow: 0 0 0 8px rgba(229, 83, 75, 0.25); }
+#text { flex: 1; resize: none; max-height: 30vh; border-radius: 12px; }
+#send {
+  width: 48px;
+  min-width: 48px;
+  padding: 0;
+  border-color: transparent;
+  background: var(--nx-idle);
+  color: var(--on-accent);
+  display: grid;
+  place-items: center;
 }
+#send svg { width: 22px; height: 22px; }
+#send .icon-stop { display: none; }
+#send.stop { background: var(--nx-error); color: #fff; }
+#send.stop .icon-send { display: none; }
+#send.stop .icon-stop { display: block; }
+
+#talk-row { display: flex; flex-direction: column; align-items: center; gap: 6px; padding: 6px 16px 16px; }
+#talk {
+  width: 80px;
+  height: 80px;
+  min-width: 0;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  background: transparent;
+  user-select: none;
+  -webkit-user-select: none;
+  -webkit-tap-highlight-color: transparent;
+}
+#talk:active { filter: none; }
+.core-button { display: block; width: 80px; height: 80px; }
+#talk-hint { margin: 0; color: var(--muted); font-size: 13px; }
 
 [hidden] { display: none !important; }
+
+/* ---- the core: circles, arcs and dashes, as ui/NexaCorePainter.cc draws them.
+   Every state sets --accent and its timings; the overlays of a state fade in and out over .35 s. */
+
+.core {
+  --accent: var(--nx-idle);
+  --lit: var(--nx-act);
+  --breath: 5.2s;
+  --ring-turn: 70s;
+  --comet-lap: 16s;
+  --level: 0;
+  display: inline-block;
+}
+.core svg { display: block; width: 100%; height: 100%; overflow: visible; }
+.core .halo-outer { fill: var(--accent); opacity: .07; transition: fill .35s ease; }
+.core .halo-inner { fill: var(--accent); opacity: .12; transition: fill .35s ease; }
+.core .ring {
+  fill: none;
+  stroke: var(--line);
+  stroke-width: 1.2;
+  stroke-dasharray: 0.5 3;
+  stroke-linecap: round;
+  animation: turn var(--ring-turn) linear infinite;
+  transition: stroke .35s ease;
+}
+.core .disc-group { animation: breath var(--breath) ease-in-out infinite; }
+.core .disc { fill: var(--accent); transition: fill .35s ease; }
+.core .glint { fill: #fff; opacity: .22; }
+.core .glyph { fill: var(--ground); }
+
+.core .node circle.body { fill: var(--panel); stroke: var(--line); stroke-width: .9; transition: fill .35s, stroke .35s; }
+.core .node .glow { fill: var(--lit); opacity: 0; transition: opacity .35s; }
+.core .node .icon { fill: none; stroke: var(--muted); stroke-width: 1.3; stroke-linecap: round; stroke-linejoin: round; transition: stroke .35s; }
+.core.lit-voice .node-voice circle.body, .core.lit-pc .node-pc circle.body,
+.core.lit-tools .node-tools circle.body, .core.lit-phone .node-phone circle.body { fill: var(--lit); stroke: var(--lit); }
+.core.lit-voice .node-voice .glow, .core.lit-pc .node-pc .glow,
+.core.lit-tools .node-tools .glow, .core.lit-phone .node-phone .glow { opacity: .22; }
+.core.lit-voice .node-voice .icon, .core.lit-pc .node-pc .icon,
+.core.lit-tools .node-tools .icon, .core.lit-phone .node-phone .icon { stroke: var(--ground); }
+
+.core .ticks, .core .scan, .core .satellites, .core .sonar, .core .comet, .core .packets {
+  opacity: 0;
+  transition: opacity .35s ease;
+}
+
+/* level ticks: two rings of 48, each 16 units long, showing 3 to 16 of them */
+.core .ticks line {
+  stroke: var(--accent);
+  stroke-width: 1.1;
+  stroke-linecap: round;
+  stroke-dasharray: 16 16;
+  animation: swell .9s ease-in-out infinite alternate;
+}
+.core .ticks .outer line { animation-duration: 1.3s; animation-direction: alternate-reverse; }
+.core .ticks line:nth-child(3n+1) { animation-delay: -.3s; }
+.core .ticks line:nth-child(3n+2) { animation-delay: -.6s; }
+.core .ticks { transform: scale(calc(0.97 + 0.08 * var(--level))); }
+
+.core .scan { fill: none; stroke: var(--accent); stroke-width: 2.6; stroke-linecap: round; animation: turn 1.1s linear infinite; }
+.core .scan .tail { opacity: .25; }
+
+.core .orbit circle.path { fill: none; stroke: var(--accent); stroke-width: 1; opacity: .18; }
+.core .orbit circle.dot { fill: var(--accent); }
+.core .orbit.o1 { animation: turn 3.2s linear infinite; }
+.core .orbit.o2 { animation: turn 4.7s linear infinite reverse; }
+.core .orbit.o3 { animation: turn 6.6s linear infinite; }
+
+.core .sonar { fill: none; stroke: var(--accent); stroke-width: 1.3; animation: ping 3.2s ease-out infinite; }
+
+.core .comet { animation: turn var(--comet-lap) linear infinite; }
+.core .comet .head { fill: var(--accent); }
+.core .comet .head-glow { fill: var(--accent); opacity: .25; }
+.core .comet .tail { fill: none; stroke: var(--accent); stroke-width: 1.6; stroke-linecap: round; opacity: .55; }
+
+.core .packet { fill: var(--lit); opacity: 0; }
+.core .packet-voice { transform: rotate(-90deg); }
+.core .packet-pc { transform: rotate(0deg); }
+.core .packet-tools { transform: rotate(90deg); }
+.core .packet-phone { transform: rotate(180deg); }
+.core .packet circle { animation: packet 1.1s ease-in infinite; }
+
+/* ---- the states */
+
+.core.mode-idle { --accent: var(--nx-idle); }
+.core.mode-idle .comet { opacity: 1; }
+
+.core.mode-wake { --accent: var(--nx-wake); --lit: var(--nx-wake); --ring-turn: 50s; }
+.core.mode-wake .ring { stroke: var(--nx-wake); }
+.core.mode-wake .comet { opacity: 1; }
+.core.mode-wake .sonar { opacity: 1; }
+
+.core.mode-listen { --accent: var(--nx-listen); --lit: var(--nx-listen); --breath: 1.1s; }
+.core.mode-listen .ticks { opacity: 1; }
+
+.core.mode-stt { --accent: var(--nx-stt); --lit: var(--nx-stt); --breath: 2.4s; }
+.core.mode-stt .scan { opacity: 1; }
+
+.core.mode-think { --accent: var(--nx-think); --breath: 2.8s; --ring-turn: 30s; --comet-lap: 8s; }
+.core.mode-think .satellites { opacity: 1; }
+.core.mode-think .comet { opacity: 1; }
+
+.core.mode-act { --accent: var(--nx-act); --breath: 1.6s; --comet-lap: 2.2s; }
+.core.mode-act .comet { opacity: 1; }
+.core.mode-act .packets { opacity: 1; }
+
+.core.mode-speak { --accent: var(--nx-speak); --lit: var(--nx-speak); --breath: .8s; }
+.core.mode-speak .ticks { opacity: 1; }
+.core.mode-speak .ticks line { animation-duration: 1.6s; }
+.core.mode-speak .ticks .outer line { animation-duration: 1.6s; animation-delay: -.8s; }
+
+.core.mode-fast { --accent: var(--nx-fast); --breath: 1.6s; }
+.core.mode-fast .sonar { opacity: 1; animation: ping .9s ease-out 1; }
+.core.mode-fast .packets { opacity: 1; }
+.core.mode-fast .packet circle { animation: packet .3s ease-in 1; }
+
+.core.mode-offline { --accent: var(--nx-error); --breath: 3.4s; }
+.core.mode-offline .disc-group { animation-name: shrink; }
+
+/* The states by name, beside the core: never colour alone. */
+.mode-idle ~ .presence-text h1, #presence.mode-idle h1 { --accent: var(--nx-idle); }
+
+@keyframes turn { to { transform: rotate(360deg); } }
+@keyframes breath { 0%, 100% { transform: scale(1.02); } 50% { transform: scale(1.07); } }
+@keyframes shrink { 0%, 100% { transform: scale(0.97); } 50% { transform: scale(1.0); } }
+@keyframes swell { from { stroke-dashoffset: 13; } to { stroke-dashoffset: calc(13 - 13 * (0.25 + 0.75 * var(--level))); } }
+@keyframes ping { from { transform: scale(0.4); opacity: .55; } to { transform: scale(2.9); opacity: 0; } }
+@keyframes packet { from { transform: translateX(34px); opacity: 1; } to { transform: translateX(66px); opacity: .2; } }
+
+@media (prefers-reduced-motion: reduce) {
+  .core *, .core { animation-duration: 0.001s !important; animation-iteration-count: 1 !important; }
+}

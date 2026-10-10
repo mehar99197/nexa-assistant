@@ -79,6 +79,8 @@ public slots:
     void onReplyFailed(const QString &message);
     void onBusyChanged(bool busy);
     void onStatus(const QString &message, bool isError);
+    // The Nexa core's state and the satellites it lights, as NexaCoreSpec names them on the wire.
+    void onCoreChanged(const QString &mode, const QStringList &nodes);
 
 signals:
     void clientsChanged(int count);
@@ -118,6 +120,8 @@ private:
     QPointer<RemoteSession> speaker_;                   // whose spoken request the reply answers
     QString lanAddress_;
     QString problem_;
+    QString mode_{QStringLiteral("idle")};              // the core's state, told to a phone as it connects
+    QStringList litNodes_;
     int port_{0};
     bool tlsRunning_{false};
     bool running_{false};

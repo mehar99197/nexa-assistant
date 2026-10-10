@@ -70,24 +70,30 @@ SettingsDialog::SettingsDialog(Config config, ProviderRegistry *registry, HttpCl
     setWindowTitle(tr("Settings"));
     resize(820, 580);
 
-    auto *tabs = new QTabWidget(this);
-    tabs->addTab(buildProvidersTab(), tr("Providers"));
-    tabs->addTab(buildVoiceTab(), tr("Voice"));
-    tabs->addTab(buildHelperTab(), tr("Helper"));
-    tabs->addTab(buildAndroidTab(), tr("Android"));
-    tabs->addTab(buildRemoteTab(), tr("Remote"));
-    tabs->addTab(buildPolicyTab(), tr("Policy"));
-    tabs->addTab(buildGeneralTab(), tr("General"));
+    tabs_ = new QTabWidget(this);
+    tabs_->addTab(buildProvidersTab(), tr("Providers"));
+    tabs_->addTab(buildVoiceTab(), tr("Voice"));
+    tabs_->addTab(buildHelperTab(), tr("Helper"));
+    tabs_->addTab(buildAndroidTab(), tr("Android"));
+    tabs_->addTab(buildRemoteTab(), tr("Remote"));
+    tabs_->addTab(buildPolicyTab(), tr("Policy"));
+    tabs_->addTab(buildGeneralTab(), tr("General"));
 
     auto *buttons = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel, this);
     connect(buttons, &QDialogButtonBox::accepted, this, &SettingsDialog::accept);
     connect(buttons, &QDialogButtonBox::rejected, this, &SettingsDialog::reject);
 
     auto *layout = new QVBoxLayout(this);
-    layout->addWidget(tabs, 1);
+    layout->addWidget(tabs_, 1);
     layout->addWidget(buttons);
 
     populateProviders();
+}
+
+void SettingsDialog::showTab(const QString &title) {
+    for (int i = 0; i < tabs_->count(); ++i) {
+        if (tabs_->tabText(i) == title) tabs_->setCurrentIndex(i);
+    }
 }
 
 SettingsDialog::~SettingsDialog() {
@@ -102,6 +108,7 @@ void SettingsDialog::accept() {
     config_.activeProvider = activeCombo_->currentData().toString();
     config_.systemPrompt = systemPromptEdit_->toPlainText().trimmed();
     config_.policyMode = policyCombo_->currentData().toString();
+    config_.ui.theme = themeCombo_->currentData().toString();
     storeVoice();
     config_.android.autoReconnect = phoneReconnect_->isChecked();
     config_.remote.enabled = remoteEnabled_->isChecked();
@@ -962,7 +969,18 @@ QWidget *SettingsDialog::buildGeneralTab() {
     hotkeyLabel->setWordWrap(true);
     hotkeyLabel->setTextInteractionFlags(Qt::TextSelectableByMouse);
 
+    // Dark or light; "system" follows the desktop. The toolbar's sun/moon button changes it too.
+    themeCombo_ = new QComboBox(page);
+    themeCombo_->addItem(tr("Follow the system"), u"system"_s);
+    themeCombo_->addItem(tr("Dark"), u"dark"_s);
+    themeCombo_->addItem(tr("Light"), u"light"_s);
+    themeCombo_->setCurrentIndex(std::max(0, themeCombo_->findData(config_.ui.theme)));
+    auto *appearance = new QFormLayout;
+    appearance->addRow(tr("Appearance:"), themeCombo_);
+
     auto *layout = new QVBoxLayout(page);
+    layout->addLayout(appearance);
+    layout->addSpacing(8);
     layout->addWidget(new QLabel(tr("System prompt (sent at the start of every conversation):"), page));
     layout->addWidget(systemPromptEdit_, 1);
     layout->addWidget(restore, 0, Qt::AlignRight);

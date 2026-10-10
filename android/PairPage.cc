@@ -1,6 +1,8 @@
 #include "PairPage.h"
 
 #include "remote/RemoteClient.h"
+#include "ui/NexaCoreWidget.h"
+#include "ui/NexaTheme.h"
 
 #include <QLabel>
 #include <QLineEdit>
@@ -30,14 +32,21 @@ PairPage::PairPage(QWidget *parent) : QWidget(parent) {
     scroll->setWidget(form);
 
     auto *layout = new QVBoxLayout(form);
-    layout->setContentsMargins(24, 32, 24, 24);
+    layout->setContentsMargins(24, 24, 24, 24);
     layout->setSpacing(12);
+
+    // The core, at rest, says which app this is before a word is read.
+    auto *core = new NexaCoreWidget(this);
+    core->setShowNodes(true);
+    core->setDiameter(140);
+    layout->addWidget(core, 0, Qt::AlignHCenter);
 
     auto *title = new QLabel(tr("Pair with Nexa"), this);
     QFont titleFont = title->font();
     titleFont.setPointSizeF(titleFont.pointSizeF() * 1.6);
     titleFont.setBold(true);
     title->setFont(titleFont);
+    title->setAlignment(Qt::AlignHCenter);
     layout->addWidget(title);
 
     auto *hint = new QLabel(tr("On the PC, open Settings → Remote and press \"Pair a phone\". "
@@ -66,10 +75,12 @@ PairPage::PairPage(QWidget *parent) : QWidget(parent) {
 
     error_ = new QLabel(this);
     error_->setWordWrap(true);
-    error_->setStyleSheet(u"color: #c62828;"_s);
+    error_->setSizePolicy(QSizePolicy::Preferred, QSizePolicy::Minimum);    // wrapped: as tall as it needs
+    error_->setStyleSheet(u"color: %1;"_s.arg(NexaTheme::tokens(ThemeScheme::Dark).error.name()));
     layout->addWidget(error_);
 
     pair_ = new QPushButton(tr("Pair"), this);
+    pair_->setObjectName(u"primary"_s);
     pair_->setDefault(true);
     layout->addWidget(pair_);
     layout->addStretch();

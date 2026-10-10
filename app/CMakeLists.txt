@@ -29,6 +29,7 @@ target_link_libraries(nexa_assistant PRIVATE
     nexa_system
     nexa_voice
     nexa_remote
+    nexa_ui
     nexa_options
     Qt6::Widgets
 )

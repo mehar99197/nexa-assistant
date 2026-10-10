@@ -240,7 +240,7 @@ void RemoteClient::onTextMessage(const QString &text) {
         attempts_ = 0;
         ping_.start();
         setState(State::Online, message->device);
-        emit welcomed(message->device, message->voice, message->busy);
+        emit welcomed(message->device, message->voice, message->busy, message->mode);
         return;
     case remote::ServerMessage::Type::Pong:
         return;

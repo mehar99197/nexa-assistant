@@ -364,7 +364,8 @@ void RemoteServer::acceptSockets() {
         auto *session = new RemoteSession(std::move(socket), pairing_, this);
         sessions_.append(session);
         connect(session, &RemoteSession::authenticated, this, [this, session] {
-            session->send(remote::welcome(session->deviceName(), host_->canTranscribe(), busy_ || host_->isBusy()));
+            session->send(remote::welcome(session->deviceName(), host_->canTranscribe(), busy_ || host_->isBusy(), mode_));
+            if (!litNodes_.isEmpty()) session->send(remote::state(mode_, litNodes_));
             emit clientsChanged(clientCount());
         });
         connect(session, &RemoteSession::textRequest, this,
@@ -483,6 +484,13 @@ void RemoteServer::onBusyChanged(bool busy) {
 
 void RemoteServer::onStatus(const QString &message, bool isError) {
     if (isError) broadcast(remote::error(u"status"_s, message));
+}
+
+void RemoteServer::onCoreChanged(const QString &mode, const QStringList &nodes) {
+    if (mode_ == mode && litNodes_ == nodes) return;
+    mode_ = mode;
+    litNodes_ = nodes;
+    broadcast(remote::state(mode, nodes));
 }
 
 } // namespace nexa

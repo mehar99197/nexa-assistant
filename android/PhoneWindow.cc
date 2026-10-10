@@ -16,6 +16,20 @@ using namespace Qt::StringLiterals;
 
 namespace nexa {
 
+namespace {
+
+CoreNodes nodesFromNames(const QStringList &names) {
+    CoreNodes nodes = NoNode;
+    for (const QString &name : names) {
+        for (const CoreNode node : {VoiceNode, PcNode, ToolsNode, PhoneNode}) {
+            if (coreNodeName(node).compare(name, Qt::CaseInsensitive) == 0) nodes |= node;
+        }
+    }
+    return nodes;
+}
+
+} // namespace
+
 PhoneWindow::PhoneWindow(PhoneSettings *settings, RemoteClient *client, Recorder *recorder, SpeechPlayer *player,
                          QWidget *parent)
     : QMainWindow(parent), settings_(settings), client_(client), recorder_(recorder), player_(player) {
@@ -41,13 +55,25 @@ PhoneWindow::PhoneWindow(PhoneSettings *settings, RemoteClient *client, Recorder
     connect(client_, &RemoteClient::certificateRejected, this, &PhoneWindow::onCertificateRejected);
 
     connect(recorder_, &Recorder::recorded, this, &PhoneWindow::onRecorded);
+    connect(recorder_, &Recorder::stopped, this, &PhoneWindow::onRecordingStopped);
+    connect(recorder_, &Recorder::level, chat_, &ChatPage::setLevel);
     connect(recorder_, &Recorder::failed, this, [this](const QString &reason) {
+        tapRecording_ = false;
         chat_->setRecording(false);
+        setLocalMode(std::nullopt);
         chat_->addMessage(ChatPage::Kind::Error, reason);
+    });
+    connect(player_, &SpeechPlayer::started, this, [this] { setLocalMode(CoreMode::Speaking); });
+    connect(player_, &SpeechPlayer::finished, this, [this] {
+        if (localMode_ == CoreMode::Speaking) setLocalMode(std::nullopt);
     });
     connect(player_, &SpeechPlayer::failed, this, [this](const QString &reason) {
         chat_->addMessage(ChatPage::Kind::Error, reason);
     });
+}
+
+void PhoneWindow::setScheme(ThemeScheme scheme) {
+    chat_->setScheme(scheme);
 }
 
 void PhoneWindow::start() {
@@ -139,7 +165,7 @@ void PhoneWindow::pairNow(const RemoteEndpoint &endpoint, const QString &code, c
 void PhoneWindow::onStateChanged(RemoteClient::State state, const QString &detail) {
     switch (state) {
     case RemoteClient::State::Online:
-        chat_->setStatus(tr("connected · %1").arg(device_.isEmpty() ? detail : device_), ChatPage::Status::Ok);
+        chat_->setStatus(tr("Your PC · connected"), ChatPage::Status::Ok);
         break;
     case RemoteClient::State::Connecting:
         chat_->setStatus(tr("connecting…"), ChatPage::Status::Plain);
@@ -151,13 +177,17 @@ void PhoneWindow::onStateChanged(RemoteClient::State state, const QString &detai
         chat_->setStatus(detail.isEmpty() ? tr("offline") : detail, ChatPage::Status::Warn);
         break;
     }
+    showCore();
 }
 
-void PhoneWindow::onWelcomed(const QString &device, bool voice, bool busy) {
+void PhoneWindow::onWelcomed(const QString &device, bool voice, bool busy, const QString &mode) {
     device_ = device;
-    chat_->setStatus(tr("connected · %1").arg(device), ChatPage::Status::Ok);
+    chat_->setStatus(tr("Your PC · connected · %1").arg(device), ChatPage::Status::Ok);
     chat_->setVoiceAvailable(voice);
     chat_->setBusy(busy);
+    pcMode_ = coreModeFromKey(mode).value_or(busy ? CoreMode::Thinking : CoreMode::Idle);
+    pcNodes_ = NoNode;
+    showCore();
 }
 
 void PhoneWindow::onReceived(const remote::ServerMessage &message) {
@@ -175,13 +205,16 @@ void PhoneWindow::onReceived(const remote::ServerMessage &message) {
         break;
     case Type::Finished:
         chat_->endReply();
+        if (localMode_ == CoreMode::Transcribing) setLocalMode(std::nullopt);
         break;
     case Type::Failed:
         chat_->endReply();
         chat_->addMessage(ChatPage::Kind::Error, message.text);
+        if (localMode_ == CoreMode::Transcribing) setLocalMode(std::nullopt);
         break;
     case Type::Transcript:
         chat_->addMessage(ChatPage::Kind::Heard, u"“%1”"_s.arg(message.text));
+        if (localMode_ == CoreMode::Transcribing) setLocalMode(std::nullopt);
         break;
     case Type::Speech:
         client_->fetch(message.url, [this](Result<QByteArray> wav) {
@@ -191,8 +224,14 @@ void PhoneWindow::onReceived(const remote::ServerMessage &message) {
     case Type::Busy:
         chat_->setBusy(message.busy);
         break;
+    case Type::State:
+        pcMode_ = coreModeFromKey(message.mode).value_or(CoreMode::Idle);
+        pcNodes_ = nodesFromNames(message.nodes);
+        showCore();
+        break;
     case Type::Error:
         chat_->addMessage(ChatPage::Kind::Error, message.text);
+        if (localMode_ == CoreMode::Transcribing) setLocalMode(std::nullopt);
         break;
     case Type::Welcome:
     case Type::Pong:
@@ -217,7 +256,15 @@ void PhoneWindow::onAsk(const QString &text) {
 }
 
 void PhoneWindow::onTalkPressed() {
+    // A tap while a tapped recording runs sends it.
+    if (recorder_->isRecording() && tapRecording_) {
+        recorder_->stop();
+        pressClock_.invalidate();
+        return;
+    }
+    pressClock_.start();
     wantTalk_ = true;
+    tapRecording_ = false;
     if (recorder_->isRecording()) return;
 #if QT_CONFIG(permissions)
     QMicrophonePermission microphone;
@@ -239,25 +286,45 @@ void PhoneWindow::onTalkPressed() {
 }
 
 void PhoneWindow::beginRecording() {
-    // The button was let go while the permission was being asked for.
-    if (!wantTalk_) return;
+    // The button was let go while the permission was being asked for — unless that was a tap.
+    if (!wantTalk_ && !tapRecording_) return;
+    player_->stop();        // talking over a reply cuts it, as on the PC
     recorder_->start();
-    if (recorder_->isRecording()) {
-        chat_->setRecording(true);
-        chat_->setStatus(tr("listening…"), ChatPage::Status::Recording);
-    }
+    if (!recorder_->isRecording()) return;
+    if (tapRecording_) recorder_->setStopOnSilence(true);
+    chat_->setRecording(true);
+    chat_->setStatus(tr("listening…"), ChatPage::Status::Recording);
+    setLocalMode(CoreMode::Listening);
 }
 
 void PhoneWindow::onTalkReleased() {
     wantTalk_ = false;
-    if (!recorder_->isRecording()) return;
-    chat_->setRecording(false);
-    onStateChanged(client_->state(), device_);
-    recorder_->stop();
+    if (!pressClock_.isValid()) return;
+    const bool tap = pressClock_.elapsed() < kHoldMs;
+    pressClock_.invalidate();
+    if (tap) {
+        // Keep listening until the pause after the request.
+        tapRecording_ = true;
+        if (recorder_->isRecording()) recorder_->setStopOnSilence(true);
+        showCore();
+        return;
+    }
+    if (recorder_->isRecording()) recorder_->stop();
 }
 
 void PhoneWindow::onRecorded(const QByteArray &pcm) {
-    if (!client_->askAloud(pcm)) chat_->addMessage(ChatPage::Kind::Error, tr("Not connected to Nexa."));
+    if (!client_->askAloud(pcm)) {
+        chat_->addMessage(ChatPage::Kind::Error, tr("Not connected to Nexa."));
+        return;
+    }
+    setLocalMode(CoreMode::Transcribing);
+}
+
+void PhoneWindow::onRecordingStopped() {
+    tapRecording_ = false;
+    chat_->setRecording(false);
+    if (localMode_ == CoreMode::Listening) setLocalMode(std::nullopt);
+    onStateChanged(client_->state(), device_);
 }
 
 void PhoneWindow::forget() {
@@ -266,6 +333,30 @@ void PhoneWindow::forget() {
     settings_->forgetToken();
     chat_->clear();
     showPairPage();
+}
+
+void PhoneWindow::setLocalMode(std::optional<CoreMode> mode) {
+    localMode_ = mode;
+    showCore();
+}
+
+void PhoneWindow::showCore() {
+    const bool online = client_->isOnline();
+    const CoreMode mode = !online ? CoreMode::Offline : localMode_.value_or(pcMode_);
+    const CoreNodes nodes = online && !localMode_ ? pcNodes_ : NoNode;
+    QString hint;
+    switch (mode) {
+    case CoreMode::Idle: hint = tr("Say a request, or type one."); break;
+    case CoreMode::WakeWord: hint = tr("The PC is listening for “Hey Nexa”."); break;
+    case CoreMode::Listening: hint = tapRecording_ ? tr("Tap again, or pause, to send.") : tr("Let go to send."); break;
+    case CoreMode::Transcribing: hint = tr("Recognising what you said…"); break;
+    case CoreMode::Thinking: hint = tr("Nexa is writing a reply…"); break;
+    case CoreMode::Acting: hint = tr("Running tools on the PC…"); break;
+    case CoreMode::Speaking: hint = tr("Reading the reply aloud."); break;
+    case CoreMode::FastPath: hint = tr("Done directly, without the model."); break;
+    case CoreMode::Offline: hint = online ? tr("The PC cannot reach its AI provider.") : tr("Not connected to the PC."); break;
+    }
+    chat_->setCore(mode, nodes, hint);
 }
 
 } // namespace nexa

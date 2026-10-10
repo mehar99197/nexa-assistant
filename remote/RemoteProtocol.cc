@@ -1,6 +1,7 @@
 #include "remote/RemoteProtocol.h"
 
 #include <QHash>
+#include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QJsonParseError>
@@ -45,8 +46,14 @@ std::optional<ClientMessage> decode(QByteArrayView frame) {
     return parsed;
 }
 
-QByteArray welcome(const QString &device, bool voice, bool busy) {
-    return message(u"welcome"_s, {{u"version"_s, kVersion}, {u"device"_s, device}, {u"voice"_s, voice}, {u"busy"_s, busy}});
+QByteArray welcome(const QString &device, bool voice, bool busy, const QString &mode) {
+    QJsonObject fields{{u"version"_s, kVersion}, {u"device"_s, device}, {u"voice"_s, voice}, {u"busy"_s, busy}};
+    if (!mode.isEmpty()) fields.insert(u"mode"_s, mode);
+    return message(u"welcome"_s, fields);
+}
+
+QByteArray state(const QString &mode, const QStringList &nodes) {
+    return message(u"state"_s, {{u"mode"_s, mode}, {u"nodes"_s, QJsonArray::fromStringList(nodes)}});
 }
 
 QByteArray accepted(const QString &text, const QString &source) {
@@ -100,7 +107,7 @@ std::optional<ServerMessage> decodeServer(QByteArrayView frame) {
         {u"welcome"_s, Type::Welcome},   {u"accepted"_s, Type::Accepted}, {u"delta"_s, Type::Delta},
         {u"step"_s, Type::Step},         {u"finished"_s, Type::Finished}, {u"failed"_s, Type::Failed},
         {u"transcript"_s, Type::Transcript}, {u"speech"_s, Type::Speech}, {u"busy"_s, Type::Busy},
-        {u"error"_s, Type::Error},       {u"pong"_s, Type::Pong},
+        {u"error"_s, Type::Error},       {u"pong"_s, Type::Pong},         {u"state"_s, Type::State},
     };
     const auto type = types.constFind(object.value(u"t"_s).toString());
     if (type == types.cend()) return std::nullopt;
@@ -117,6 +124,10 @@ std::optional<ServerMessage> decodeServer(QByteArrayView frame) {
     parsed.ok = object.value(u"ok"_s).toBool(true);
     parsed.busy = object.value(u"busy"_s).toBool();
     parsed.voice = object.value(u"voice"_s).toBool();
+    parsed.mode = object.value(u"mode"_s).toString();
+    for (const QJsonValue &node : object.value(u"nodes"_s).toArray()) {
+        if (node.isString()) parsed.nodes.append(node.toString());
+    }
     return parsed;
 }
 

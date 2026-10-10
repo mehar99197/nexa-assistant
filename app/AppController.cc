@@ -42,6 +42,12 @@ QString forModel(const QString &prompt, const QString &source) {
     return source == u"voice"_s || source == u"phone-voice"_s ? u"[voice] "_s + prompt : prompt;
 }
 
+// The provider is out of reach, as opposed to refusing a key or a request.
+bool isOffline(const Error &error) {
+    return error.code == ErrorCode::ConnectionRefused || error.code == ErrorCode::Network
+           || error.code == ErrorCode::Timeout;
+}
+
 } // namespace
 
 AppController::AppController(AppServices services, Config config, QString environment, QObject *parent)
@@ -59,12 +65,37 @@ AppController::AppController(AppServices services, Config config, QString enviro
     });
     connect(agent, &Agent::toolFinished, this, [this](const QString &tool, bool ok, const QString &summary, qint64 ms) {
         replyHasContent_ = true;
+        emit replyAction(tool, ok, summary, ms);
         emit replyStep(stepText(tool, summary, ms), ok);
     });
     connect(agent, &Agent::finished, this, &AppController::finishReply);
     connect(agent, &Agent::failed, this, [this](const Error &error) {
+        noteProviderError(error);
         failReply(describe(error));
         if (error.code == ErrorCode::Unauthorized) emit apiKeyRequired(providerName());
+    });
+
+    // Every action, from the fast path or the agent, lights the core and its satellites.
+    connect(services_.executor, &ToolExecutor::actionStarted, this,
+            [this](quint64, const QString &tool, const QJsonObject &, const QString &) {
+                ++runningActions_;
+                const CoreNodes lit = litNodes_ | coreNodesForTool(tool);
+                if (lit != litNodes_) {
+                    litNodes_ = lit;
+                    emit litNodesChanged(litNodes_);
+                }
+                activity_.acting = true;
+                refreshCoreMode();
+            });
+    connect(services_.executor, &ToolExecutor::actionFinished, this, [this](quint64, bool, const QString &, qint64) {
+        if (--runningActions_ > 0) return;
+        runningActions_ = 0;
+        activity_.acting = false;
+        if (litNodes_ != NoNode) {
+            litNodes_ = NoNode;
+            emit litNodesChanged(NoNode);
+        }
+        refreshCoreMode();
     });
 
     if (VoicePipeline *voice = services_.voice) {
@@ -75,6 +106,16 @@ AppController::AppController(AppServices services, Config config, QString enviro
         connect(this, &AppController::replyDelta, voice, &VoicePipeline::onReplyDelta);
         connect(this, &AppController::replyFinished, voice, &VoicePipeline::onReplyFinished);
         connect(this, &AppController::replyFailed, voice, &VoicePipeline::onReplyFailed);
+        connect(voice, &VoicePipeline::stateChanged, this, [this](VoiceState state) {
+            activity_.listening = state == VoiceState::Listening;
+            activity_.transcribing = state == VoiceState::Transcribing;
+            activity_.speaking = state == VoiceState::Speaking;
+            refreshCoreMode();
+        });
+        connect(voice, &VoicePipeline::settingsChanged, this, [this] {
+            activity_.wakeWord = services_.voice->wakeWordActive();
+            refreshCoreMode();
+        });
     }
 }
 
@@ -103,7 +144,15 @@ void AppController::updateConfig(const Config &config) {
     services_.policy->setMode(PolicyEngine::modeFromString(config_.policyMode));
     persist();
     emit configChanged(config_);
+    emit themeChanged(config_.ui.theme);
     start();    // rebuilds the provider and the voice backends
+}
+
+void AppController::setTheme(const QString &theme) {
+    if (config_.ui.theme == theme) return;
+    config_.ui.theme = theme;
+    persist();
+    emit themeChanged(theme);
 }
 
 QString AppController::providerName() const {
@@ -141,10 +190,12 @@ void AppController::refreshModels() {
     // The callback is dropped if the provider is rebuilt meanwhile.
     provider_->listModels([this](Result<QStringList> result) {
         if (!result) {
+            noteProviderError(result.error());
             emit statusChanged(describe(result.error()), true);
             if (result.error().code == ErrorCode::Unauthorized) emit apiKeyRequired(providerName());
             return;
         }
+        setOffline(false);
         models_ = result.value();
         if (currentModel().isEmpty() && !models_.isEmpty()) setCurrentModel(pickDefaultModel(models_));
         emit modelsChanged(models_, currentModel());
@@ -158,15 +209,18 @@ void AppController::submit(const QString &text, const QString &source) {
 
     const std::optional<IntentMatch> match = services_.router->route(prompt);
     if (match && match->panic) {
-        emit userMessageAccepted(prompt);
+        emit userMessageAccepted(prompt, source);
         panic();
         return;
     }
     if (!match && !canUseModel(true)) return;
 
-    emit userMessageAccepted(prompt);
+    emit userMessageAccepted(prompt, source);
     beginReply(source);
     if (match) {
+        activity_.fastPath = true;
+        refreshCoreMode();
+        emit replyRoute(u"fast"_s);
         runFastPath(prompt, *match, source);
         return;
     }
@@ -185,8 +239,11 @@ void AppController::askAboutPhone(const QString &question) {
 void AppController::askAboutPicture(const QString &tool, const QString &question, const QString &fallback) {
     if (busy_ || !canUseModel(true)) return;
     const QString prompt = question.trimmed().isEmpty() ? fallback : question.trimmed();
-    emit userMessageAccepted(prompt);
+    emit userMessageAccepted(prompt, u"gui"_s);
     beginReply(u"gui"_s);
+    activity_.fastPath = true;
+    refreshCoreMode();
+    emit replyRoute(u"fast"_s);
     runFastPath(prompt, IntentMatch{.toolName = tool, .forwardToAgent = true, .agentPrompt = prompt}, u"gui"_s);
 }
 
@@ -213,6 +270,7 @@ void AppController::runFastPath(const QString &prompt, const IntentMatch &match,
 
         const QString summary = result ? summarize(result.value().text) : result.error().message;
         replyHasContent_ = true;
+        emit replyAction(match.toolName, result.isOk(), summary, elapsed);
         emit replyStep(stepText(match.toolName, summary, elapsed), result.isOk());
         if (!result) {
             failReply(describe(result.error()));
@@ -247,6 +305,10 @@ void AppController::runFastPath(const QString &prompt, const IntentMatch &match,
 
 void AppController::runAgent(const QString &source) {
     qCDebug(lcApp) << "agent:" << currentModel();
+    activity_.fastPath = false;
+    activity_.thinking = true;
+    refreshCoreMode();
+    emit replyRoute(u"agent"_s);
     services_.agent->run(provider_.get(), &conversation_, currentModel(), source);
 }
 
@@ -346,12 +408,19 @@ void AppController::beginReply(const QString &source) {
 
 void AppController::finishReply(FinishReason reason) {
     if (!busy_) return;
+    if (reason == FinishReason::Stop) setOffline(false);
+    activity_.fastPath = false;
+    activity_.thinking = false;
+    refreshCoreMode();
     setBusy(false);
     emit replyFinished(reason, !replyHasContent_);
 }
 
 void AppController::failReply(const QString &message) {
     if (!busy_) return;
+    activity_.fastPath = false;
+    activity_.thinking = false;
+    refreshCoreMode();
     setBusy(false);
     emit replyFailed(message);
 }
@@ -387,6 +456,25 @@ void AppController::persist() {
     if (const Result<void> saved = services_.store->save(config_); !saved) {
         emit statusChanged(tr("Could not save settings: %1").arg(saved.error().message), true);
     }
+}
+
+void AppController::refreshCoreMode() {
+    const CoreMode mode = resolveCoreMode(activity_);
+    if (mode == coreMode_) return;
+    coreMode_ = mode;
+    emit coreModeChanged(mode);
+}
+
+void AppController::noteProviderError(const Error &error) {
+    if (isOffline(error)) setOffline(true, describe(error));
+}
+
+void AppController::setOffline(bool offline, const QString &reason) {
+    if (offline) offlineReason_ = reason;
+    if (activity_.offline == offline) return;
+    activity_.offline = offline;
+    if (!offline) offlineReason_.clear();
+    refreshCoreMode();
 }
 
 ProviderConfig *AppController::activeProviderConfig() {

@@ -6,6 +6,7 @@
 #include "core/config/Config.h"
 #include "core/intent/IIntentHandler.h"
 #include "core/tools/ToolExecutor.h"
+#include "ui/NexaCoreSpec.h"
 
 #include <QObject>
 #include <QStringList>
@@ -42,7 +43,9 @@ struct AppServices {
 // Mediator between the GUI, voice and core. Each request takes the fast path when the
 // IntentRouter recognises it (a direct tool call, no model) and otherwise runs the Agent; both
 // report through the same reply signals, so the GUI renders them and the voice pipeline speaks
-// them alike (later the phone too).
+// them alike (and the phone sees them too). It also keeps the one state the Nexa core shows
+// (coreMode): the voice pipeline's state, tools running, the fast path, the agent streaming and
+// a provider that cannot be reached, resolved by NexaCoreSpec's precedence.
 class AppController : public QObject {
     Q_OBJECT
 public:
@@ -55,6 +58,7 @@ public:
 
     const Config &config() const { return config_; }
     void updateConfig(const Config &config);        // from Settings: saves, rebuilds, reloads models
+    void setTheme(const QString &theme);            // the toolbar toggle: saved, nothing rebuilt
     QString providerName() const;
     void setApiKey(const QString &key);             // for the active provider
 
@@ -73,6 +77,10 @@ public:
     void newConversation();
     bool isBusy() const { return busy_; }
 
+    CoreMode coreMode() const { return coreMode_; }
+    CoreNodes litNodes() const { return litNodes_; }
+    QString offlineReason() const { return offlineReason_; }    // why the core shows Offline
+
     void setConfirmer(ToolExecutor::Confirmer confirmer);
     VoicePipeline *voice() const { return services_.voice; }
 
@@ -80,18 +88,23 @@ signals:
     void providerChanged(const QString &name);
     // Settings were saved; the parts of Nexa outside the controller (the phone) follow them.
     void configChanged(const nexa::Config &config);
+    void themeChanged(const QString &theme);        // "system" | "dark" | "light"
     void modelsChanged(const QStringList &models, const QString &current);
     void statusChanged(const QString &message, bool isError);
     void apiKeyRequired(const QString &providerName);
-    void userMessageAccepted(const QString &text);
+    void userMessageAccepted(const QString &text, const QString &source);
     void replyStarted(const QString &source);       // "gui", "voice", …
+    void replyRoute(const QString &route);          // "fast" (no model) or "agent"; may change mid-reply
     void replyDelta(const QString &delta);
-    void replyStep(const QString &description, bool ok);    // a tool ran (fast path or agent)
+    void replyStep(const QString &description, bool ok);    // a tool ran (fast path or agent), as one line
+    void replyAction(const QString &tool, bool ok, const QString &summary, qint64 elapsedMs);   // the same, in parts
     void replyFinished(nexa::FinishReason reason, bool empty);
     void replyFailed(const QString &message);
     void busyChanged(bool busy);
     void conversationCleared();
     void panicked();
+    void coreModeChanged(nexa::CoreMode mode);
+    void litNodesChanged(unsigned nodes);           // CoreNodes: the satellites the running action lights
 
 private:
     void runFastPath(const QString &prompt, const IntentMatch &match, const QString &source);
@@ -105,6 +118,9 @@ private:
     void setBusy(bool busy);
     void rebuildProvider();
     void persist();
+    void refreshCoreMode();
+    void noteProviderError(const Error &error);
+    void setOffline(bool offline, const QString &reason = {});
     ProviderConfig *activeProviderConfig();
     QString systemPrompt() const;
     QString describe(const Error &error) const;
@@ -118,6 +134,11 @@ private:
     bool busy_{false};
     bool replyHasContent_{false};
     quint64 replyGeneration_{0};    // fast-path callbacks of a cancelled reply are ignored
+    CoreActivity activity_;
+    CoreMode coreMode_{CoreMode::Idle};
+    CoreNodes litNodes_{NoNode};
+    int runningActions_{0};
+    QString offlineReason_;
 };
 
 } // namespace nexa

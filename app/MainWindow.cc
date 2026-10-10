@@ -10,14 +10,17 @@
 #include "remote/RemoteServer.h"
 #include "system/android/AndroidDevice.h"
 #include "system/helper/HelperClient.h"
+#include "ui/NexaCoreWidget.h"
 #include "voice/pipeline/VoicePipeline.h"
 
 #include <QAction>
+#include <QApplication>
+#include <QCloseEvent>
 #include <QComboBox>
 #include <QCompleter>
+#include <QFrame>
 #include <QHBoxLayout>
 #include <QInputDialog>
-#include <QCloseEvent>
 #include <QKeyEvent>
 #include <QLabel>
 #include <QLineEdit>
@@ -26,7 +29,9 @@
 #include <QPushButton>
 #include <QSignalBlocker>
 #include <QStatusBar>
+#include <QStyle>
 #include <QToolBar>
+#include <QToolButton>
 #include <QVBoxLayout>
 
 using namespace Qt::StringLiterals;
@@ -39,163 +44,211 @@ namespace {
 const QLatin1StringView kTalkShortcut{"talk"};
 const QLatin1StringView kPanicShortcut{"panic"};
 
+constexpr int kInputHeight = 50;
+
+QString policyWords(const QString &mode) {
+    if (mode == u"confirm-risky"_s) return QObject::tr("Confirm risky");
+    if (mode == u"confirm-all"_s) return QObject::tr("Confirm all");
+    return QObject::tr("Autonomous");
+}
+
+// A dynamic property the stylesheet selects on ([busy="true"]) takes effect after a repolish.
+void repolish(QWidget *widget) {
+    widget->style()->unpolish(widget);
+    widget->style()->polish(widget);
+    widget->update();
+}
+
+// "OmniRoute anyapi/google/gemini-2.5-flash-lite → whisper.cpp (base.en)" becomes
+// "gemini-2.5-flash-lite, then whisper.cpp base.en": the status bar has one line for all of it.
+QString shortEngineNames(const QString &chain, const QString &provider) {
+    QStringList links;
+    for (QString link : chain.split(u" → "_s, Qt::SkipEmptyParts)) {
+        if (!provider.isEmpty() && link.startsWith(provider + u' ')) link.remove(0, provider.size() + 1);
+        const QStringList segments = link.split(u'/');
+        if (segments.size() >= 3) link = segments.last();
+        // "Piper (en_US-lessac-medium)": the engine is the news, the voice is in the tooltip.
+        if (link.startsWith(u"Piper"_s)) link = u"Piper"_s;
+        link.remove(u'(').remove(u')');
+        links.append(link.trimmed());
+    }
+    return links.join(u", then "_s);
+}
+
 } // namespace
 
 MainWindow::MainWindow(AppController *controller, ProviderRegistry *registry, ToolExecutor *executor,
-                       HttpClient *http, GlobalShortcuts *shortcuts, SystemStatus status, QWidget *parent)
+                       HttpClient *http, GlobalShortcuts *shortcuts, SystemStatus status, const QString &auditPath,
+                       QWidget *parent)
     : QMainWindow(parent),
       controller_(controller),
       registry_(registry),
       executor_(executor),
       http_(http),
       shortcuts_(shortcuts),
-      status_(std::move(status)) {
+      status_(std::move(status)),
+      auditPath_(auditPath),
+      scheme_(NexaTheme::schemeFor(controller->config().ui.theme)) {
     setWindowTitle(tr("Nexa"));
-    resize(1240, 760);
-    buildUi();
+    resize(1280, 800);
+    buildToolbar();
+    buildCentral();
+    buildStatusBar();
     connectController();
     connectVoice();
+    refreshTheme();
+    showPolicy();
 }
 
-void MainWindow::buildUi() {
+void MainWindow::buildToolbar() {
     QToolBar *toolbar = addToolBar(tr("Main"));
     toolbar->setObjectName(u"mainToolbar"_s);
     toolbar->setMovable(false);
-    toolbar->setToolButtonStyle(Qt::ToolButtonTextBesideIcon);
+    toolbar->setFloatable(false);
+    toolbar->setIconSize(QSize(18, 18));
+    toolbar->setContextMenuPolicy(Qt::PreventContextMenu);
 
     providerLabel_ = new QLabel(this);
-    providerLabel_->setContentsMargins(4, 0, 8, 0);
-    toolbar->addWidget(providerLabel_);
+    providerLabel_->setObjectName(u"pillValue"_s);
+    toolbar->addWidget(makePill(tr("Provider"), providerLabel_));
 
     modelCombo_ = new QComboBox(this);
+    modelCombo_->setObjectName(u"modelCombo"_s);
     modelCombo_->setEditable(true);
     modelCombo_->setInsertPolicy(QComboBox::NoInsert);
-    modelCombo_->setMinimumContentsLength(30);
+    modelCombo_->setMinimumContentsLength(26);
     modelCombo_->setSizeAdjustPolicy(QComboBox::AdjustToMinimumContentsLengthWithIcon);
     modelCombo_->setToolTip(tr("Model used for replies (type to filter)"));
     modelCombo_->lineEdit()->setPlaceholderText(tr("model"));
     modelCombo_->completer()->setFilterMode(Qt::MatchContains);
     modelCombo_->completer()->setCompletionMode(QCompleter::PopupCompletion);
-    toolbar->addWidget(modelCombo_);
     connect(modelCombo_, &QComboBox::textActivated, controller_, &AppController::setCurrentModel);
+    toolbar->addWidget(makePill(tr("Model"), modelCombo_));
 
-    QAction *refresh = toolbar->addAction(QIcon::fromTheme(u"view-refresh"_s), tr("Refresh"));
-    refresh->setToolTip(tr("Reload the model list"));
+    auto *refresh = new QAction(tr("Reload the model list"), this);
     connect(refresh, &QAction::triggered, controller_, &AppController::refreshModels);
+    toolbar->addWidget(makeIconButton(NexaIcons::Kind::Refresh, u"iconButton"_s, refresh));
 
-    toolbar->addSeparator();
-    QAction *newChat = toolbar->addAction(QIcon::fromTheme(u"document-new"_s), tr("New chat"));
+    auto *newChat = new QAction(tr("New chat"), this);
     newChat->setShortcut(QKeySequence::New);
     connect(newChat, &QAction::triggered, controller_, &AppController::newConversation);
+    toolbar->addWidget(makeIconButton(NexaIcons::Kind::NewChat, u"iconButton"_s, newChat));
 
-    QAction *seeScreen = toolbar->addAction(QIcon::fromTheme(u"camera-photo"_s), tr("See screen"));
-    seeScreen->setToolTip(tr("Take a screenshot and ask about it (uses the text in the input box as the question)"));
-    seeScreen->setShortcut(QKeySequence(u"Ctrl+Shift+S"_s));
-    connect(seeScreen, &QAction::triggered, this, [this] { controller_->askAboutScreen(input_->toPlainText()); });
-
-    QAction *seePhone = toolbar->addAction(QIcon::fromTheme(u"phone"_s, QIcon::fromTheme(u"smartphone"_s)), tr("See phone"));
-    seePhone->setToolTip(tr("Take a screenshot of the phone and ask about it (uses the text in the input box as the "
-                            "question)"));
-    seePhone->setShortcut(QKeySequence(u"Ctrl+Shift+P"_s));
-    connect(seePhone, &QAction::triggered, this, [this] { controller_->askAboutPhone(input_->toPlainText()); });
-
-    actionLog_ = new ActionLogDock(this);
+    actionLog_ = new ActionLogDock(auditPath_, this);
     addDockWidget(Qt::RightDockWidgetArea, actionLog_);
-    resizeDocks({actionLog_}, {420}, Qt::Horizontal);
+    resizeDocks({actionLog_}, {340}, Qt::Horizontal);
     QAction *showActions = actionLog_->toggleViewAction();
-    showActions->setIcon(QIcon::fromTheme(u"view-list-details"_s));
+    showActions->setText(tr("Actions panel"));
     showActions->setShortcut(QKeySequence(u"Ctrl+L"_s));
-    toolbar->addAction(showActions);
+    toolbar->addWidget(makeIconButton(NexaIcons::Kind::Actions, u"iconButton"_s, showActions));
 
     auto *spacer = new QWidget(this);
     spacer->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Preferred);
     toolbar->addWidget(spacer);
 
-    QAction *settings = toolbar->addAction(QIcon::fromTheme(u"preferences-system"_s), tr("Settings"));
-    settings->setShortcut(QKeySequence(u"Ctrl+,"_s));
-    connect(settings, &QAction::triggered, this, &MainWindow::openSettings);
+    policyButton_ = new QToolButton(this);
+    policyButton_->setObjectName(u"pillButton"_s);
+    policyButton_->setToolTip(tr("When Nexa asks before acting. Click to change it (Settings → Policy)."));
+    policyButton_->setCursor(Qt::PointingHandCursor);
+    connect(policyButton_, &QToolButton::clicked, this, [this] { openSettings(tr("Policy")); });
+    toolbar->addWidget(policyButton_);
 
+    auto *stopAll = new QPushButton(tr("Stop all · Ctrl+Alt+Esc"), this);
+    stopAll->setObjectName(u"stopAll"_s);
+    stopAll->setToolTip(tr("Stop the reply, every tool and every child process (also Ctrl+Shift+Esc)"));
+    stopAll->setCursor(Qt::PointingHandCursor);
+    connect(stopAll, &QPushButton::clicked, controller_, &AppController::panic);
+    toolbar->addWidget(stopAll);
+
+    themeAction_ = new QAction(tr("Switch between dark and light"), this);
+    connect(themeAction_, &QAction::triggered, this, &MainWindow::toggleTheme);
+    toolbar->addWidget(makeIconButton(NexaIcons::Kind::Sun, u"iconButton"_s, themeAction_));
+    themedActions_.pop_back();  // its icon depends on the scheme; refreshTheme() sets it
+
+    auto *settings = new QAction(tr("Settings"), this);
+    settings->setShortcut(QKeySequence(u"Ctrl+,"_s));
+    connect(settings, &QAction::triggered, this, [this] { openSettings(); });
+    toolbar->addWidget(makeIconButton(NexaIcons::Kind::Gear, u"iconButton"_s, settings));
+}
+
+void MainWindow::buildCentral() {
     auto *central = new QWidget(this);
     auto *layout = new QVBoxLayout(central);
-    layout->setContentsMargins(8, 8, 8, 8);
-    layout->setSpacing(8);
+    layout->setContentsMargins(0, 0, 0, 0);
+    layout->setSpacing(0);
+
+    // The core, with the state's name beside it — never colour alone.
+    auto *header = new QWidget(central);
+    header->setObjectName(u"stateHeader"_s);
+    auto *headerLayout = new QHBoxLayout(header);
+    headerLayout->setContentsMargins(24, 12, 24, 12);
+    headerLayout->setSpacing(18);
+    presence_ = new NexaCoreWidget(header);
+    presence_->setDiameter(88);
+    presence_->setShowNodes(true);
+    headerLayout->addWidget(presence_);
+    auto *titles = new QVBoxLayout;
+    titles->setSpacing(2);
+    stateTitle_ = new QLabel(header);
+    stateTitle_->setObjectName(u"stateTitle"_s);
+    stateHint_ = new QLabel(header);
+    stateHint_->setObjectName(u"stateHint"_s);
+    stateHint_->setWordWrap(true);
+    titles->addStretch();
+    titles->addWidget(stateTitle_);
+    titles->addWidget(stateHint_);
+    titles->addStretch();
+    headerLayout->addLayout(titles, 1);
+    layout->addWidget(header);
 
     chatView_ = new ChatView(central);
     layout->addWidget(chatView_, 1);
 
-    auto *inputRow = new QHBoxLayout;
-    input_ = new QPlainTextEdit(central);
-    input_->setPlaceholderText(tr("Ask Nexa…  (Enter to send, Shift+Enter for a new line)"));
+    auto *bar = new QWidget(central);
+    bar->setObjectName(u"inputBar"_s);
+    auto *inputRow = new QHBoxLayout(bar);
+    inputRow->setContentsMargins(20, 12, 20, 14);
+    inputRow->setSpacing(10);
+    input_ = new QPlainTextEdit(bar);
+    input_->setObjectName(u"input"_s);
+    input_->setPlaceholderText(tr("Type a request…  (Enter to send, Shift+Enter for a new line)"));
     input_->setTabChangesFocus(true);
-    input_->setFixedHeight(input_->fontMetrics().lineSpacing() * 3 + 16);
+    input_->setFixedHeight(kInputHeight);
+    input_->setVerticalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
     input_->installEventFilter(this);
     inputRow->addWidget(input_, 1);
 
+    auto *seeScreen = new QAction(tr("See screen"), this);
+    seeScreen->setToolTip(tr("Take a screenshot and ask about it (the text in the box is the question) · Ctrl+Shift+S"));
+    seeScreen->setShortcut(QKeySequence(u"Ctrl+Shift+S"_s));
+    connect(seeScreen, &QAction::triggered, this, [this] { controller_->askAboutScreen(input_->toPlainText()); });
+    inputRow->addWidget(makeIconButton(NexaIcons::Kind::Pc, u"inputButton"_s, seeScreen));
+
+    auto *seePhone = new QAction(tr("See phone"), this);
+    seePhone->setToolTip(tr("Take a screenshot of the phone and ask about it (the text in the box is the question) · "
+                            "Ctrl+Shift+P"));
+    seePhone->setShortcut(QKeySequence(u"Ctrl+Shift+P"_s));
+    connect(seePhone, &QAction::triggered, this, [this] { controller_->askAboutPhone(input_->toPlainText()); });
+    inputRow->addWidget(makeIconButton(NexaIcons::Kind::Phone, u"inputButton"_s, seePhone));
+
+    sendButton_ = new QPushButton(tr("Send"), bar);
+    sendButton_->setObjectName(u"send"_s);
+    sendButton_->setMinimumWidth(84);
+    sendButton_->setFixedHeight(kInputHeight);
+    sendButton_->setCursor(Qt::PointingHandCursor);
+    connect(sendButton_, &QPushButton::clicked, this, &MainWindow::sendOrStop);
+    inputRow->addWidget(sendButton_);
+
     if (VoicePipeline *voice = controller_->voice()) {
-        micButton_ = new MicButton(voice, central);
-        micButton_->setFixedHeight(input_->height());
+        micButton_ = new MicButton(voice, bar);
         inputRow->addWidget(micButton_);
         auto *talk = new QAction(this);
         talk->setShortcut(QKeySequence(u"Ctrl+M"_s));
         connect(talk, &QAction::triggered, voice, &VoicePipeline::toggleListening);
         addAction(talk);
     }
-
-    sendButton_ = new QPushButton(tr("Send"), central);
-    sendButton_->setMinimumWidth(88);
-    sendButton_->setFixedHeight(input_->height());
-    connect(sendButton_, &QPushButton::clicked, this, &MainWindow::sendOrStop);
-    inputRow->addWidget(sendButton_);
-    layout->addLayout(inputRow);
+    layout->addWidget(bar);
     setCentralWidget(central);
-
-    statusLabel_ = new QLabel(this);
-    statusLabel_->setTextInteractionFlags(Qt::TextSelectableByMouse);
-    statusBar()->addWidget(statusLabel_, 1);
-    voiceLabel_ = new QLabel(this);
-    statusBar()->addPermanentWidget(voiceLabel_);
-    if (status_.inputSummary) {
-        auto *inputLabel = new QLabel(status_.inputSummary(), this);
-        inputLabel->setToolTip(status_.inputNotes ? status_.inputNotes().join(u'\n') : QString());
-        statusBar()->addPermanentWidget(inputLabel);
-        // Installing the helper changes this while Nexa runs.
-        if (status_.helper) {
-            connect(status_.helper, &HelperClient::readyChanged, inputLabel, [this, inputLabel] {
-                inputLabel->setText(status_.inputSummary());
-                if (status_.inputNotes) inputLabel->setToolTip(status_.inputNotes().join(u'\n'));
-            });
-        }
-    }
-
-    if (status_.phone) {
-        // Which phone the android_* tools reach; it changes as phones come and go.
-        auto *phoneLabel = new QLabel(this);
-        const auto showPhone = [phoneLabel](const QString &description) {
-            phoneLabel->setText(description.isEmpty() ? tr("Phone: none") : tr("Phone: %1").arg(description));
-            phoneLabel->setToolTip(description.isEmpty()
-                                       ? tr("No phone is connected. Settings → Android shows how to connect one.")
-                                       : tr("The phone Nexa's android_* tools act on."));
-        };
-        showPhone(status_.phone->currentDescription());
-        connect(status_.phone, &AndroidDevice::deviceChanged, phoneLabel, showPhone);
-        statusBar()->addPermanentWidget(phoneLabel);
-    }
-    if (status_.remote) {
-        // Shown only while the web remote runs: then it matters who can reach Nexa.
-        auto *remoteLabel = new QLabel(this);
-        RemoteServer *remote = status_.remote;
-        const auto showRemote = [remoteLabel, remote] {
-            remoteLabel->setVisible(remote->isRunning());
-            const int clients = remote->clientCount();
-            remoteLabel->setText(clients == 0 ? tr("Remote: waiting") : tr("Remote: %n phone(s)", nullptr, clients));
-            remoteLabel->setToolTip(tr("The web remote is on: %1").arg(
-                remote->lanUrl().isEmpty() ? remote->localUrl() : remote->lanUrl()));
-        };
-        showRemote();
-        connect(remote, &RemoteServer::runningChanged, remoteLabel, showRemote);
-        connect(remote, &RemoteServer::clientsChanged, remoteLabel, showRemote);
-        statusBar()->addPermanentWidget(remoteLabel);
-    }
 
     auto *stop = new QAction(this);
     stop->setShortcut(QKeySequence(Qt::Key_Escape));
@@ -213,21 +266,90 @@ void MainWindow::buildUi() {
     input_->setFocus();
 }
 
+void MainWindow::buildStatusBar() {
+    statusBar()->setSizeGripEnabled(false);
+    statusLabel_ = new QLabel(this);
+    statusLabel_->setObjectName(u"statusMessage"_s);
+    statusLabel_->setTextInteractionFlags(Qt::TextSelectableByMouse);
+    // It takes what the permanent labels leave and elides (see eventFilter), never widening the window.
+    statusLabel_->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Preferred);
+    statusLabel_->installEventFilter(this);
+    statusBar()->addWidget(statusLabel_, 1);
+
+    helperLabel_ = new QLabel(this);
+    statusBar()->addPermanentWidget(helperLabel_);
+    showHelper();
+    // Installing the helper changes this while Nexa runs.
+    if (status_.helper) connect(status_.helper, &HelperClient::readyChanged, this, &MainWindow::showHelper);
+
+    if (controller_->voice()) {
+        sttLabel_ = new QLabel(this);
+        ttsLabel_ = new QLabel(this);
+        statusBar()->addPermanentWidget(sttLabel_);
+        statusBar()->addPermanentWidget(ttsLabel_);
+        showVoiceEngines();
+    }
+
+    if (status_.phone) {
+        // Which phone the android_* tools reach; it changes as phones come and go.
+        phoneLabel_ = new QLabel(this);
+        statusBar()->addPermanentWidget(phoneLabel_);
+        showPhone(status_.phone->currentDescription());
+        connect(status_.phone, &AndroidDevice::deviceChanged, this, &MainWindow::showPhone);
+    }
+    if (status_.remote) {
+        remoteLabel_ = new QLabel(this);
+        statusBar()->addPermanentWidget(remoteLabel_);
+        showRemote();
+        connect(status_.remote, &RemoteServer::runningChanged, this, &MainWindow::showRemote);
+        connect(status_.remote, &RemoteServer::clientsChanged, this, &MainWindow::showRemote);
+    }
+}
+
+QWidget *MainWindow::makePill(const QString &label, QWidget *value) {
+    auto *pill = new QFrame(this);
+    pill->setObjectName(u"pill"_s);
+    auto *layout = new QHBoxLayout(pill);
+    layout->setContentsMargins(10, 5, 10, 5);
+    layout->setSpacing(6);
+    auto *caption = new QLabel(label, pill);
+    caption->setObjectName(u"pillLabel"_s);
+    layout->addWidget(caption);
+    layout->addWidget(value);
+    return pill;
+}
+
+QToolButton *MainWindow::makeIconButton(NexaIcons::Kind kind, const QString &objectName, QAction *action) {
+    if (action->toolTip() == action->text() && !action->shortcut().isEmpty()) {
+        action->setToolTip(u"%1 · %2"_s.arg(action->text(), action->shortcut().toString(QKeySequence::NativeText)));
+    }
+    auto *button = new QToolButton(this);
+    button->setObjectName(objectName);
+    button->setDefaultAction(action);
+    button->setToolButtonStyle(Qt::ToolButtonIconOnly);
+    button->setCursor(Qt::PointingHandCursor);
+    button->setIconSize(objectName == u"inputButton"_s ? QSize(22, 22) : QSize(18, 18));
+    themedActions_.push_back({action, kind});
+    return button;
+}
+
 void MainWindow::connectController() {
     connect(controller_, &AppController::providerChanged, this, [this](const QString &name) {
-        providerLabel_->setText(name.isEmpty() ? tr("No provider") : name);
+        providerLabel_->setText(name.isEmpty() ? tr("none") : name);
     });
     connect(controller_, &AppController::modelsChanged, this, &MainWindow::showModels);
     connect(controller_, &AppController::statusChanged, this, &MainWindow::showStatus);
     // Queued: the prompt is modal and must not run inside a network callback.
     connect(controller_, &AppController::apiKeyRequired, this, &MainWindow::promptForApiKey, Qt::QueuedConnection);
 
-    connect(controller_, &AppController::userMessageAccepted, this, [this](const QString &text) {
-        chatView_->addUserMessage(text);
+    connect(controller_, &AppController::userMessageAccepted, this, [this](const QString &text, const QString &source) {
+        chatView_->addUserMessage(text, source);
         input_->clear();
     });
-    connect(controller_, &AppController::replyStarted, chatView_, &ChatView::beginAssistantMessage);
+    connect(controller_, &AppController::replyStarted, this, [this] { chatView_->beginAssistantMessage(); });
+    connect(controller_, &AppController::replyRoute, chatView_, &ChatView::setReplyRoute);
     connect(controller_, &AppController::replyDelta, chatView_, &ChatView::appendAssistantDelta);
+    connect(controller_, &AppController::replyAction, chatView_, &ChatView::addAction);
     connect(controller_, &AppController::replyFinished, this, [this](FinishReason reason, bool empty) {
         chatView_->endAssistantMessage();
         if (reason == FinishReason::Cancelled) {
@@ -244,12 +366,25 @@ void MainWindow::connectController() {
         chatView_->endAssistantMessage();
         chatView_->addError(message);
     });
-    connect(controller_, &AppController::replyStep, chatView_, &ChatView::addStep);
     connect(controller_, &AppController::panicked, this, [this] { chatView_->addNotice(tr("Stopped everything.")); });
     connect(controller_, &AppController::busyChanged, this, &MainWindow::setBusy);
     connect(controller_, &AppController::conversationCleared, chatView_, &ChatView::clearTranscript);
+    connect(controller_, &AppController::coreModeChanged, this, &MainWindow::showCoreMode);
+    connect(controller_, &AppController::litNodesChanged, this, [this](unsigned nodes) { presence_->setLitNodes(nodes); });
+    connect(controller_, &AppController::themeChanged, this,
+            [this](const QString &theme) { applyScheme(NexaTheme::schemeFor(theme)); });
+    connect(controller_, &AppController::configChanged, this, [this] {
+        showPolicy();
+        if (status_.phone) showPhone(status_.phone->currentDescription());
+    });
 
-    connect(executor_, &ToolExecutor::actionStarted, actionLog_, &ActionLogDock::actionStarted);
+    connect(executor_, &ToolExecutor::actionStarted, this,
+            [this](quint64 id, const QString &tool, const QJsonObject &arguments, const QString &source) {
+                currentTool_ = tool;
+                actionLog_->actionStarted(id, tool, arguments, source);
+                const CoreMode mode = controller_->coreMode();
+                if (mode == CoreMode::Acting || mode == CoreMode::FastPath) stateHint_->setText(hintFor(mode));
+            });
     connect(executor_, &ToolExecutor::actionFinished, actionLog_, &ActionLogDock::actionFinished);
     controller_->setConfirmer([this](const QString &question, std::function<void(bool)> answer) {
         confirm(question, std::move(answer));
@@ -259,10 +394,12 @@ void MainWindow::connectController() {
 void MainWindow::connectVoice() {
     VoicePipeline *voice = controller_->voice();
     if (!voice) return;
-    connect(voice, &VoicePipeline::stateChanged, this, &MainWindow::showVoiceState);
+    connect(voice, &VoicePipeline::levelChanged, this, [this](double level) { presence_->setLevel(level); });
     connect(voice, &VoicePipeline::notice, this, &MainWindow::showStatus);
-    connect(voice, &VoicePipeline::settingsChanged, this, [this] { showVoiceState(controller_->voice()->state()); });
-    showVoiceState(voice->state());
+    connect(voice, &VoicePipeline::settingsChanged, this, [this] {
+        showVoiceEngines();
+        showCoreMode(controller_->coreMode());
+    });
 
     if (!shortcuts_) return;
     // Hold the granted hotkey to talk from any window; a tap listens until the speaker pauses.
@@ -288,6 +425,51 @@ void MainWindow::closeEvent(QCloseEvent *event) {
     QMainWindow::closeEvent(event);
 }
 
+void MainWindow::showCoreMode(CoreMode mode) {
+    presence_->setMode(mode);
+    if (micButton_) micButton_->setMode(mode);
+    stateTitle_->setText(titleFor(mode));
+    stateTitle_->setStyleSheet(u"color: %1;"_s.arg(presence_->colorFor(mode).name()));
+    stateHint_->setText(hintFor(mode));
+}
+
+QString MainWindow::titleFor(CoreMode mode) const {
+    switch (mode) {
+    case CoreMode::Idle: return tr("Ready");
+    case CoreMode::WakeWord: return tr("Wake word on");
+    default: return coreModeName(mode);
+    }
+}
+
+QString MainWindow::hintFor(CoreMode mode) const {
+    const VoicePipeline *voice = controller_->voice();
+    const bool canListen = voice && voice->canListen();
+    switch (mode) {
+    case CoreMode::Idle:
+        return canListen ? tr("Type a request, or hold Talk and speak.") : tr("Type a request.");
+    case CoreMode::WakeWord:
+        return tr("Say “Hey Nexa” and your request, type one, or hold Talk.");
+    case CoreMode::Listening:
+        return tr("Speak now. Let go of Talk, or pause, to send.");
+    case CoreMode::Transcribing:
+        return voice ? tr("Recognising what you said with %1…").arg(voice->recognizerName())
+                     : tr("Recognising what you said…");
+    case CoreMode::Thinking:
+        return tr("%1 is writing a reply…").arg(controller_->currentModel());
+    case CoreMode::Acting:
+        return currentTool_.isEmpty() ? tr("Running a tool…") : tr("Running %1…").arg(currentTool_);
+    case CoreMode::Speaking:
+        return tr("Reading the reply aloud. Press Talk or Esc to cut it.");
+    case CoreMode::FastPath:
+        return currentTool_.isEmpty() ? tr("Done directly, without the model.")
+                                      : tr("%1, directly — no model.").arg(currentTool_);
+    case CoreMode::Offline:
+        return controller_->offlineReason().isEmpty() ? tr("The provider cannot be reached.")
+                                                      : controller_->offlineReason();
+    }
+    return {};
+}
+
 void MainWindow::showHotkeys() {
     if (!micButton_) return;
     const QString talk = shortcuts_->trigger(kTalkShortcut);
@@ -305,21 +487,6 @@ void MainWindow::showHotkeys() {
     showStatus(tr("Hold %1 anywhere to talk to Nexa.").arg(talk), false);
 }
 
-void MainWindow::showVoiceState(VoiceState state) {
-    const VoicePipeline *voice = controller_->voice();
-    QString text;
-    switch (state) {
-    case VoiceState::Listening: text = tr("Listening…"); break;
-    case VoiceState::Transcribing: text = tr("Recognising speech…"); break;
-    case VoiceState::Thinking: text = tr("Thinking…"); break;
-    case VoiceState::Speaking: text = tr("Speaking…"); break;
-    case VoiceState::Idle:
-        if (voice->wakeWordActive()) text = tr("Say “Hey Nexa”");
-        break;
-    }
-    voiceLabel_->setText(text);
-}
-
 void MainWindow::confirm(const QString &question, std::function<void(bool)> answer) {
     // Non-blocking: the action waits for the answer without a nested event loop.
     auto *box = new QMessageBox(QMessageBox::Question, tr("Allow this action?"), question,
@@ -333,6 +500,11 @@ void MainWindow::confirm(const QString &question, std::function<void(bool)> answ
 }
 
 bool MainWindow::eventFilter(QObject *watched, QEvent *event) {
+    if (watched == statusLabel_ && event->type() == QEvent::Resize) {
+        statusLabel_->setText(statusLabel_->fontMetrics().elidedText(statusMessage_, Qt::ElideRight,
+                                                                     statusLabel_->width() - 4));
+        return false;
+    }
     if (watched == input_ && event->type() == QEvent::KeyPress) {
         const auto *key = static_cast<QKeyEvent *>(event);
         const bool enter = key->key() == Qt::Key_Return || key->key() == Qt::Key_Enter;
@@ -352,8 +524,30 @@ void MainWindow::sendOrStop() {
     }
 }
 
-void MainWindow::openSettings() {
+void MainWindow::toggleTheme() {
+    applyScheme(scheme_ == ThemeScheme::Dark ? ThemeScheme::Light : ThemeScheme::Dark);
+    controller_->setTheme(NexaTheme::schemeKey(scheme_));
+}
+
+void MainWindow::applyScheme(ThemeScheme scheme) {
+    if (scheme == scheme_) return;
+    scheme_ = scheme;
+    NexaTheme::apply(qApp, scheme_);
+    refreshTheme();
+}
+
+void MainWindow::refreshTheme() {
+    const ThemeTokens tokens = NexaTheme::tokens(scheme_);
+    for (const auto &[action, kind] : themedActions_) action->setIcon(NexaIcons::icon(kind, tokens.text));
+    themeAction_->setIcon(NexaIcons::icon(scheme_ == ThemeScheme::Dark ? NexaIcons::Kind::Sun : NexaIcons::Kind::Moon,
+                                          tokens.text));
+    // The stylesheet has set the core's colours by now; the title takes the state's.
+    showCoreMode(controller_->coreMode());
+}
+
+void MainWindow::openSettings(const QString &tab) {
     SettingsDialog dialog(controller_->config(), registry_, http_, status_, this);
+    if (!tab.isEmpty()) dialog.showTab(tab);
     if (dialog.exec() == QDialog::Accepted) controller_->updateConfig(dialog.config());
 }
 
@@ -387,12 +581,70 @@ void MainWindow::showModels(const QStringList &models, const QString &current) {
 }
 
 void MainWindow::showStatus(const QString &message, bool isError) {
-    statusLabel_->setText(message);
-    statusLabel_->setStyleSheet(isError ? u"color: #e5534b;"_s : QString());
+    statusMessage_ = message;
+    statusLabel_->setText(statusLabel_->fontMetrics().elidedText(message, Qt::ElideRight, statusLabel_->width() - 4));
+    statusLabel_->setToolTip(message);
+    statusLabel_->setProperty("error", isError);
+    repolish(statusLabel_);
+}
+
+void MainWindow::showPolicy() {
+    policyButton_->setText(tr("Policy: %1").arg(policyWords(controller_->config().policyMode)));
+}
+
+void MainWindow::showVoiceEngines() {
+    const VoicePipeline *voice = controller_->voice();
+    if (!voice || !sttLabel_) return;
+    const QString provider = controller_->providerName();
+    sttLabel_->setText(tr("STT: %1").arg(voice->canListen() ? shortEngineNames(voice->recognizerName(), provider)
+                                                             : tr("off")));
+    sttLabel_->setToolTip(tr("Speech recognition, in the order tried (Settings → Voice): %1").arg(voice->recognizerName()));
+    ttsLabel_->setText(tr("TTS: %1").arg(voice->canSpeak() ? shortEngineNames(voice->speechName(), provider)
+                                                            : tr("off")));
+    ttsLabel_->setToolTip(tr("The voice replies are read with, in the order tried (Settings → Voice): %1")
+                              .arg(voice->speechName()));
+}
+
+void MainWindow::showHelper() {
+    const bool installed = HelperClient::isInstalled();
+    helperLabel_->setText(installed ? tr("Helper: installed") : tr("Helper: not installed"));
+    QStringList notes;
+    if (status_.inputSummary) notes.append(status_.inputSummary());
+    if (status_.inputNotes) notes.append(status_.inputNotes());
+    if (!installed) notes.append(tr("Root commands and typing need it: %1").arg(HelperClient::installCommand()));
+    helperLabel_->setToolTip(notes.join(u'\n'));
+}
+
+void MainWindow::showPhone(const QString &description) {
+    if (!phoneLabel_) return;
+    if (description.isEmpty()) {
+        const bool remembered = !controller_->config().android.serial.isEmpty();
+        phoneLabel_->setText(remembered ? tr("Phone: not connected") : tr("Phone: not paired"));
+        phoneLabel_->setToolTip(tr("No phone is connected. Settings → Android shows how to connect one."));
+        return;
+    }
+    phoneLabel_->setText(tr("Phone: %1").arg(description));
+    phoneLabel_->setToolTip(tr("The phone Nexa's android_* tools act on."));
+}
+
+void MainWindow::showRemote() {
+    if (!remoteLabel_) return;
+    RemoteServer *remote = status_.remote;
+    if (!remote->isRunning()) {
+        remoteLabel_->setText(tr("Remote: off"));
+        remoteLabel_->setToolTip(tr("Settings → Remote switches the web remote on, so a phone can talk to Nexa."));
+        return;
+    }
+    const int clients = remote->clientCount();
+    remoteLabel_->setText(clients == 0 ? tr("Remote: waiting") : tr("Remote: %n phone(s)", nullptr, clients));
+    remoteLabel_->setToolTip(tr("The web remote is on: %1").arg(remote->lanUrl().isEmpty() ? remote->localUrl()
+                                                                                             : remote->lanUrl()));
 }
 
 void MainWindow::setBusy(bool busy) {
     sendButton_->setText(busy ? tr("Stop") : tr("Send"));
+    sendButton_->setProperty("busy", busy);
+    repolish(sendButton_);
     modelCombo_->setEnabled(!busy);
     if (!busy) input_->setFocus();
 }

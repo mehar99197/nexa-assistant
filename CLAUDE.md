@@ -25,7 +25,11 @@ Scripted run: `./build/app/nexa-assistant --ask "open calculator" --ask "volume 
 turn, exactly as if typed. **If Nexa is already running, the requests go to that copy** (single instance, through a
 socket in `$XDG_RUNTIME_DIR`); add `--new-instance` for a separate test copy — it still reads the real config, so
 run it with `QT_QPA_PLATFORM=offscreen` to keep it off the user's screen. `--say "<text>"` speaks, `--voice-file <wav>` feeds a recording in as a spoken
-request; the three run in that order, one at a time.
+request; the three run in that order, one at a time. **To check the look**, add `--screenshot <file.png>`: once the
+requests are done and Nexa is idle, it saves a picture of the window and quits — it works offscreen, so
+`QT_QPA_PLATFORM=offscreen ./build/app/nexa-assistant --new-instance --theme light --ask "run uname -sr" --screenshot /tmp/nexa.png`
+shows the light scheme with a fast-path reply without touching the screen (`--theme` is for that run only). The phone
+app's screens come out of `NEXA_TEST_SCREENSHOTS=<dir> ./build/tests/nexa_tests "The phone app pairs*"`.
 The binary is **nexa-assistant** and the desktop id **org.nexa.Assistant** — `nexa`, `/usr/bin/nexa` and
 `nexa.desktop` belong to Nexa Download Manager, a different product. `scripts/install-desktop-entry.sh`
 installs the entry for the current user; the global hotkeys need it (the portal rejects an app id it cannot
@@ -66,9 +70,23 @@ models over its slow `auto/*` combos).
   DesktopEntryIndex = IAppCatalog, AppLauncher), `audio/` (wpctl), `media/` (MPRIS), `screen/` (portal
   screenshots), `files/` (FileAccess, confined to home and /tmp), `info/` (SystemInfo); `SystemTools.cc`
   defines every PC tool the model sees.
-- `app/` — Qt Widgets GUI (MainWindow, ChatView, ActionLogDock, SettingsDialog, TrayIcon) and the AppController
-  mediator; SingleInstance (one copy per user), RemoteBridge (the web remote's view of the app); `main.cc` is
-  the composition root.
+- `ui/` — the look, shared by the desktop and the phone app, so it depends on Qt Widgets alone (nothing of
+  `core/`): `NexaCoreSpec` (pure, tested: the nine states — Idle, Wake word, Listening, Transcribing, Thinking,
+  Acting, Speaking, Fast path, Offline — their names, wire keys and colour tokens, the timing table, how the
+  controller's activity resolves to one state, and where every moving part is at a given moment),
+  `NexaCorePainter` (draws a frame: halo, dotted ring, ticks, scan arc, satellites, sonar, comet, the four nodes
+  Voice/PC/Tools/Phone, the disc with the N, packets), `NexaCoreWidget` (one widget, three sizes: the presence
+  beside the chat, `NexaCoreButton` = the Talk button, `snapshot()` = the tray icon; 60 Hz while something
+  happens, 30 Hz idle, stopped while hidden; a state change cross-fades over 350 ms and the fast-path snap stays
+  for its 0.9 s ping), `NexaTheme` + `theme.qss` (the tokens for the dark and light schemes; the sheet names which
+  widget wears which token and sets widget colours through `qproperty-*`, so no widget hard-codes a colour) and
+  `NexaIcons` (line icons painted in the theme's colour).
+- `app/` — Qt Widgets GUI (MainWindow: toolbar pills, the core with the state's name beside it, ChatView with
+  bubbles and "NEXA fast path · 2 ms" headers, ActionLogDock as cards, MicButton = the core as the Talk button,
+  a monospace status bar, the sun/moon theme toggle; SettingsDialog, TrayIcon) and the AppController mediator,
+  which also resolves the core's state from the voice pipeline, running tools, the fast path, the agent and a
+  provider out of reach (`coreModeChanged`, `litNodesChanged`); SingleInstance (one copy per user), RemoteBridge
+  (the web remote's view of the app); `main.cc` is the composition root and applies the theme first.
 - `tests/` — Catch2 v3 (custom `TestMain.cc` with a QCoreApplication), one `<Class>Test.cc` per tested
   class; `FakeHttpServer.h` for provider tests; `AgentTest.cc` uses a scripted fake model.
 - `voice/` — microphone to speech and back: `capture/` (AudioCapture, AudioConverter → 16 kHz mono Int16,
@@ -109,11 +127,15 @@ models over its slow `auto/*` combos).
   `~/.config/nexa/remote-devices.json`), `RemoteProtocol` (pure JSON messages; a binary frame is one spoken
   utterance), `TlsIdentity` (self-signed cert in `~/.config/nexa/tls`), `QrCode`, and `IRemoteHost` — implemented
   by `app/RemoteBridge`, so remote/ depends only on core. The page itself is `remote/web/` (strict CSP: no inline
-  script or style; server text only through `textContent`). Phone requests carry the source `phone` or
-  `phone-voice`. `RemoteClient` is the phone's end of the same protocol (pair, hello, backoff, trust on first
+  script or style; server text only through `textContent`); it draws the same core as SVG built by `app.js` and
+  moved by `style.css` with `NexaCoreSpec`'s timings, and follows the PC's state through the `state` message
+  (`mode` = the wire key, `nodes` = the satellites lit), which `welcome` carries too. Phone requests carry the
+  source `phone` or `phone-voice`. `RemoteClient` is the phone's end of the same protocol (pair, hello, backoff, trust on first
   use pinned to the certificate's fingerprint); `RemoteProtocol` decodes both directions.
 - `android/` — Nexa Phone, the native client: a Qt Widgets app (`PhoneWindow` mediator, `PairPage`, `ChatPage`,
-  `PhoneSettings`, `Recorder`, `SpeechPlayer`) over `remote/RemoteClient`. It is a standalone CMake project for
+  `PhoneSettings`, `Recorder`, `SpeechPlayer`) over `remote/RemoteClient`, wearing `ui/`'s theme and core (the
+  PC's state, except while the phone itself listens, waits for its words or reads a reply aloud; a tap on Talk
+  listens until the pause, a hold is push-to-talk). It is a standalone CMake project for
   the APK (`scripts/build-phone-apk.sh`; README → "The phone app") and is also built inside the Linux build as
   `nexa_phone_ui` + `./build/android/nexa-phone`, which is how `tests/PhoneWindowTest.cc` drives the real
   screens against the real server. Keep it free of anything Android could not build (no D-Bus, no `app/`).
@@ -133,8 +155,11 @@ models over its slow `auto/*` combos).
 - No exceptions: fallible calls return `Result<T>` (`core/Result.h`); async APIs take a `std::function<void(Result<T>)>` callback or emit `failed(nexa::Error)`.
 - Smart pointers only; constructor injection, no singletons; wiring happens in `app/main.cc`.
 - Name the design pattern in the class comment (Strategy, Factory/Registry, Facade, Builder, Mediator, …).
-- Dependencies point downward: `app → remote/voice → core ← system → proto`, and `android → remote/voice`.
-  `core` never includes QtWidgets.
+- Dependencies point downward: `app → remote/voice → core ← system → proto`, and `android → remote/voice`;
+  `app → ui` and `android → ui`, where `ui` depends on Qt Widgets alone. `core` never includes QtWidgets.
+- Colours come from `ui/theme.qss`: a widget that needs one declares a `Q_PROPERTY(QColor …)` the sheet sets
+  (`nexa--ChatView { qproperty-errorColor: … }`), defaulting to the dark tokens. Never colour alone — every state
+  of the core also writes its name beside it, and the phone and the web page show the same name.
 - Nothing blocks the GUI thread: network via QNetworkAccessManager signals, processes via QProcess signals, heavy work in worker threads.
 - QObjects handed out as `shared_ptr` (e.g. `ChatStream`) use a `deleteLater()` deleter, so they can be released from their own signals.
 - Never log or display API keys/tokens.

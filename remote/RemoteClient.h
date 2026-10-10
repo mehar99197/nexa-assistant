@@ -93,7 +93,7 @@ public:
 
 signals:
     void stateChanged(State state, const QString &detail);
-    void welcomed(const QString &device, bool voice, bool busy);
+    void welcomed(const QString &device, bool voice, bool busy, const QString &mode);
     void received(const nexa::remote::ServerMessage &message);     // everything after the welcome
     void unauthorized(const QString &reason);                       // the token was refused: pair again
     void certificateRejected(const QString &fingerprint);           // not the pinned one; nothing was sent

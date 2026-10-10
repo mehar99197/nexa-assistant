@@ -1,0 +1,124 @@
+#include "ui/NexaIcons.h"
+
+#include "ui/NexaCorePainter.h"
+
+#include <QPainter>
+#include <QPainterPath>
+#include <QPixmap>
+
+#include <cmath>
+
+namespace nexa {
+
+namespace {
+
+constexpr double kPi = 3.14159265358979323846;
+
+QPointF polar(double degrees, double radius) {
+    const double radians = degrees * kPi / 180.0;
+    return {radius * std::cos(radians), radius * std::sin(radians)};
+}
+
+} // namespace
+
+QIcon NexaIcons::icon(Kind kind, const QColor &colour, int size) {
+    QIcon icon;
+    for (const qreal ratio : {1.0, 2.0}) {
+        QPixmap pixmap(QSize(size, size) * ratio);
+        pixmap.setDevicePixelRatio(ratio);
+        pixmap.fill(Qt::transparent);
+        QPainter painter(&pixmap);
+        paint(painter, kind, QRectF(0, 0, size, size), colour);
+        icon.addPixmap(pixmap);
+    }
+    return icon;
+}
+
+void NexaIcons::paint(QPainter &p, Kind kind, const QRectF &box, const QColor &colour) {
+    const double s = std::min(box.width(), box.height());
+    const QPointF c = box.center();
+    p.save();
+    p.setRenderHint(QPainter::Antialiasing, true);
+    QPen pen(colour, std::max(1.2, 0.09 * s));
+    pen.setCapStyle(Qt::RoundCap);
+    pen.setJoinStyle(Qt::RoundJoin);
+    p.setPen(pen);
+    p.setBrush(Qt::NoBrush);
+    p.translate(c);
+    switch (kind) {
+    case Kind::Mic:
+        NexaCorePainter::paintNodeIcon(p, VoiceNode, QPointF(0, 0), s * 0.9, colour);
+        break;
+    case Kind::Pc:
+        NexaCorePainter::paintNodeIcon(p, PcNode, QPointF(0, 0), s * 0.9, colour);
+        break;
+    case Kind::Tools:
+        NexaCorePainter::paintNodeIcon(p, ToolsNode, QPointF(0, 0), s * 0.9, colour);
+        break;
+    case Kind::Phone:
+        NexaCorePainter::paintNodeIcon(p, PhoneNode, QPointF(0, 0), s * 0.9, colour);
+        break;
+    case Kind::Send:
+        p.drawLine(QPointF(-0.36 * s, 0), QPointF(0.36 * s, 0));
+        p.drawPolyline(QPolygonF() << QPointF(0.08 * s, -0.28 * s) << QPointF(0.36 * s, 0) << QPointF(0.08 * s, 0.28 * s));
+        break;
+    case Kind::Stop:
+        p.setPen(Qt::NoPen);
+        p.setBrush(colour);
+        p.drawRoundedRect(QRectF(-0.28 * s, -0.28 * s, 0.56 * s, 0.56 * s), 0.08 * s, 0.08 * s);
+        break;
+    case Kind::Sun:
+        p.drawEllipse(QPointF(0, 0), 0.17 * s, 0.17 * s);
+        for (int i = 0; i < 8; ++i) {
+            p.drawLine(polar(45.0 * i, 0.28 * s), polar(45.0 * i, 0.4 * s));
+        }
+        break;
+    case Kind::Moon: {
+        QPainterPath moon;
+        moon.addEllipse(QPointF(0, 0), 0.36 * s, 0.36 * s);
+        QPainterPath bite;
+        bite.addEllipse(QPointF(0.16 * s, -0.12 * s), 0.3 * s, 0.3 * s);
+        p.setPen(Qt::NoPen);
+        p.setBrush(colour);
+        p.drawPath(moon.subtracted(bite));
+        break;
+    }
+    case Kind::Gear: {
+        p.setPen(QPen(colour, std::max(1.4, 0.13 * s)));
+        p.drawEllipse(QPointF(0, 0), 0.2 * s, 0.2 * s);
+        p.setPen(QPen(colour, std::max(1.8, 0.14 * s), Qt::SolidLine, Qt::RoundCap));
+        for (int i = 0; i < 8; ++i) {
+            p.drawLine(polar(45.0 * i, 0.3 * s), polar(45.0 * i, 0.42 * s));
+        }
+        break;
+    }
+    case Kind::Refresh: {
+        const QRectF arc(-0.32 * s, -0.32 * s, 0.64 * s, 0.64 * s);
+        p.drawArc(arc, 30 * 16, 290 * 16);
+        const QPointF tip = polar(-30.0, 0.32 * s);
+        p.drawPolyline(QPolygonF() << (tip + QPointF(-0.2 * s, -0.02 * s)) << tip << (tip + QPointF(0.0, -0.2 * s)));
+        break;
+    }
+    case Kind::NewChat:
+        p.drawLine(QPointF(-0.3 * s, 0), QPointF(0.3 * s, 0));
+        p.drawLine(QPointF(0, -0.3 * s), QPointF(0, 0.3 * s));
+        break;
+    case Kind::Actions:
+        for (int i = -1; i <= 1; ++i) {
+            const double y = 0.24 * s * i;
+            p.drawLine(QPointF(-0.1 * s, y), QPointF(0.36 * s, y));
+            p.setBrush(colour);
+            p.drawEllipse(QPointF(-0.3 * s, y), 0.05 * s, 0.05 * s);
+            p.setBrush(Qt::NoBrush);
+        }
+        break;
+    case Kind::More:
+        p.setPen(Qt::NoPen);
+        p.setBrush(colour);
+        for (int i = -1; i <= 1; ++i) p.drawEllipse(QPointF(0, 0.26 * s * i), 0.07 * s, 0.07 * s);
+        break;
+    }
+    p.restore();
+}
+
+} // namespace nexa

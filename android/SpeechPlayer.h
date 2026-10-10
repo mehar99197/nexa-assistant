@@ -21,8 +21,11 @@ public:
 
     void play(const QByteArray &wav);
     void stop();
+    bool isPlaying() const { return sink_ != nullptr; }
 
 signals:
+    void started();
+    void finished();        // the reply was read to the end, or cut
     void failed(const QString &reason);
 
 private:

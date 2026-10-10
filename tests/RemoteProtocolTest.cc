@@ -5,6 +5,7 @@
 
 #include "QtStringMakers.h"
 
+#include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
 
@@ -65,6 +66,23 @@ TEST_CASE("Server messages carry their type and their fields") {
     CHECK(parsed(remote::pong()) == QJsonObject{{u"t"_s, u"pong"_s}});
     // Text with quotes and newlines survives the trip.
     CHECK(parsed(remote::delta(u"say \"hi\"\nthen"_s)).value(u"text"_s).toString() == u"say \"hi\"\nthen"_s);
+}
+
+TEST_CASE("The core's state travels to the phone, and an older PC's welcome still reads") {
+    using Type = remote::ServerMessage::Type;
+    CHECK(parsed(remote::welcome(u"Phone"_s, true, false, u"listen"_s)).value(u"mode"_s).toString() == u"listen"_s);
+    CHECK_FALSE(parsed(remote::welcome(u"Phone"_s, true, false)).contains(u"mode"_s));
+    CHECK(parsed(remote::state(u"act"_s, {u"pc"_s, u"tools"_s}))
+          == QJsonObject{{u"t"_s, u"state"_s}, {u"mode"_s, u"act"_s}, {u"nodes"_s, QJsonArray{u"pc"_s, u"tools"_s}}});
+
+    const auto state = remote::decodeServer(remote::state(u"act"_s, {u"pc"_s, u"tools"_s}));
+    REQUIRE(state);
+    CHECK(state->type == Type::State);
+    CHECK(state->mode == u"act"_s);
+    CHECK(state->nodes == QStringList{u"pc"_s, u"tools"_s});
+    CHECK(remote::decodeServer(remote::welcome(u"Phone"_s, true, false, u"idle"_s))->mode == u"idle"_s);
+    CHECK(remote::decodeServer(remote::welcome(u"Phone"_s, true, false))->mode.isEmpty());
+    CHECK(remote::decodeServer(remote::state(u"idle"_s))->nodes.isEmpty());
 }
 
 TEST_CASE("The phone app reads every server message back, and writes what the page writes") {

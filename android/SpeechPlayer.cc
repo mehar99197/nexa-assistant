@@ -40,6 +40,7 @@ void SpeechPlayer::play(const QByteArray &wav) {
         if (state == QAudio::IdleState || state == QAudio::StoppedState) stop();
     });
     sink_->start(&buffer_);
+    emit started();
 }
 
 void SpeechPlayer::stop() {
@@ -47,6 +48,7 @@ void SpeechPlayer::stop() {
     std::unique_ptr<QAudioSink> sink = std::move(sink_);
     sink->stop();
     buffer_.close();
+    emit finished();
 }
 
 } // namespace nexa

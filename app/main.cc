@@ -40,6 +40,7 @@
 #include "system/info/SystemInfo.h"
 #include "system/media/MprisController.h"
 #include "system/screen/ScreenCapture.h"
+#include "ui/NexaTheme.h"
 #include "voice/VoiceTools.h"
 #include "voice/Wav.h"
 #include "voice/capture/AudioCapture.h"
@@ -169,6 +170,12 @@ int main(int argc, char *argv[]) {
     const QCommandLineOption newInstanceOption(
         u"new-instance"_s, u"Start even when Nexa is already running (for testing); this copy takes no requests from later ones."_s);
     parser.addOption(newInstanceOption);
+    const QCommandLineOption screenshotOption(
+        u"screenshot"_s, u"Save a picture of the window to <file> once the start-up requests are done, then quit."_s,
+        u"file"_s);
+    parser.addOption(screenshotOption);
+    const QCommandLineOption themeOption(u"theme"_s, u"Look for this run only: system, dark or light."_s, u"scheme"_s);
+    parser.addOption(themeOption);
     parser.process(app);
 
     // One Nexa per user: a second start hands what it was asked to do to the running one and
@@ -196,6 +203,9 @@ int main(int argc, char *argv[]) {
     ConfigStore store;
     QString startupWarning;
     Config config = loadConfig(store, startupWarning);
+    // The look: Nexa's own stylesheet and palette, dark or light as set (or as the desktop is).
+    if (parser.isSet(themeOption)) config.ui.theme = parser.value(themeOption);
+    NexaTheme::apply(&app, NexaTheme::schemeFor(config.ui.theme));
 
     // AI providers
     HttpClient http;
@@ -298,6 +308,17 @@ int main(int argc, char *argv[]) {
     QObject::connect(&controller, &AppController::replyFailed, &remote, &RemoteServer::onReplyFailed);
     QObject::connect(&controller, &AppController::busyChanged, &remote, &RemoteServer::onBusyChanged);
     QObject::connect(&controller, &AppController::statusChanged, &remote, &RemoteServer::onStatus);
+    // The phone draws the same core as the PC: its state and the satellites an action lights.
+    const auto tellCore = [&controller, &remote] {
+        QStringList nodes;
+        const CoreNodes lit = controller.litNodes();
+        for (const CoreNode node : {VoiceNode, PcNode, ToolsNode, PhoneNode}) {
+            if (lit & node) nodes.append(coreNodeName(node).toLower());
+        }
+        remote.onCoreChanged(coreModeKey(controller.coreMode()), nodes);
+    };
+    QObject::connect(&controller, &AppController::coreModeChanged, &remote, tellCore);
+    QObject::connect(&controller, &AppController::litNodesChanged, &remote, tellCore);
     QObject::connect(&controller, &AppController::replyFinished, &remote, [&remote](FinishReason reason, bool) {
         remote.onReplyFinished(reason == FinishReason::Stop        ? u"stop"_s
                                : reason == FinishReason::Cancelled ? u"cancelled"_s
@@ -335,7 +356,8 @@ int main(int argc, char *argv[]) {
                                    .discovery = &discovery,
                                    .remote = &remote,
                                    .pairing = &pairing,
-                                   .shortcuts = &shortcuts});
+                                   .shortcuts = &shortcuts},
+                      AuditLog::defaultPath());
     window.show();
     // Nexa in the top bar where the desktop shows tray icons; then closing the window only hides
     // it, and the hotkeys, wake word and web remote keep working.
@@ -358,8 +380,26 @@ int main(int argc, char *argv[]) {
     // Scripted requests (--say, --voice-file, --ask, from this start or handed over by a later
     // one): one step at a time, each once Nexa is idle again — reply finished and spoken.
     QList<std::function<void()>> steps;
-    std::function<void()> runNext = [&controller, &voice, &steps] {
-        if (!steps.isEmpty() && !controller.isBusy() && voice.state() == VoiceState::Idle) steps.takeFirst()();
+    // --screenshot: once everything queued is done and Nexa is idle again, a picture of the
+    // window (it also works offscreen: QT_QPA_PLATFORM=offscreen), then quit.
+    const QString screenshotPath = parser.value(screenshotOption);
+    bool screenshotTaken = false;
+    const auto takeScreenshot = [&window, screenshotPath, &screenshotTaken] {
+        if (screenshotPath.isEmpty() || screenshotTaken) return;
+        screenshotTaken = true;
+        QTimer::singleShot(700, &window, [&window, screenshotPath] {
+            const bool saved = window.grab().save(screenshotPath);
+            qCInfo(lcApp).noquote() << (saved ? u"Saved %1"_s.arg(screenshotPath) : u"Could not save %1"_s.arg(screenshotPath));
+            QCoreApplication::quit();
+        });
+    };
+    std::function<void()> runNext = [&controller, &voice, &steps, takeScreenshot] {
+        if (controller.isBusy() || voice.state() != VoiceState::Idle) return;
+        if (!steps.isEmpty()) {
+            steps.takeFirst()();
+        } else {
+            takeScreenshot();
+        }
     };
     const auto later = [&runNext] { QTimer::singleShot(250, runNext); };
     QObject::connect(&controller, &AppController::busyChanged, &controller, [later](bool busy) {
@@ -385,6 +425,7 @@ int main(int argc, char *argv[]) {
         if (!steps.isEmpty()) QTimer::singleShot(delayMs, runNext);
     };
     queue(parser.values(sayOption), parser.values(voiceFileOption), parser.values(askOption), 800);
+    if (steps.isEmpty() && !screenshotPath.isEmpty()) QTimer::singleShot(1500, runNext);
 
     // A later start: take over its requests. Without any, it means "show me Nexa" and the window
     // comes forward; with some, it is a script or a shortcut at work, and the window only comes

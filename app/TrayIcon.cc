@@ -2,6 +2,7 @@
 
 #include "app/AppController.h"
 #include "app/MainWindow.h"
+#include "ui/NexaCoreWidget.h"
 #include "voice/pipeline/VoicePipeline.h"
 
 #include <QAction>
@@ -38,11 +39,18 @@ TrayIcon::TrayIcon(MainWindow *window, AppController *controller, QObject *paren
     });
 
     icon_ = new QSystemTrayIcon(QApplication::windowIcon(), this);
-    icon_->setToolTip(tr("Nexa"));
     icon_->setContextMenu(menu);
     connect(icon_, &QSystemTrayIcon::activated, this, [this](QSystemTrayIcon::ActivationReason reason) {
         if (reason == QSystemTrayIcon::Trigger || reason == QSystemTrayIcon::DoubleClick) toggleWindow();
     });
+    // The core, at rest in its current state: the third size of the one widget.
+    const auto showMode = [this](CoreMode mode) {
+        icon_->setIcon(QIcon(window_->presence()->snapshot(mode, 64)));
+        icon_->setToolTip(tr("Nexa · %1").arg(mode == CoreMode::Idle ? tr("Ready") : coreModeName(mode)));
+    };
+    showMode(controller->coreMode());
+    connect(controller, &AppController::coreModeChanged, this, showMode);
+    connect(controller, &AppController::themeChanged, this, [controller, showMode] { showMode(controller->coreMode()); });
     icon_->show();
 }
 

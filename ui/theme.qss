@@ -1,0 +1,296 @@
+/* Nexa's theme. The tokens (a name between at-signs) are filled in by NexaTheme from the palette
+   of the scheme (dark or light); this file decides which widget wears which token, so it stays the
+   single source of the look. Classes in the nexa namespace are selected as nexa--Class. */
+
+QWidget {
+    background: @ground@;
+    color: @text@;
+    selection-background-color: @idle@;
+    selection-color: @onAccent@;
+}
+QLabel { background: transparent; }
+QToolTip { background: @panel@; color: @text@; border: 1px solid @line@; padding: 4px 6px; }
+
+/* ---- the main window: toolbar pills, state header, chat, input bar, status bar */
+
+QMainWindow::separator { background: @line@; width: 1px; height: 1px; }
+
+QToolBar#mainToolbar {
+    background: @ground@;
+    border: 0;
+    border-bottom: 1px solid @line@;
+    padding: 8px 10px;
+    spacing: 8px;
+}
+QToolBar#mainToolbar::separator { width: 0; }
+
+QFrame#pill { background: @panel@; border: 1px solid @line@; border-radius: 8px; }
+QLabel#pillLabel { color: @muted@; padding-left: 4px; }
+QLabel#pillValue { color: @text@; font-family: "@mono@"; padding-right: 4px; }
+
+QComboBox#modelCombo {
+    background: transparent;
+    border: 0;
+    padding: 0 2px;
+    color: @text@;
+    font-family: "@mono@";
+    min-height: 24px;
+}
+QComboBox#modelCombo QLineEdit { background: transparent; border: 0; color: @text@; font-family: "@mono@"; }
+
+QToolButton#iconButton {
+    background: @panel@;
+    border: 1px solid @line@;
+    border-radius: 8px;
+    padding: 4px;
+    min-width: 26px;
+    min-height: 26px;
+}
+QToolButton#iconButton:hover { background: @panel2@; border-color: @muted@; }
+QToolButton#iconButton:pressed, QToolButton#iconButton:checked { background: @accentSoft@; border-color: @idle@; }
+
+QToolButton#pillButton {
+    background: @panel@;
+    border: 1px solid @line@;
+    border-radius: 8px;
+    padding: 7px 10px;
+    color: @text@;
+}
+QToolButton#pillButton:hover { border-color: @muted@; }
+
+QPushButton#stopAll {
+    background: @errorSoft@;
+    color: @error@;
+    border: 1px solid @errorLine@;
+    border-radius: 8px;
+    padding: 7px 12px;
+    font-weight: 600;
+}
+QPushButton#stopAll:hover { background: @errorSoft2@; }
+QPushButton#stopAll:pressed { background: @error@; color: @ground@; }
+
+QWidget#stateHeader { background: @ground@; border-bottom: 1px solid @line@; }
+QLabel#stateTitle { font-size: 22px; font-weight: 700; }
+QLabel#stateHint { color: @muted@; }
+
+QPlainTextEdit#input {
+    background: @panel@;
+    border: 1px solid @line@;
+    border-radius: 10px;
+    padding: 6px 8px;
+    color: @text@;
+}
+QPlainTextEdit#input:focus { border: 1px solid @idle@; }
+
+QToolButton#inputButton {
+    background: @panel@;
+    border: 1px solid @line@;
+    border-radius: 10px;
+    min-width: 46px;
+    min-height: 46px;
+}
+QToolButton#inputButton:hover { background: @panel2@; border-color: @muted@; }
+QToolButton#inputButton:pressed { background: @accentSoft@; border-color: @idle@; }
+
+QPushButton#send {
+    background: @idle@;
+    color: @onAccent@;
+    border: 0;
+    border-radius: 10px;
+    padding: 0 22px;
+    font-weight: 600;
+    min-height: 48px;
+}
+QPushButton#send:hover { background: @listen@; }
+QPushButton#send[busy="true"] { background: @error@; color: @ground@; }
+QPushButton#send[busy="true"]:hover { background: @error@; }
+
+/* the Actions panel: cards, newest first */
+QWidget#dockTitle { background: @ground@; border-bottom: 1px solid @line@; border-left: 1px solid @line@; }
+QLabel#dockTitleText { font-weight: 700; }
+QLabel#dockTitleNote { color: @muted@; font-family: "@mono@"; font-size: 11px; }
+QListWidget#actionList { background: @ground@; border: 0; border-left: 1px solid @line@; outline: 0; }
+QListWidget#actionList::item { border: 0; }
+QListWidget#actionList::item:selected { background: transparent; }
+QListWidget#actionList::item:hover { background: @panel@; }
+nexa--ActionLogDock {
+    qproperty-mutedColor: @muted@;
+    qproperty-lineColor: @line@;
+    qproperty-accentColor: @idle@;
+    qproperty-errorColor: @error@;
+    qproperty-chipColor: @panel2@;
+    qproperty-voiceChipColor: @accentSoft@;
+    qproperty-monoFamily: "@mono@";
+}
+
+QStatusBar { background: @panel@; border-top: 1px solid @line@; color: @muted@; }
+QStatusBar::item { border: 0; }
+QStatusBar QLabel { color: @muted@; font-family: "@mono@"; font-size: 11px; padding: 0 6px; }
+QStatusBar QLabel[error="true"] { color: @error@; }
+
+/* ---- the phone app (android/) and the pages of Settings */
+
+QLabel#brandTitle { font-size: 20px; font-weight: 700; }
+QLabel#statusPill {
+    background: @panel@;
+    border: 1px solid @line@;
+    border-radius: 14px;
+    padding: 5px 12px;
+    color: @muted@;
+}
+QListWidget#messages { background: @ground@; border: 0; outline: 0; }
+QListWidget#messages::item { border: 0; padding: 2px; }
+QListWidget#messages::item:selected { background: transparent; color: @text@; }
+QLineEdit#phoneInput {
+    background: @panel@;
+    border: 1px solid @line@;
+    border-radius: 12px;
+    padding: 10px 12px;
+    min-height: 26px;
+}
+QLineEdit#phoneInput:focus { border-color: @idle@; }
+QToolButton#send {
+    background: @idle@;
+    border: 0;
+    border-radius: 12px;
+    min-width: 48px;
+    min-height: 48px;
+}
+QToolButton#send:pressed { background: @listen@; }
+QToolButton#send[busy="true"] { background: @error@; }
+QLabel#talkHint { color: @muted@; }
+QPushButton#primary { background: @idle@; color: @onAccent@; border: 0; font-weight: 600; min-height: 48px; }
+QPushButton#primary:hover, QPushButton#primary:pressed { background: @listen@; }
+QPushButton#primary:disabled { background: @panel2@; color: @muted@; }
+
+/* ---- everything else: dialogs, lists, inputs, menus, scrollbars */
+
+QDialog, QMessageBox, QInputDialog { background: @ground@; }
+
+QTabWidget::pane { border: 1px solid @line@; border-radius: 8px; top: -1px; background: @ground@; }
+QTabBar::tab {
+    background: @panel@;
+    color: @muted@;
+    border: 1px solid @line@;
+    border-bottom: 0;
+    padding: 6px 12px;
+    margin-right: 2px;
+    border-top-left-radius: 6px;
+    border-top-right-radius: 6px;
+}
+QTabBar::tab:selected { color: @text@; background: @ground@; }
+QTabBar::tab:hover { color: @text@; }
+
+QLineEdit, QPlainTextEdit, QTextEdit, QSpinBox, QDoubleSpinBox, QComboBox {
+    background: @panel@;
+    color: @text@;
+    border: 1px solid @line@;
+    border-radius: 6px;
+    padding: 4px 6px;
+    selection-background-color: @idle@;
+    selection-color: @onAccent@;
+}
+QLineEdit:focus, QPlainTextEdit:focus, QTextEdit:focus, QSpinBox:focus, QDoubleSpinBox:focus, QComboBox:focus {
+    border-color: @idle@;
+}
+QLineEdit:disabled, QPlainTextEdit:disabled, QComboBox:disabled { color: @muted@; }
+QComboBox::drop-down { border: 0; width: 20px; }
+QComboBox::down-arrow { image: url(:/nexa/ui/chevron-down.svg); width: 10px; height: 10px; }
+QComboBox QAbstractItemView {
+    background: @panel@;
+    color: @text@;
+    border: 1px solid @line@;
+    selection-background-color: @accentSoft@;
+    selection-color: @text@;
+    outline: 0;
+}
+QSpinBox::up-button, QSpinBox::down-button { width: 14px; border: 0; background: transparent; }
+
+QPushButton {
+    background: @panel@;
+    color: @text@;
+    border: 1px solid @line@;
+    border-radius: 8px;
+    padding: 6px 14px;
+}
+QPushButton:hover { border-color: @muted@; }
+QPushButton:pressed { background: @panel2@; }
+QPushButton:disabled { color: @muted@; border-color: @line@; }
+QPushButton:default { border-color: @accentLine@; }
+QToolButton { background: transparent; border: 0; border-radius: 6px; padding: 3px; }
+QToolButton:hover { background: @panel2@; }
+QToolButton::menu-indicator { image: none; }
+
+QListWidget, QListView, QTreeWidget, QTreeView, QTableView {
+    background: @panel@;
+    color: @text@;
+    border: 1px solid @line@;
+    border-radius: 6px;
+    outline: 0;
+    alternate-background-color: @ground@;
+}
+QListWidget::item, QTreeView::item { padding: 3px; }
+QListWidget::item:selected, QListView::item:selected, QTreeView::item:selected { background: @accentSoft@; color: @text@; }
+QListWidget::item:hover, QTreeView::item:hover { background: @panel2@; }
+QHeaderView::section { background: @panel@; color: @muted@; border: 0; border-bottom: 1px solid @line@; padding: 4px; }
+
+QGroupBox { border: 1px solid @line@; border-radius: 8px; margin-top: 12px; padding-top: 8px; }
+QGroupBox::title { subcontrol-origin: margin; left: 10px; padding: 0 4px; color: @muted@; }
+QCheckBox, QRadioButton { background: transparent; spacing: 6px; }
+QScrollArea { border: 0; background: transparent; }
+QScrollArea > QWidget > QWidget { background: transparent; }
+QSplitter::handle { background: @line@; }
+QTextBrowser { background: @panel@; border: 1px solid @line@; border-radius: 6px; }
+QProgressBar { background: @panel@; border: 1px solid @line@; border-radius: 6px; text-align: center; color: @text@; }
+QProgressBar::chunk { background: @idle@; border-radius: 5px; }
+
+QMenu { background: @panel@; color: @text@; border: 1px solid @line@; padding: 4px; }
+QMenu::item { padding: 6px 20px; border-radius: 4px; background: transparent; }
+QMenu::item:selected { background: @accentSoft@; }
+QMenu::separator { height: 1px; background: @line@; margin: 4px 8px; }
+QMenu::icon { padding-left: 6px; }
+
+QSlider::groove:horizontal { height: 4px; background: @line@; border-radius: 2px; }
+QSlider::handle:horizontal { width: 14px; height: 14px; margin: -5px 0; background: @idle@; border-radius: 7px; }
+QSlider::sub-page:horizontal { background: @idle@; border-radius: 2px; }
+
+QScrollBar:vertical { background: transparent; width: 10px; margin: 0; }
+QScrollBar::handle:vertical { background: @line@; border-radius: 4px; min-height: 24px; margin: 2px; }
+QScrollBar::handle:vertical:hover { background: @muted@; }
+QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical { height: 0; background: transparent; }
+QScrollBar::add-page:vertical, QScrollBar::sub-page:vertical { background: transparent; }
+QScrollBar:horizontal { background: transparent; height: 10px; margin: 0; }
+QScrollBar::handle:horizontal { background: @line@; border-radius: 4px; min-width: 24px; margin: 2px; }
+QScrollBar::handle:horizontal:hover { background: @muted@; }
+QScrollBar::add-line:horizontal, QScrollBar::sub-line:horizontal { width: 0; background: transparent; }
+QScrollBar::add-page:horizontal, QScrollBar::sub-page:horizontal { background: transparent; }
+
+nexa--NexaCoreWidget {
+    background: transparent;
+    qproperty-idleColor: @idle@;
+    qproperty-wakeColor: @wake@;
+    qproperty-listenColor: @listen@;
+    qproperty-sttColor: @stt@;
+    qproperty-thinkColor: @think@;
+    qproperty-actColor: @act@;
+    qproperty-speakColor: @speak@;
+    qproperty-fastColor: @fast@;
+    qproperty-errorColor: @error@;
+    qproperty-panelColor: @panel@;
+    qproperty-lineColor: @line@;
+    qproperty-mutedColor: @muted@;
+    qproperty-textColor: @text@;
+    qproperty-groundColor: @ground@;
+}
+
+/* Last, after the generic rules of the same specificity: the transcript keeps the window's ground. */
+nexa--ChatView {
+    background: @ground@;
+    border: 0;
+    qproperty-userBubbleColor: @panel@;
+    qproperty-metaColor: @muted@;
+    qproperty-accentColor: @idle@;
+    qproperty-errorColor: @error@;
+    qproperty-codeColor: @panel@;
+    qproperty-monoFamily: "@mono@";
+}

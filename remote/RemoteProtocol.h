@@ -3,6 +3,7 @@
 #include <QByteArray>
 #include <QByteArrayView>
 #include <QString>
+#include <QStringList>
 
 #include <optional>
 
@@ -29,8 +30,11 @@ struct ClientMessage {
 // Anything malformed, unknown or oversized is refused rather than guessed at.
 std::optional<ClientMessage> decode(QByteArrayView frame);
 
-// What the server sends.
-QByteArray welcome(const QString &device, bool voice, bool busy);
+// What the server sends. `mode` is the Nexa core's state as NexaCoreSpec names it on the wire
+// ("idle", "listen", "act", …) and `nodes` the satellites an action lights ("pc", "tools", …),
+// so the phone can draw the same core as the PC.
+QByteArray welcome(const QString &device, bool voice, bool busy, const QString &mode = {});
+QByteArray state(const QString &mode, const QStringList &nodes = {});
 QByteArray accepted(const QString &text, const QString &source);    // a request, from this phone or elsewhere
 QByteArray delta(const QString &text);                              // more of the reply
 QByteArray step(const QString &description, bool ok);               // a tool ran
@@ -45,7 +49,7 @@ QByteArray pong();
 
 // The same messages as Nexa's own phone app reads them (the browser page reads the JSON itself).
 struct ServerMessage {
-    enum class Type { Welcome, Accepted, Delta, Step, Finished, Failed, Transcript, Speech, Busy, Error, Pong };
+    enum class Type { Welcome, Accepted, Delta, Step, Finished, Failed, Transcript, Speech, Busy, Error, Pong, State };
     Type type{Type::Pong};
     QString text;       // Accepted, Delta, Step, Failed, Transcript, Error: the words
     QString source;     // Accepted: "pc", "phone" or "phone-voice"
@@ -53,6 +57,8 @@ struct ServerMessage {
     QString reason;     // Finished
     QString url;        // Speech: the WAV, relative to the server
     QString code;       // Error
+    QString mode;       // Welcome, State: the core's state ("idle", "listen", …; empty from an older PC)
+    QStringList nodes;  // State: the satellites lit ("voice", "pc", "tools", "phone")
     int version{0};     // Welcome
     bool ok{true};      // Step
     bool busy{false};   // Welcome, Busy

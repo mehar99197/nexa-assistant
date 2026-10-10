@@ -33,17 +33,29 @@ target_link_libraries(nexa_phone_ui PUBLIC
 )
 if(NEXA_PHONE_STANDALONE)
     # Shared with the PC side, so the two ends cannot drift: the wire format and the client, Nexa's
-    # WAV decoder for the spoken reply, and its audio converter for the microphone.
+    # WAV decoder for the spoken reply, its audio converter for the microphone, and the look — the
+    # Nexa core, the theme and the icons (ui/), which depend on Qt Widgets alone.
     target_sources(nexa_phone_ui PRIVATE
         "${NEXA_ROOT}/core/Logging.h" "${NEXA_ROOT}/core/Logging.cc"
         "${NEXA_ROOT}/remote/RemoteClient.h" "${NEXA_ROOT}/remote/RemoteClient.cc"
         "${NEXA_ROOT}/remote/RemoteProtocol.h" "${NEXA_ROOT}/remote/RemoteProtocol.cc"
         "${NEXA_ROOT}/voice/Wav.h" "${NEXA_ROOT}/voice/Wav.cc"
         "${NEXA_ROOT}/voice/capture/AudioConverter.h" "${NEXA_ROOT}/voice/capture/AudioConverter.cc"
+        "${NEXA_ROOT}/ui/NexaCorePainter.h" "${NEXA_ROOT}/ui/NexaCorePainter.cc"
+        "${NEXA_ROOT}/ui/NexaCoreSpec.h" "${NEXA_ROOT}/ui/NexaCoreSpec.cc"
+        "${NEXA_ROOT}/ui/NexaCoreWidget.h" "${NEXA_ROOT}/ui/NexaCoreWidget.cc"
+        "${NEXA_ROOT}/ui/NexaIcons.h" "${NEXA_ROOT}/ui/NexaIcons.cc"
+        "${NEXA_ROOT}/ui/NexaTheme.h" "${NEXA_ROOT}/ui/NexaTheme.cc"
+    )
+    set_source_files_properties("${NEXA_ROOT}/ui/theme.qss" PROPERTIES QT_RESOURCE_ALIAS theme.qss)
+    set_source_files_properties("${NEXA_ROOT}/ui/chevron-down.svg" PROPERTIES QT_RESOURCE_ALIAS chevron-down.svg)
+    qt_add_resources(nexa_phone_ui "nexa_theme"
+        PREFIX "/nexa/ui"
+        FILES "${NEXA_ROOT}/ui/theme.qss" "${NEXA_ROOT}/ui/chevron-down.svg"
     )
     target_compile_options(nexa_phone_ui PRIVATE -Wall -Wextra -Wpedantic -Wno-missing-field-initializers)
 else()
-    target_link_libraries(nexa_phone_ui PUBLIC nexa_remote nexa_voice PRIVATE nexa_options)
+    target_link_libraries(nexa_phone_ui PUBLIC nexa_remote nexa_voice nexa_ui PRIVATE nexa_options)
 endif()
 
 qt_add_executable(nexa-phone main.cc)
