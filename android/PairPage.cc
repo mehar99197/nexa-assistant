@@ -7,6 +7,8 @@
 #include <QPushButton>
 #include <QRegularExpression>
 #include <QRegularExpressionValidator>
+#include <QScrollArea>
+#include <QScroller>
 #include <QVBoxLayout>
 
 using namespace Qt::StringLiterals;
@@ -14,7 +16,20 @@ using namespace Qt::StringLiterals;
 namespace nexa {
 
 PairPage::PairPage(QWidget *parent) : QWidget(parent) {
-    auto *layout = new QVBoxLayout(this);
+    // Everything sits in a scroll area: in landscape, or with the keyboard up, a phone's screen is
+    // shorter than this form, and a word-wrapped label must never be drawn under the field below it.
+    auto *outer = new QVBoxLayout(this);
+    outer->setContentsMargins(0, 0, 0, 0);
+    auto *scroll = new QScrollArea(this);
+    scroll->setWidgetResizable(true);
+    scroll->setFrameShape(QFrame::NoFrame);
+    scroll->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
+    QScroller::grabGesture(scroll->viewport(), QScroller::TouchGesture);
+    outer->addWidget(scroll);
+    auto *form = new QWidget(scroll);
+    scroll->setWidget(form);
+
+    auto *layout = new QVBoxLayout(form);
     layout->setContentsMargins(24, 32, 24, 24);
     layout->setSpacing(12);
 
@@ -29,6 +44,7 @@ PairPage::PairPage(QWidget *parent) : QWidget(parent) {
                                "Type the address under the QR code and the six-digit code — "
                                "or paste the whole link."), this);
     hint->setWordWrap(true);
+    hint->setSizePolicy(QSizePolicy::Preferred, QSizePolicy::Minimum);
     layout->addWidget(hint);
 
     address_ = new QLineEdit(this);
