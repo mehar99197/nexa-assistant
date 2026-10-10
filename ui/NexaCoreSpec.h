@@ -24,6 +24,18 @@ inline constexpr std::array<CoreMode, kCoreModeCount> kCoreModes{
 enum CoreNode : unsigned { NoNode = 0, VoiceNode = 1, PcNode = 2, ToolsNode = 4, PhoneNode = 8 };
 using CoreNodes = unsigned;
 
+// How the motion is styled — every theme pack picks one. Classic is the spec as written; the
+// others bend it: satellites that never land, a ping that never stops, a hue that drifts…
+enum class CoreStyle { Classic, Orbit, Pulse, Aurora, Comet, Nebula, Storm, Minimal };
+inline constexpr int kCoreStyleCount = 8;
+inline constexpr std::array<CoreStyle, kCoreStyleCount> kCoreStyles{
+    CoreStyle::Classic, CoreStyle::Orbit, CoreStyle::Pulse,  CoreStyle::Aurora,
+    CoreStyle::Comet,   CoreStyle::Nebula, CoreStyle::Storm, CoreStyle::Minimal};
+QString coreStyleName(CoreStyle style);             // "Aurora"
+QString coreStyleKey(CoreStyle style);              // "aurora"
+QString coreStyleBlurb(CoreStyle style);            // one line for the theme gallery
+std::optional<CoreStyle> coreStyleFromKey(QStringView key);
+
 QString coreModeName(CoreMode mode);                // "Fast path": shown beside the core, never colour alone
 QString coreModeKey(CoreMode mode);                 // "fast": the colour token (--nx-fast) and the wire name
 std::optional<CoreMode> coreModeFromKey(QStringView key);
@@ -72,8 +84,16 @@ struct CoreFrame {
     double sonarRadius{0.0};                    // in core radii; 0: no ping
     double sonarOpacity{0.0};
     std::optional<double> packetProgress;       // 0 (at the core) … 1 (at the node)
+    // What a style adds.
+    double hueShift{0.0};                       // Aurora: degrees to turn the state's colour by
+    double haloScale{1.0};                      // Nebula: the halo breathes wider
+    std::optional<double> secondCometAngle;     // Comet: a second one, opposite the first
+    bool ring{true};                            // Minimal: no dotted ring
 };
-CoreFrame coreFrame(CoreMode mode, double level, double seconds, double secondsInMode);
+CoreFrame coreFrame(CoreMode mode, double level, double seconds, double secondsInMode,
+                    CoreStyle style = CoreStyle::Classic);
+// The repaint rate a style needs when the state alone would be happy with less.
+int coreStyleFrameRate(CoreStyle style, CoreMode mode);
 
 double easeInOut(double x);     // cubic, for the breath and the ticks
 double easeOut(double x);       // for the sonar ping

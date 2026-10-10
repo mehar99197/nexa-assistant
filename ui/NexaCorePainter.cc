@@ -57,12 +57,21 @@ QRectF squareAround(const QPointF &centre, double radius) {
     return {centre.x() - radius, centre.y() - radius, 2 * radius, 2 * radius};
 }
 
-void paintHalo(QPainter &p, const Geometry &g, const QColor &accent) {
+void paintHalo(QPainter &p, const Geometry &g, const QColor &accent, double scale) {
     p.setPen(Qt::NoPen);
     p.setBrush(withAlpha(accent, 0.07));
-    p.drawEllipse(g.centre, 0.60 * g.unit, 0.60 * g.unit);
+    p.drawEllipse(g.centre, 0.60 * g.unit * scale, 0.60 * g.unit * scale);
     p.setBrush(withAlpha(accent, 0.12));
-    p.drawEllipse(g.centre, 0.49 * g.unit, 0.49 * g.unit);
+    p.drawEllipse(g.centre, 0.49 * g.unit * scale, 0.49 * g.unit * scale);
+}
+
+// A colour turned around the hue circle (Aurora), keeping its saturation and lightness.
+QColor hueShifted(const QColor &colour, double degrees) {
+    if (std::abs(degrees) < 0.01) return colour;
+    const double hue = std::fmod(std::fmod(colour.hslHueF() * 360.0 + degrees, 360.0) + 360.0, 360.0);
+    QColor shifted = QColor::fromHslF(hue / 360.0, colour.hslSaturationF(), colour.lightnessF());
+    shifted.setAlphaF(colour.alphaF());
+    return shifted;
 }
 
 void paintRing(QPainter &p, const Geometry &g, double angle, const QColor &colour) {
@@ -235,29 +244,37 @@ void NexaCorePainter::paint(QPainter &p, const QRectF &rect, const CorePaint &pa
                             CoreNodes lit, double coreScale, std::span<const CoreLayer> layers) {
     const Geometry g = layout(rect, geometry);
     p.setRenderHint(QPainter::Antialiasing, true);
-    paintHalo(p, g, paint.accent);
 
     // The dotted ring turns with whichever state shows most; it is the privacy ring while the
-    // wake word keeps the microphone open.
+    // wake word keeps the microphone open. A style may widen the halo or drop the ring.
     double ringAngle = 0.0;
+    double ringOpacity = 0.0;
+    double haloScale = 1.0;
     double wake = 0.0;
     double best = -1.0;
     for (const CoreLayer &layer : layers) {
         if (layer.opacity > best) {
             best = layer.opacity;
             ringAngle = layer.frame.ringAngle;
+            haloScale = layer.frame.haloScale;
         }
+        if (layer.frame.ring) ringOpacity = std::max(ringOpacity, layer.opacity);
         if (layer.mode == CoreMode::WakeWord) wake = std::max(wake, layer.opacity);
     }
-    paintRing(p, g, ringAngle, mix(withAlpha(paint.line, 0.9), paint.wake, wake));
+    paintHalo(p, g, paint.accent, haloScale);
+    if (ringOpacity > 0.01) {
+        paintRing(p, g, ringAngle, withAlpha(mix(withAlpha(paint.line, 0.9), paint.wake, wake), 0.9 * ringOpacity));
+    }
 
     for (const CoreLayer &layer : layers) {
         if (layer.opacity <= 0.01) continue;
-        paintSonar(p, g, layer.frame, layer.colour, layer.opacity);
-        paintTicks(p, g, layer.frame, layer.colour, layer.opacity);
-        if (layer.frame.scanAngle) paintScan(p, g, *layer.frame.scanAngle, layer.colour, layer.opacity);
-        if (layer.frame.satelliteAngles) paintSatellites(p, g, *layer.frame.satelliteAngles, layer.colour, layer.opacity);
-        if (layer.frame.cometAngle) paintComet(p, g, *layer.frame.cometAngle, layer.colour, layer.opacity);
+        const QColor colour = hueShifted(layer.colour, layer.frame.hueShift);
+        paintSonar(p, g, layer.frame, colour, layer.opacity);
+        paintTicks(p, g, layer.frame, colour, layer.opacity);
+        if (layer.frame.scanAngle) paintScan(p, g, *layer.frame.scanAngle, colour, layer.opacity);
+        if (layer.frame.satelliteAngles) paintSatellites(p, g, *layer.frame.satelliteAngles, colour, layer.opacity);
+        if (layer.frame.cometAngle) paintComet(p, g, *layer.frame.cometAngle, colour, layer.opacity);
+        if (layer.frame.secondCometAngle) paintComet(p, g, *layer.frame.secondCometAngle, colour, layer.opacity * 0.8);
     }
 
     if (geometry.nodes) paintNodes(p, g, paint, lit, geometry.labels);
@@ -267,6 +284,10 @@ void NexaCorePainter::paint(QPainter &p, const QRectF &rect, const CorePaint &pa
         if (layer.opacity <= 0.01 || !layer.frame.packetProgress) continue;
         paintPackets(p, g, *layer.frame.packetProgress, lit, paint.act, layer.opacity);
     }
+}
+
+QColor NexaCorePainter::shiftedHue(const QColor &colour, double degrees) {
+    return hueShifted(colour, degrees);
 }
 
 void NexaCorePainter::paintNodeIcon(QPainter &p, CoreNode node, const QPointF &centre, double size,

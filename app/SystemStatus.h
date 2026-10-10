@@ -11,6 +11,7 @@ class AdbDiscovery;
 class AndroidDevice;
 class GlobalShortcuts;
 class HelperClient;
+class McpConnectors;
 class PairingManager;
 class PhoneLink;
 class RemoteServer;
@@ -28,6 +29,7 @@ struct SystemStatus {
     RemoteServer *remote{nullptr};
     PairingManager *pairing{nullptr};
     PhoneLink *phoneLink{nullptr};          // pairs Nexa Phone over adb (Settings → Android)
+    McpConnectors *mcp{nullptr};            // the MCP servers' state (Settings → Connectors)
     GlobalShortcuts *shortcuts{nullptr};
 };
 

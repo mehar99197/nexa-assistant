@@ -15,6 +15,13 @@ void ToolRegistry::add(std::unique_ptr<ITool> tool) {
     tools_.push_back(std::move(tool));
 }
 
+void ToolRegistry::remove(const QString &name) {
+    ITool *existing = find(name);
+    if (!existing) return;
+    byName_.remove(name);
+    std::erase_if(tools_, [existing](const std::unique_ptr<ITool> &candidate) { return candidate.get() == existing; });
+}
+
 ITool *ToolRegistry::find(const QString &name) const {
     return byName_.value(name, nullptr);
 }

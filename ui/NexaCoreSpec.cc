@@ -24,6 +24,50 @@ double phase(double seconds, double period) {
 
 } // namespace
 
+QString coreStyleName(CoreStyle style) {
+    switch (style) {
+    case CoreStyle::Classic: return u"Classic"_s;
+    case CoreStyle::Orbit: return u"Orbit"_s;
+    case CoreStyle::Pulse: return u"Pulse"_s;
+    case CoreStyle::Aurora: return u"Aurora"_s;
+    case CoreStyle::Comet: return u"Comet"_s;
+    case CoreStyle::Nebula: return u"Nebula"_s;
+    case CoreStyle::Storm: return u"Storm"_s;
+    case CoreStyle::Minimal: return u"Minimal"_s;
+    }
+    return {};
+}
+
+QString coreStyleKey(CoreStyle style) {
+    return coreStyleName(style).toLower();
+}
+
+QString coreStyleBlurb(CoreStyle style) {
+    switch (style) {
+    case CoreStyle::Classic: return u"The motion spec as written: a breath, a slow ring, one comet."_s;
+    case CoreStyle::Orbit: return u"Three satellites circle the core at all times; the comet runs faster."_s;
+    case CoreStyle::Pulse: return u"A sonar ping leaves the core every 2.4 s, whatever the state."_s;
+    case CoreStyle::Aurora: return u"The colour drifts around the state's own, and the halo sways."_s;
+    case CoreStyle::Comet: return u"Two comets chase each other round the ring."_s;
+    case CoreStyle::Nebula: return u"A deeper breath and a halo that swells with it."_s;
+    case CoreStyle::Storm: return u"Level ticks flicker in every state and the ring turns three times as fast."_s;
+    case CoreStyle::Minimal: return u"No ring, no comet, a shallow breath: the core alone."_s;
+    }
+    return {};
+}
+
+std::optional<CoreStyle> coreStyleFromKey(QStringView key) {
+    for (const CoreStyle style : kCoreStyles) {
+        if (coreStyleKey(style) == key) return style;
+    }
+    return std::nullopt;
+}
+
+int coreStyleFrameRate(CoreStyle style, CoreMode mode) {
+    const int base = coreTiming(mode).frameRateHz;
+    return style == CoreStyle::Storm ? 60 : base;
+}
+
 QString coreModeName(CoreMode mode) {
     switch (mode) {
     case CoreMode::Idle: return u"Idle"_s;
@@ -126,7 +170,58 @@ double easeCross(double x) {
     return x * x * (3 - 2 * x);
 }
 
-CoreFrame coreFrame(CoreMode mode, double level, double seconds, double secondsInMode) {
+namespace {
+
+// What a style adds on top of the state's own motion.
+void applyStyle(CoreFrame &frame, CoreStyle style, CoreMode mode, double seconds) {
+    const CoreTiming timing = coreTiming(mode);
+    switch (style) {
+    case CoreStyle::Classic:
+        break;
+    case CoreStyle::Orbit:
+        if (!frame.satelliteAngles) frame.satelliteAngles = {{turns(seconds, 6.4), -turns(seconds, 9.4), turns(seconds, 13.2)}};
+        if (frame.cometAngle) frame.cometAngle = turns(seconds, timing.cometLapSeconds * 0.75);
+        break;
+    case CoreStyle::Pulse:
+        if (frame.sonarRadius <= 0) {
+            const double p = phase(seconds, 2.4);
+            frame.sonarRadius = 0.4 + 2.5 * easeOut(p);
+            frame.sonarOpacity = 0.35 * (1 - p);
+        }
+        break;
+    case CoreStyle::Aurora:
+        frame.hueShift = 25.0 * std::sin(kTau * seconds / 9.0);
+        frame.haloScale = 1.08 + 0.06 * std::sin(kTau * seconds / 5.0);
+        break;
+    case CoreStyle::Comet: {
+        const double lap = timing.cometLapSeconds > 0 ? timing.cometLapSeconds : 12.0;
+        frame.cometAngle = turns(seconds, lap);
+        frame.secondCometAngle = std::fmod(*frame.cometAngle + 180.0, 360.0);
+        break;
+    }
+    case CoreStyle::Nebula:
+        frame.coreScale = std::min(1.14, 1.0 + (frame.coreScale - 1.0) * 2.0);
+        frame.haloScale = 1.15 + 0.1 * std::sin(kTau * seconds / timing.breathSeconds);
+        break;
+    case CoreStyle::Storm:
+        frame.tickSwell = std::max(frame.tickSwell, 0.25 + 0.15 * std::sin(kTau * seconds * 1.7)
+                                                        + 0.1 * std::sin(kTau * seconds * 3.1));
+        if (frame.tickPhaseInner == 0.0) frame.tickPhaseInner = kTau * seconds / 0.7;
+        if (frame.tickPhaseOuter == 0.0) frame.tickPhaseOuter = kTau * seconds / 1.1 + kPi;
+        frame.ringAngle = turns(seconds, timing.ringTurnSeconds / 3.0);
+        break;
+    case CoreStyle::Minimal:
+        frame.ring = false;
+        frame.cometAngle.reset();
+        if (mode != CoreMode::Thinking) frame.satelliteAngles.reset();
+        frame.coreScale = 1.0 + (frame.coreScale - 1.0) * 0.5;
+        break;
+    }
+}
+
+} // namespace
+
+CoreFrame coreFrame(CoreMode mode, double level, double seconds, double secondsInMode, CoreStyle style) {
     const CoreTiming timing = coreTiming(mode);
     level = std::clamp(level, 0.0, 1.0);
     CoreFrame frame;
@@ -182,6 +277,7 @@ CoreFrame coreFrame(CoreMode mode, double level, double seconds, double secondsI
     case CoreMode::Offline:
         break;
     }
+    applyStyle(frame, style, mode, seconds);
     return frame;
 }
 

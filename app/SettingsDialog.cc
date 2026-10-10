@@ -8,7 +8,10 @@
 #include "system/android/AdbDiscovery.h"
 #include "system/android/AndroidDevice.h"
 #include "app/PhoneLink.h"
+#include "core/mcp/McpConnectors.h"
 #include "system/helper/HelperClient.h"
+#include "ui/NexaCoreWidget.h"
+#include "ui/NexaThemes.h"
 #include "voice/VoiceBackends.h"
 #include "voice/tts/ITextToSpeech.h"
 #include "voice/tts/SpeechdTtsBackend.h"
@@ -22,7 +25,9 @@
 #include <QLineEdit>
 #include <QListWidget>
 #include <QMenu>
+#include <QPainter>
 #include <QPlainTextEdit>
+#include <QProcess>
 #include <QPointer>
 #include <QRegularExpression>
 #include <QDir>
@@ -77,6 +82,7 @@ SettingsDialog::SettingsDialog(Config config, ProviderRegistry *registry, HttpCl
     tabs_->addTab(buildHelperTab(), tr("Helper"));
     tabs_->addTab(buildAndroidTab(), tr("Android"));
     tabs_->addTab(buildRemoteTab(), tr("Remote"));
+    tabs_->addTab(buildConnectorsTab(), tr("Connectors"));
     tabs_->addTab(buildPolicyTab(), tr("Policy"));
     tabs_->addTab(buildGeneralTab(), tr("General"));
 
@@ -119,7 +125,8 @@ void SettingsDialog::accept() {
     config_.activeProvider = activeCombo_->currentData().toString();
     config_.systemPrompt = systemPromptEdit_->toPlainText().trimmed();
     config_.policyMode = policyCombo_->currentData().toString();
-    config_.ui.theme = themeCombo_->currentData().toString();
+    if (const QListWidgetItem *theme = themeGallery_->currentItem()) config_.ui.theme = theme->data(Qt::UserRole).toString();
+    storeConnector();
     storeVoice();
     config_.android.autoReconnect = phoneReconnect_->isChecked();
     config_.remote.enabled = remoteEnabled_->isChecked();
@@ -1009,17 +1016,25 @@ QWidget *SettingsDialog::buildGeneralTab() {
     hotkeyLabel->setWordWrap(true);
     hotkeyLabel->setTextInteractionFlags(Qt::TextSelectableByMouse);
 
-    // Dark or light; "system" follows the desktop. The toolbar's sun/moon button changes it too.
-    themeCombo_ = new QComboBox(page);
-    themeCombo_->addItem(tr("Follow the system"), u"system"_s);
-    themeCombo_->addItem(tr("Dark"), u"dark"_s);
-    themeCombo_->addItem(tr("Light"), u"light"_s);
-    themeCombo_->setCurrentIndex(std::max(0, themeCombo_->findData(config_.ui.theme)));
-    auto *appearance = new QFormLayout;
-    appearance->addRow(tr("Appearance:"), themeCombo_);
+    // The theme gallery: Nexa's own pair following the desktop, and every other pack — a colour
+    // family in dark or light, each with its motion style. The toolbar's sun/moon button swaps
+    // the scheme within the family.
+    themeGallery_ = new QListWidget(page);
+    themeGallery_->setViewMode(QListView::IconMode);
+    themeGallery_->setIconSize(QSize(96, 64));
+    themeGallery_->setGridSize(QSize(142, 112));
+    themeGallery_->setSpacing(4);
+    themeGallery_->setResizeMode(QListView::Adjust);
+    themeGallery_->setMovement(QListView::Static);
+    themeGallery_->setWordWrap(true);
+    themeGallery_->setUniformItemSizes(true);
+    themeGallery_->setMinimumHeight(240);
+    themeGallery_->setToolTip(tr("Every theme is the same design in other colours; its motion style is named under it."));
+    fillThemeGallery();
 
     auto *layout = new QVBoxLayout(page);
-    layout->addLayout(appearance);
+    layout->addWidget(new QLabel(tr("Theme (%n of them, in eight motion styles):", nullptr, int(NexaThemes::all().size()) + 1), page));
+    layout->addWidget(themeGallery_, 2);
     layout->addSpacing(8);
     layout->addWidget(new QLabel(tr("System prompt (sent at the start of every conversation):"), page));
     layout->addWidget(systemPromptEdit_, 1);
@@ -1157,6 +1172,281 @@ QString SettingsDialog::uniqueId(const QString &base) const {
     QString id = base;
     for (int n = 2; config_.provider(id); ++n) id = u"%1-%2"_s.arg(base).arg(n);
     return id;
+}
+
+// ------------------------------------------------------------------ Connectors
+
+namespace {
+
+QStringList lines(const QString &text) {
+    QStringList kept;
+    for (const QString &line : text.split(u'\n')) {
+        if (!line.trimmed().isEmpty()) kept.append(line.trimmed());
+    }
+    return kept;
+}
+
+// A theme as a picture: its core at rest on its ground, with four of its state colours beside.
+QPixmap themeSwatch(const ThemePack &pack) {
+    constexpr int kWidth = 96;
+    constexpr int kHeight = 64;
+    const qreal ratio = 2.0;
+    QPixmap pixmap(QSize(kWidth, kHeight) * ratio);
+    pixmap.setDevicePixelRatio(ratio);
+    pixmap.fill(Qt::transparent);
+    QPainter painter(&pixmap);
+    painter.setRenderHint(QPainter::Antialiasing, true);
+    painter.setPen(QPen(pack.tokens.line, 1));
+    painter.setBrush(pack.tokens.ground);
+    painter.drawRoundedRect(QRectF(0.5, 0.5, kWidth - 1, kHeight - 1), 10, 10);
+
+    NexaCoreWidget core;
+    core.setAnimated(false);
+    core.setStyle(pack.style);
+    core.setIdleColor(pack.tokens.idle);
+    core.setWakeColor(pack.tokens.wake);
+    core.setListenColor(pack.tokens.listen);
+    core.setSttColor(pack.tokens.stt);
+    core.setThinkColor(pack.tokens.think);
+    core.setActColor(pack.tokens.act);
+    core.setSpeakColor(pack.tokens.speak);
+    core.setFastColor(pack.tokens.fast);
+    core.setErrorColor(pack.tokens.error);
+    core.setPanelColor(pack.tokens.panel);
+    core.setLineColor(pack.tokens.line);
+    core.setMutedColor(pack.tokens.muted);
+    core.setTextColor(pack.tokens.text);
+    core.setGroundColor(pack.tokens.ground);
+    painter.drawPixmap(QRectF(6, 6, 52, 52), core.snapshot(CoreMode::Idle, 52, true, ratio), QRectF(0, 0, 52 * ratio, 52 * ratio));
+
+    painter.setPen(Qt::NoPen);
+    const QColor states[] = {pack.tokens.listen, pack.tokens.think, pack.tokens.act, pack.tokens.error};
+    for (int i = 0; i < 4; ++i) {
+        painter.setBrush(states[i]);
+        painter.drawEllipse(QRectF(72, 10 + i * 12, 9, 9));
+    }
+    painter.setBrush(pack.tokens.text);
+    painter.drawRoundedRect(QRectF(66, 54, 22, 3), 1.5, 1.5);
+    return pixmap;
+}
+
+} // namespace
+
+void SettingsDialog::fillThemeGallery() {
+    themeGallery_->clear();
+    const QString current = config_.ui.theme;
+    auto *system = new QListWidgetItem(tr("Follow the system\nNexa · Classic"));
+    system->setData(Qt::UserRole, u"system"_s);
+    system->setToolTip(tr("Nexa's own dark or light look, as the desktop is set."));
+    system->setIcon(themeSwatch(NexaThemes::resolve(u"system"_s)));
+    themeGallery_->addItem(system);
+    if (current == u"system"_s) themeGallery_->setCurrentItem(system);
+    for (const ThemePack &pack : NexaThemes::all()) {
+        auto *item = new QListWidgetItem(u"%1\n%2"_s.arg(pack.name, coreStyleName(pack.style)));
+        item->setData(Qt::UserRole, NexaThemes::settingFor(pack));
+        item->setToolTip(coreStyleBlurb(pack.style));
+        item->setIcon(themeSwatch(pack));
+        themeGallery_->addItem(item);
+        if (NexaThemes::settingFor(pack) == current) themeGallery_->setCurrentItem(item);
+    }
+    if (!themeGallery_->currentItem()) themeGallery_->setCurrentRow(0);
+}
+
+// Settings → Connectors: MCP servers whose tools the model may call. The form edits config_.mcp
+// in place as it is typed, so OK keeps whatever it shows.
+QWidget *SettingsDialog::buildConnectorsTab() {
+    auto *page = new QWidget(this);
+
+    mcpList_ = new QListWidget(page);
+    mcpList_->setMinimumWidth(180);
+    for (const McpServerConfig &server : config_.mcp.servers) {
+        mcpList_->addItem(server.name.isEmpty() ? server.id : server.name);
+    }
+    auto *addButton = new QPushButton(tr("&Add"), page);
+    auto *removeButton = new QPushButton(tr("Re&move"), page);
+    connect(addButton, &QPushButton::clicked, this, &SettingsDialog::addConnector);
+    connect(removeButton, &QPushButton::clicked, this, &SettingsDialog::removeConnector);
+
+    mcpForm_ = new QWidget(page);
+    mcpName_ = new QLineEdit(mcpForm_);
+    mcpEnabled_ = new QCheckBox(tr("On"), mcpForm_);
+    mcpTransport_ = new QComboBox(mcpForm_);
+    mcpTransport_->addItem(tr("A program on this PC (stdio)"), u"stdio"_s);
+    mcpTransport_->addItem(tr("A server at a URL (HTTP)"), u"http"_s);
+    mcpCommand_ = new QLineEdit(mcpForm_);
+    mcpCommand_->setPlaceholderText(tr("npx, uvx, python3, or a path"));
+    mcpArguments_ = new QLineEdit(mcpForm_);
+    mcpArguments_->setPlaceholderText(tr("-y @modelcontextprotocol/server-filesystem /home/me"));
+    mcpEnvironment_ = new QPlainTextEdit(mcpForm_);
+    mcpEnvironment_->setPlaceholderText(tr("KEY=value — one per line, for API keys the server needs"));
+    mcpEnvironment_->setMaximumHeight(64);
+    mcpUrl_ = new QLineEdit(mcpForm_);
+    mcpUrl_->setPlaceholderText(tr("https://example.com/mcp"));
+    mcpHeaders_ = new QPlainTextEdit(mcpForm_);
+    mcpHeaders_->setPlaceholderText(tr("Authorization: Bearer … — one per line"));
+    mcpHeaders_->setMaximumHeight(64);
+    auto *testButton = new QPushButton(tr("&Test"), mcpForm_);
+    testButton->setToolTip(tr("Connects, lists the server's tools, and disconnects."));
+    connect(testButton, &QPushButton::clicked, this, &SettingsDialog::testConnector);
+    mcpResult_ = new QLabel(mcpForm_);
+    mcpResult_->setWordWrap(true);
+    mcpResult_->setTextInteractionFlags(Qt::TextSelectableByMouse);
+
+    auto *nameRow = new QHBoxLayout;
+    nameRow->addWidget(mcpName_, 1);
+    nameRow->addWidget(mcpEnabled_);
+    auto *form = new QFormLayout(mcpForm_);
+    form->addRow(tr("Name:"), nameRow);
+    form->addRow(tr("Reached as:"), mcpTransport_);
+    form->addRow(tr("Program:"), mcpCommand_);
+    form->addRow(tr("Arguments:"), mcpArguments_);
+    form->addRow(tr("Environment:"), mcpEnvironment_);
+    form->addRow(tr("URL:"), mcpUrl_);
+    form->addRow(tr("Headers:"), mcpHeaders_);
+    form->addRow(testButton, mcpResult_);
+
+    connect(mcpName_, &QLineEdit::textEdited, this, [this](const QString &name) {
+        if (QListWidgetItem *item = mcpList_->currentItem()) item->setText(name);
+        storeConnector();
+    });
+    for (QLineEdit *field : {mcpCommand_, mcpArguments_, mcpUrl_}) {
+        connect(field, &QLineEdit::textChanged, this, &SettingsDialog::storeConnector);
+    }
+    for (QPlainTextEdit *field : {mcpEnvironment_, mcpHeaders_}) {
+        connect(field, &QPlainTextEdit::textChanged, this, &SettingsDialog::storeConnector);
+    }
+    connect(mcpTransport_, &QComboBox::currentIndexChanged, this, &SettingsDialog::storeConnector);
+    connect(mcpEnabled_, &QCheckBox::toggled, this, &SettingsDialog::storeConnector);
+    connect(mcpList_, &QListWidget::currentRowChanged, this, &SettingsDialog::showConnector);
+
+    mcpStates_ = new QLabel(page);
+    mcpStates_->setWordWrap(true);
+    mcpStates_->setTextInteractionFlags(Qt::TextSelectableByMouse);
+    showConnectorStates();
+    if (status_.mcp) connect(status_.mcp, &McpConnectors::statusChanged, this, &SettingsDialog::showConnectorStates);
+
+    auto *help = new QLabel(
+        tr("A connector is an MCP server (Model Context Protocol): a program Nexa starts and talks to on its own, "
+           "or a server at a URL. Its tools join Nexa's as mcp_<name>_<tool> and the model calls them like any "
+           "other — through the policy, the Actions panel and the audit log. In confirm-risky mode Nexa asks "
+           "before each call. Changes take effect when you press OK."),
+        page);
+    help->setWordWrap(true);
+
+    auto *left = new QVBoxLayout;
+    left->addWidget(mcpList_, 1);
+    auto *buttons = new QHBoxLayout;
+    buttons->addWidget(addButton);
+    buttons->addWidget(removeButton);
+    left->addLayout(buttons);
+    auto *columns = new QHBoxLayout;
+    columns->addLayout(left);
+    columns->addWidget(mcpForm_, 1);
+    auto *layout = new QVBoxLayout(page);
+    layout->addLayout(columns, 1);
+    layout->addWidget(mcpStates_);
+    layout->addSpacing(6);
+    layout->addWidget(help);
+
+    showConnector(config_.mcp.servers.isEmpty() ? -1 : 0);
+    if (!config_.mcp.servers.isEmpty()) mcpList_->setCurrentRow(0);
+    return page;
+}
+
+void SettingsDialog::showConnector(int row) {
+    mcpRow_ = row;
+    const bool have = row >= 0 && row < config_.mcp.servers.size();
+    mcpForm_->setEnabled(have);
+    loadingConnector_ = true;
+    const McpServerConfig server = have ? config_.mcp.servers.at(row) : McpServerConfig{};
+    mcpName_->setText(server.name);
+    mcpEnabled_->setChecked(server.enabled);
+    mcpTransport_->setCurrentIndex(std::max(0, mcpTransport_->findData(server.transport)));
+    mcpCommand_->setText(server.command);
+    mcpArguments_->setText(server.arguments.join(u' '));
+    mcpEnvironment_->setPlainText(server.environment.join(u'\n'));
+    mcpUrl_->setText(server.url);
+    mcpHeaders_->setPlainText(server.headers.join(u'\n'));
+    mcpResult_->clear();
+    loadingConnector_ = false;
+}
+
+void SettingsDialog::storeConnector() {
+    if (loadingConnector_ || mcpRow_ < 0 || mcpRow_ >= config_.mcp.servers.size()) return;
+    McpServerConfig &server = config_.mcp.servers[mcpRow_];
+    server.name = mcpName_->text().trimmed();
+    server.enabled = mcpEnabled_->isChecked();
+    server.transport = mcpTransport_->currentData().toString();
+    server.command = mcpCommand_->text().trimmed();
+    server.arguments = QProcess::splitCommand(mcpArguments_->text());
+    server.environment = lines(mcpEnvironment_->toPlainText());
+    server.url = mcpUrl_->text().trimmed();
+    server.headers = lines(mcpHeaders_->toPlainText());
+}
+
+void SettingsDialog::addConnector() {
+    McpServerConfig server;
+    int n = config_.mcp.servers.size() + 1;
+    const auto taken = [this](const QString &id) {
+        return std::any_of(config_.mcp.servers.cbegin(), config_.mcp.servers.cend(),
+                           [&id](const McpServerConfig &s) { return s.id == id; });
+    };
+    server.id = u"connector-%1"_s.arg(n);
+    while (taken(server.id)) server.id = u"connector-%1"_s.arg(++n);
+    server.name = tr("New connector");
+    config_.mcp.servers.append(server);
+    mcpList_->addItem(server.name);
+    mcpList_->setCurrentRow(mcpList_->count() - 1);
+    mcpName_->setFocus();
+    mcpName_->selectAll();
+}
+
+void SettingsDialog::removeConnector() {
+    const int row = mcpList_->currentRow();
+    if (row < 0 || row >= config_.mcp.servers.size()) return;
+    mcpRow_ = -1;
+    config_.mcp.servers.removeAt(row);
+    delete mcpList_->takeItem(row);
+    showConnector(mcpList_->currentRow());
+}
+
+void SettingsDialog::testConnector() {
+    storeConnector();
+    if (mcpRow_ < 0 || mcpRow_ >= config_.mcp.servers.size()) return;
+    const McpServerConfig server = config_.mcp.servers.at(mcpRow_);
+    mcpResult_->setText(tr("Connecting…"));
+    const QPointer<SettingsDialog> self(this);
+    McpConnectors::probe(server, http_, this, [self](Result<QStringList> tools) {
+        if (!self) return;
+        if (!tools) {
+            self->mcpResult_->setText(tools.error().message);
+            self->mcpResult_->setStyleSheet(u"color: %1;"_s.arg(NexaTheme::tokens(ThemeScheme::Dark).error.name()));
+            return;
+        }
+        self->mcpResult_->setStyleSheet({});
+        self->mcpResult_->setText(tools.value().isEmpty()
+                                      ? tr("Connected; the server offers no tools.")
+                                      : tr("Connected. %n tool(s): %1", nullptr, int(tools.value().size()))
+                                            .arg(tools.value().join(u", "_s)));
+    });
+}
+
+void SettingsDialog::showConnectorStates() {
+    if (!status_.mcp) {
+        mcpStates_->clear();
+        return;
+    }
+    QStringList report;
+    for (const McpConnectors::Status &status : status_.mcp->statuses()) {
+        QString state = status.state;
+        if (state == u"ready"_s) state = tr("connected");
+        if (state == u"failed"_s) state = tr("failed");
+        if (state == u"connecting"_s) state = tr("connecting");
+        if (state == u"off"_s) state = tr("off");
+        report.append(u"• %1 — %2%3"_s.arg(status.name.isEmpty() ? status.id : status.name, state,
+                                             status.detail.isEmpty() ? QString() : u": "_s + status.detail));
+    }
+    mcpStates_->setText(report.isEmpty() ? tr("No connector is running.") : report.join(u'\n'));
 }
 
 } // namespace nexa

@@ -16,6 +16,7 @@ class ToolRegistry {
 public:
     // Replaces an existing tool of the same name.
     void add(std::unique_ptr<ITool> tool);
+    void remove(const QString &name);       // a connector's tools go when it does
     ITool *find(const QString &name) const;
     bool contains(const QString &name) const { return byName_.contains(name); }
     QList<ToolSpec> specs() const;

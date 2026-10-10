@@ -3,6 +3,7 @@
 #include <QJsonObject>
 #include <QList>
 #include <QString>
+#include <QStringList>
 
 namespace nexa {
 
@@ -87,6 +88,34 @@ struct AgentConfig {
     bool operator==(const AgentConfig &) const = default;
 };
 
+// Settings → Connectors: an MCP server (Model Context Protocol) whose tools the model may call —
+// a program Nexa runs and talks to on its standard streams, or a URL it posts to.
+struct McpServerConfig {
+    QString id;                                     // stable key, e.g. "filesystem"
+    QString name;                                   // shown in the UI and in the tools' descriptions
+    bool enabled{true};
+    QString transport{QStringLiteral("stdio")};     // stdio | http
+    QString command;                                // stdio: the program
+    QStringList arguments;
+    QStringList environment;                        // KEY=VALUE, on top of Nexa's own
+    QString url;                                    // http: where every message is posted
+    QStringList headers;                            // "Name: value" — an Authorization, typically
+
+    QJsonObject toJson() const;
+    static McpServerConfig fromJson(const QJsonObject &json);
+
+    bool operator==(const McpServerConfig &) const = default;
+};
+
+struct McpConfig {
+    QList<McpServerConfig> servers;
+
+    QJsonObject toJson() const;
+    static McpConfig fromJson(const QJsonObject &json);
+
+    bool operator==(const McpConfig &) const = default;
+};
+
 // Settings → General → Appearance, and the toolbar's theme toggle. "system" follows the desktop's
 // own light or dark setting.
 struct UiConfig {
@@ -114,6 +143,7 @@ struct Config {
     RemoteConfig remote;
     AgentConfig agent;
     UiConfig ui;
+    McpConfig mcp;
     QJsonObject extra;
 
     QJsonObject toJson() const;

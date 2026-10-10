@@ -151,7 +151,16 @@ nexa-assistant --pair-phone                                 # pair the Nexa Phon
 If Nexa is already running, these go to the running copy. `--new-instance` starts a separate one
 (for testing). `--screenshot <file.png>` saves a picture of the window once the requests are done,
 then quits (it works with `QT_QPA_PLATFORM=offscreen`); `--screenshot-settings <dir>` does the same
-for every Settings tab; `--theme dark|light|system` picks the look for that run, while Settings →
-General → Appearance and the sun/moon button in the toolbar set it for good.
+for every Settings tab; `--theme dark|light|system|<pack>` picks the look for that run (a pack is one of
+the 52 themes in Settings → General, such as `ocean-dark` or `amber-light`), while the gallery there and
+the sun/moon button in the toolbar set it for good.
+
+## Connectors (MCP)
+
+Settings → Connectors adds MCP servers (Model Context Protocol): a program Nexa starts and talks to on
+its standard streams (`npx -y @modelcontextprotocol/server-filesystem /home/me`, `uvx mcp-server-git`,
+…) or a server at a URL with the headers it wants. Their tools join Nexa's as `mcp_<name>_<tool>` and
+the model calls them like any other, through the policy, the Actions panel and the audit log; in
+confirm-risky mode Nexa asks before each call. Test lists a server's tools before you press OK.
 
 No licence has been chosen yet.

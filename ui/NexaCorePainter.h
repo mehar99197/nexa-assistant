@@ -49,6 +49,8 @@ public:
 
     // A node's icon in a box of `size` around `centre`; also used for buttons that mean the same.
     static void paintNodeIcon(QPainter &p, CoreNode node, const QPointF &centre, double size, const QColor &colour);
+    // A colour turned around the hue circle (the Aurora style), saturation and lightness kept.
+    static QColor shiftedHue(const QColor &colour, double degrees);
 };
 
 } // namespace nexa

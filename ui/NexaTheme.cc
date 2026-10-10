@@ -107,11 +107,15 @@ QFont NexaTheme::scaled(const QFont &base, double factor, const QString &family)
 }
 
 QString NexaTheme::styleSheet(ThemeScheme scheme) {
+    return styleSheet(tokens(scheme), CoreStyle::Classic);
+}
+
+QString NexaTheme::styleSheet(const ThemeTokens &t, CoreStyle style) {
     QFile file(u":/nexa/ui/theme.qss"_s);
     if (!file.open(QIODevice::ReadOnly)) return {};
     QString sheet = QString::fromUtf8(file.readAll());
-    const ThemeTokens t = tokens(scheme);
     const std::pair<QString, QString> values[] = {
+        {u"coreStyle"_s, QString::number(static_cast<int>(style))},
         {u"ground"_s, css(t.ground)},
         {u"panel"_s, css(t.panel)},
         {u"panel2"_s, css(t.panelRaised)},
@@ -140,7 +144,10 @@ QString NexaTheme::styleSheet(ThemeScheme scheme) {
 }
 
 QPalette NexaTheme::palette(ThemeScheme scheme) {
-    const ThemeTokens t = tokens(scheme);
+    return palette(tokens(scheme));
+}
+
+QPalette NexaTheme::palette(const ThemeTokens &t) {
     QPalette p;
     p.setColor(QPalette::Window, t.ground);
     p.setColor(QPalette::WindowText, t.text);
@@ -169,6 +176,10 @@ QPalette NexaTheme::palette(ThemeScheme scheme) {
 }
 
 void NexaTheme::apply(QApplication *app, ThemeScheme scheme) {
+    apply(app, tokens(scheme), CoreStyle::Classic);
+}
+
+void NexaTheme::apply(QApplication *app, const ThemeTokens &tokens, CoreStyle style) {
     // Fusion draws the same everywhere and leaves the look to the sheet and the palette; the
     // platform style would fight both.
     static bool styled = false;
@@ -176,8 +187,8 @@ void NexaTheme::apply(QApplication *app, ThemeScheme scheme) {
         if (QStyle *fusion = QStyleFactory::create(u"Fusion"_s)) app->setStyle(fusion);
         styled = true;
     }
-    app->setPalette(palette(scheme));
-    app->setStyleSheet(styleSheet(scheme));
+    app->setPalette(palette(tokens));
+    app->setStyleSheet(styleSheet(tokens, style));
 }
 
 } // namespace nexa

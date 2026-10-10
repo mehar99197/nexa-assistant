@@ -37,11 +37,16 @@ class NexaCoreWidget : public QWidget {
     Q_PROPERTY(QColor mutedColor READ mutedColor WRITE setMutedColor)
     Q_PROPERTY(QColor textColor READ textColor WRITE setTextColor)
     Q_PROPERTY(QColor groundColor READ groundColor WRITE setGroundColor)
+    Q_PROPERTY(int coreStyle READ coreStyleIndex WRITE setCoreStyleIndex)     // CoreStyle, from the theme
 public:
     explicit NexaCoreWidget(QWidget *parent = nullptr);
 
     CoreMode mode() const { return mode_; }
     void setMode(CoreMode mode);
+    CoreStyle style() const { return style_; }
+    void setStyle(CoreStyle style);
+    int coreStyleIndex() const { return static_cast<int>(style_); }
+    void setCoreStyleIndex(int index);
     void setLevel(double level);                // the microphone, 0 … 1
     void setLitNodes(CoreNodes nodes);          // satellites an action lights, besides the state's own
     void setShowNodes(bool show);
@@ -111,6 +116,7 @@ private:
     QColor ground_;
     CoreMode mode_{CoreMode::Idle};
     CoreMode previous_{CoreMode::Idle};
+    CoreStyle style_{CoreStyle::Classic};
     std::optional<CoreMode> pending_;       // waits until the fast-path snap has shown
     QElapsedTimer clock_;
     qint64 modeStartMs_{0};

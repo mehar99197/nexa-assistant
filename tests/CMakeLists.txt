@@ -20,12 +20,14 @@ add_executable(nexa_tests
     IntentRouterTest.cc
     KeyMapTest.cc
     LocalCommandRunnerTest.cc
+    McpClientTest.cc
     OpenAiProviderTest.cc
     OpenAiStreamTest.cc
     PairingManagerTest.cc
     MdnsBrowserTest.cc
     MdnsPacketTest.cc
     NexaCoreSpecTest.cc
+    NexaThemesTest.cc
     PhoneIntentTest.cc
     PhoneLookupTest.cc
     PolicyEngineTest.cc
@@ -62,6 +64,9 @@ target_link_libraries(nexa_tests PRIVATE
     Qt6::Test
     Catch2::Catch2
 )
+
+# Where the test data lives (the fake MCP server script).
+target_compile_definitions(nexa_tests PRIVATE NEXA_TESTS_DIR="${CMAKE_CURRENT_SOURCE_DIR}")
 
 include(Catch)
 catch_discover_tests(nexa_tests)

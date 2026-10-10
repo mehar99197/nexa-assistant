@@ -64,8 +64,16 @@ private:
     void startPairing();
     void showPairing();
     void showPairedDevices();
+    QWidget *buildConnectorsTab();
+    void showConnector(int row);
+    void storeConnector();
+    void addConnector();
+    void removeConnector();
+    void testConnector();
+    void showConnectorStates();
     QWidget *buildPolicyTab();
     QWidget *buildGeneralTab();
+    void fillThemeGallery();
     void populateProviders();
     void showProvider(int row);
     void storeProvider();
@@ -140,8 +148,22 @@ private:
     QPushButton *revokeButton_{nullptr};
     QTimer *pairCountdown_{nullptr};
     QComboBox *policyCombo_{nullptr};
-    QComboBox *themeCombo_{nullptr};
+    QListWidget *themeGallery_{nullptr};
     QPlainTextEdit *systemPromptEdit_{nullptr};
+    QListWidget *mcpList_{nullptr};
+    QWidget *mcpForm_{nullptr};
+    QLineEdit *mcpName_{nullptr};
+    QCheckBox *mcpEnabled_{nullptr};
+    QComboBox *mcpTransport_{nullptr};
+    QLineEdit *mcpCommand_{nullptr};
+    QLineEdit *mcpArguments_{nullptr};
+    QPlainTextEdit *mcpEnvironment_{nullptr};
+    QLineEdit *mcpUrl_{nullptr};
+    QPlainTextEdit *mcpHeaders_{nullptr};
+    QLabel *mcpResult_{nullptr};
+    QLabel *mcpStates_{nullptr};
+    int mcpRow_{-1};
+    bool loadingConnector_{false};      // the form is being filled, not edited
 };
 
 } // namespace nexa

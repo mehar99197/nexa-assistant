@@ -41,7 +41,9 @@
 #include "system/info/SystemInfo.h"
 #include "system/media/MprisController.h"
 #include "system/screen/ScreenCapture.h"
+#include "core/mcp/McpConnectors.h"
 #include "ui/NexaTheme.h"
+#include "ui/NexaThemes.h"
 #include "voice/VoiceTools.h"
 #include "voice/Wav.h"
 #include "voice/capture/AudioCapture.h"
@@ -212,9 +214,11 @@ int main(int argc, char *argv[]) {
     ConfigStore store;
     QString startupWarning;
     Config config = loadConfig(store, startupWarning);
-    // The look: Nexa's own stylesheet and palette, dark or light as set (or as the desktop is).
+    // The look: Nexa's own stylesheet and palette — the design's pair as set (or as the desktop
+    // is), or any theme pack from the gallery, with the motion style it wears.
     if (parser.isSet(themeOption)) config.ui.theme = parser.value(themeOption);
-    NexaTheme::apply(&app, NexaTheme::schemeFor(config.ui.theme));
+    const ThemePack startingTheme = NexaThemes::resolve(config.ui.theme);
+    NexaTheme::apply(&app, startingTheme.tokens, startingTheme.style);
 
     // AI providers
     HttpClient http;
@@ -286,6 +290,11 @@ int main(int argc, char *argv[]) {
     registerVoiceTools(tools, &voice);
     panic.addHandler([&voice] { voice.cancel(); });
 
+    // MCP connectors (Settings → Connectors): each server's tools join the registry as
+    // mcp_<server>_<tool> once it answers, and leave with it.
+    McpConnectors mcp(&tools, &http);
+    mcp.apply(config.mcp.servers);
+
     // Fast path (no model) for common phrases; order = priority
     IntentRouter router([&tools](const QString &tool) { return tools.contains(tool); });
     router.add(std::make_unique<ControlIntent>());
@@ -348,10 +357,11 @@ int main(int argc, char *argv[]) {
     applyRemote(controller.config());
 
     QObject::connect(&controller, &AppController::configChanged, &app,
-                     [applyAndroid, applyRemote, &agent](const Config &updated) {
+                     [applyAndroid, applyRemote, &agent, &mcp](const Config &updated) {
                          agent.setMaxSteps(updated.agent.maxToolRounds);
                          applyAndroid(updated.android);
                          applyRemote(updated);
+                         mcp.apply(updated.mcp.servers);
                      });
 
     // Nexa Phone paired over adb (--pair-phone, Settings → Android): the web remote is switched on
@@ -382,6 +392,7 @@ int main(int argc, char *argv[]) {
                                    .remote = &remote,
                                    .pairing = &pairing,
                                    .phoneLink = &phoneLink,
+                                   .mcp = &mcp,
                                    .shortcuts = &shortcuts},
                       AuditLog::defaultPath());
     window.show();

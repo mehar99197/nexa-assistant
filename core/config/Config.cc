@@ -1,6 +1,7 @@
 #include "core/config/Config.h"
 
 #include <QJsonArray>
+#include <QRegularExpression>
 #include <QStringList>
 
 #include <algorithm>
@@ -136,14 +137,67 @@ AgentConfig AgentConfig::fromJson(const QJsonObject &json) {
     return config;
 }
 
+QJsonObject McpServerConfig::toJson() const {
+    return QJsonObject{{u"id"_s, id},
+                       {u"name"_s, name},
+                       {u"enabled"_s, enabled},
+                       {u"transport"_s, transport},
+                       {u"command"_s, command},
+                       {u"arguments"_s, QJsonArray::fromStringList(arguments)},
+                       {u"environment"_s, QJsonArray::fromStringList(environment)},
+                       {u"url"_s, url},
+                       {u"headers"_s, QJsonArray::fromStringList(headers)}};
+}
+
+McpServerConfig McpServerConfig::fromJson(const QJsonObject &json) {
+    const auto strings = [&json](const QString &key) {
+        QStringList values;
+        for (const QJsonValue &value : json.value(key).toArray()) {
+            if (value.isString()) values.append(value.toString());
+        }
+        return values;
+    };
+    McpServerConfig server;
+    server.id = json.value(u"id"_s).toString();
+    server.name = json.value(u"name"_s).toString(server.id);
+    server.enabled = json.value(u"enabled"_s).toBool(true);
+    server.transport = json.value(u"transport"_s).toString() == u"http"_s ? u"http"_s : u"stdio"_s;
+    server.command = json.value(u"command"_s).toString();
+    server.arguments = strings(u"arguments"_s);
+    server.environment = strings(u"environment"_s);
+    server.url = json.value(u"url"_s).toString();
+    server.headers = strings(u"headers"_s);
+    return server;
+}
+
+QJsonObject McpConfig::toJson() const {
+    QJsonArray list;
+    for (const McpServerConfig &server : servers) list.append(server.toJson());
+    return QJsonObject{{u"servers"_s, list}};
+}
+
+McpConfig McpConfig::fromJson(const QJsonObject &json) {
+    McpConfig config;
+    for (const QJsonValue &value : json.value(u"servers"_s).toArray()) {
+        if (!value.isObject()) continue;
+        const McpServerConfig server = McpServerConfig::fromJson(value.toObject());
+        const bool duplicate = std::any_of(config.servers.cbegin(), config.servers.cend(),
+                                           [&server](const McpServerConfig &s) { return s.id == server.id; });
+        if (!server.id.isEmpty() && !duplicate) config.servers.append(server);
+    }
+    return config;
+}
+
 QJsonObject UiConfig::toJson() const {
     return QJsonObject{{u"theme"_s, theme}};
 }
 
 UiConfig UiConfig::fromJson(const QJsonObject &json) {
     UiConfig config;
+    // system, dark, light — or a theme pack's id ("ocean-dark"); the catalogue decides what it means.
+    static const QRegularExpression id(u"^[a-z0-9-]{1,40}$"_s);
     const QString theme = json.value(u"theme"_s).toString(config.theme);
-    if (theme == u"dark"_s || theme == u"light"_s || theme == u"system"_s) config.theme = theme;
+    if (id.match(theme).hasMatch()) config.theme = theme;
     return config;
 }
 
@@ -161,6 +215,7 @@ QJsonObject Config::toJson() const {
     json.insert(u"remote"_s, remote.toJson());
     json.insert(u"agent"_s, agent.toJson());
     json.insert(u"ui"_s, ui.toJson());
+    json.insert(u"mcp"_s, mcp.toJson());
     return json;
 }
 
@@ -182,11 +237,12 @@ Config Config::fromJson(const QJsonObject &json) {
     config.remote = RemoteConfig::fromJson(json.value(u"remote"_s).toObject());
     config.agent = AgentConfig::fromJson(json.value(u"agent"_s).toObject());
     config.ui = UiConfig::fromJson(json.value(u"ui"_s).toObject());
+    config.mcp = McpConfig::fromJson(json.value(u"mcp"_s).toObject());
 
     config.extra = json;
     for (const QString &key :
          {u"version"_s, u"providers"_s, u"activeProvider"_s, u"systemPrompt"_s, u"policy"_s, u"voice"_s, u"android"_s,
-          u"remote"_s, u"agent"_s, u"ui"_s}) {
+          u"remote"_s, u"agent"_s, u"ui"_s, u"mcp"_s}) {
         config.extra.remove(key);
     }
     return config;

@@ -72,7 +72,11 @@ models over its slow `auto/*` combos).
   decodes its own events; SseChatStream is the stream all three share; ToolCallAccumulator; the registry),
   `agent/` (Agent loop, Conversation), `tools/` (ToolSpec, ITool, FunctionTool, ToolRegistry, ToolExecutor =
   policy → confirm → invoke → audit, TextToolParser for models without native tools), `intent/` (IntentRouter +
-  PC and phone fast-path handlers), `policy/` (PolicyEngine, PanicController), `audit/` (AuditLog).
+  PC and phone fast-path handlers), `policy/` (PolicyEngine, PanicController), `audit/` (AuditLog), `mcp/`
+  (MCP connectors — Model Context Protocol: `McpClient` speaks JSON-RPC 2.0 over an `IMcpTransport`, a server
+  process on its standard streams or a URL posted to; `McpConnectors` keeps one client per server in
+  `config.mcp.servers` and registers each tool it lists as `mcp_<server>_<tool>`, `privileged`, so confirm-risky
+  asks; `tests/fake_mcp_server.py` stands in for a server).
 - `system/` — touches the PC: `commands/` (LocalCommandRunner, process groups), `apps/` (DesktopEntry,
   DesktopEntryIndex = IAppCatalog, AppLauncher), `audio/` (wpctl), `media/` (MPRIS), `screen/` (portal
   screenshots), `files/` (FileAccess, confined to home and /tmp), `info/` (SystemInfo); `SystemTools.cc`
@@ -86,7 +90,11 @@ models over its slow `auto/*` combos).
   beside the chat, `NexaCoreButton` = the Talk button, `snapshot()` = the tray icon; 60 Hz while something
   happens, 30 Hz idle, stopped while hidden; a state change cross-fades over 350 ms and the fast-path snap stays
   for its 0.9 s ping), `NexaTheme` + `theme.qss` (the tokens for the dark and light schemes; the sheet names which
-  widget wears which token and sets widget colours through `qproperty-*`, so no widget hard-codes a colour) and
+  widget wears which token and sets widget colours through `qproperty-*`, so no widget hard-codes a colour),
+  `NexaThemes` (the catalogue: 26 colour families × dark/light = 52 theme packs generated around a hue with the
+  design's own shape of palette and contrast guaranteed, each family wearing one of eight motion styles —
+  `CoreStyle`: Classic, Orbit, Pulse, Aurora, Comet, Nebula, Storm, Minimal — which `coreFrame` applies and the sheet
+  hands the core as `qproperty-coreStyle`; `config.ui.theme` is `system`, `dark`, `light` or a pack id) and
   `NexaIcons` (line icons painted in the theme's colour).
 - `app/` — Qt Widgets GUI (MainWindow: toolbar pills, the core with the state's name beside it, ChatView with
   bubbles and "NEXA fast path · 2 ms" headers, ActionLogDock as cards, MicButton = the core as the Talk button,

@@ -89,7 +89,7 @@ MainWindow::MainWindow(AppController *controller, ProviderRegistry *registry, To
       shortcuts_(shortcuts),
       status_(std::move(status)),
       auditPath_(auditPath),
-      scheme_(NexaTheme::schemeFor(controller->config().ui.theme)) {
+      pack_(NexaThemes::resolve(controller->config().ui.theme)) {
     setWindowTitle(tr("Nexa"));
     resize(1280, 800);
     buildToolbar();
@@ -373,7 +373,7 @@ void MainWindow::connectController() {
     connect(controller_, &AppController::coreModeChanged, this, &MainWindow::showCoreMode);
     connect(controller_, &AppController::litNodesChanged, this, [this](unsigned nodes) { presence_->setLitNodes(nodes); });
     connect(controller_, &AppController::themeChanged, this,
-            [this](const QString &theme) { applyScheme(NexaTheme::schemeFor(theme)); });
+            [this](const QString &theme) { applyPack(NexaThemes::resolve(theme)); });
     connect(controller_, &AppController::configChanged, this, [this] {
         showPolicy();
         if (status_.phone) showPhone(status_.phone->currentDescription());
@@ -526,22 +526,26 @@ void MainWindow::sendOrStop() {
 }
 
 void MainWindow::toggleTheme() {
-    applyScheme(scheme_ == ThemeScheme::Dark ? ThemeScheme::Light : ThemeScheme::Dark);
-    controller_->setTheme(NexaTheme::schemeKey(scheme_));
+    // The same family in the other scheme: Ocean · Dark becomes Ocean · Light.
+    if (const std::optional<ThemePack> sibling = NexaThemes::find(NexaThemes::siblingId(pack_))) {
+        applyPack(*sibling);
+        controller_->setTheme(NexaThemes::settingFor(pack_));
+    }
 }
 
-void MainWindow::applyScheme(ThemeScheme scheme) {
-    if (scheme == scheme_) return;
-    scheme_ = scheme;
-    NexaTheme::apply(qApp, scheme_);
+void MainWindow::applyPack(const ThemePack &pack) {
+    if (pack.id == pack_.id) return;
+    pack_ = pack;
+    NexaTheme::apply(qApp, pack_.tokens, pack_.style);
     refreshTheme();
 }
 
 void MainWindow::refreshTheme() {
-    const ThemeTokens tokens = NexaTheme::tokens(scheme_);
+    const ThemeTokens &tokens = pack_.tokens;
     for (const auto &[action, kind] : themedActions_) action->setIcon(NexaIcons::icon(kind, tokens.text));
-    themeAction_->setIcon(NexaIcons::icon(scheme_ == ThemeScheme::Dark ? NexaIcons::Kind::Sun : NexaIcons::Kind::Moon,
+    themeAction_->setIcon(NexaIcons::icon(pack_.scheme == ThemeScheme::Dark ? NexaIcons::Kind::Sun : NexaIcons::Kind::Moon,
                                           tokens.text));
+    themeAction_->setToolTip(tr("%1 — switch to %2").arg(pack_.name, pack_.scheme == ThemeScheme::Dark ? tr("light") : tr("dark")));
     // The stylesheet has set the core's colours by now; the title takes the state's.
     showCoreMode(controller_->coreMode());
 }

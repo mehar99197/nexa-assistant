@@ -4,6 +4,7 @@
 #include "ui/NexaCoreSpec.h"
 #include "ui/NexaIcons.h"
 #include "ui/NexaTheme.h"
+#include "ui/NexaThemes.h"
 
 #include <QMainWindow>
 
@@ -46,7 +47,8 @@ public:
     // Asked when the window is closed: true means "hidden to the tray, keep running".
     void setCloseToTray(std::function<bool()> hide) { closeToTray_ = std::move(hide); }
     NexaCoreWidget *presence() const { return presence_; }    // the core beside the chat (the tray copies it)
-    ThemeScheme scheme() const { return scheme_; }
+    ThemeScheme scheme() const { return pack_.scheme; }
+    const ThemePack &theme() const { return pack_; }
 
 protected:
     bool eventFilter(QObject *watched, QEvent *event) override;
@@ -66,7 +68,7 @@ private:
     void showHotkeys();
     void sendOrStop();
     void toggleTheme();
-    void applyScheme(ThemeScheme scheme);
+    void applyPack(const ThemePack &pack);
     void refreshTheme();
     void promptForApiKey(const QString &providerName);
     void confirm(const QString &question, std::function<void(bool)> answer);
@@ -86,7 +88,7 @@ private:
     GlobalShortcuts *shortcuts_;
     SystemStatus status_;
     QString auditPath_;
-    ThemeScheme scheme_{ThemeScheme::Dark};
+    ThemePack pack_;                // the theme on: colours, scheme and the core's motion style
     ChatView *chatView_{nullptr};
     ActionLogDock *actionLog_{nullptr};
     NexaCoreWidget *presence_{nullptr};

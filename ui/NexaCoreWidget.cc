@@ -66,6 +66,17 @@ void NexaCoreWidget::setLevel(double level) {
     level_ = std::clamp(level, 0.0, 1.0);
 }
 
+void NexaCoreWidget::setStyle(CoreStyle style) {
+    if (style_ == style) return;
+    style_ = style;
+    restartTimer();
+    update();
+}
+
+void NexaCoreWidget::setCoreStyleIndex(int index) {
+    if (index >= 0 && index < kCoreStyleCount) setStyle(static_cast<CoreStyle>(index));
+}
+
 void NexaCoreWidget::setLitNodes(CoreNodes nodes) {
     if (lit_ == nodes) return;
     lit_ = nodes;
@@ -121,7 +132,7 @@ void NexaCoreWidget::restartTimer() {
         return;
     }
     const bool fading = fadeStartMs_ >= 0;
-    const int hz = fading ? 60 : coreTiming(mode_).frameRateHz;
+    const int hz = fading ? 60 : coreStyleFrameRate(style_, mode_);
     timer_.start(1000 / hz);
 }
 
@@ -175,18 +186,19 @@ void NexaCoreWidget::paintFrame(QPainter &painter, const QRectF &rect) const {
     if (animated_ && fadeStartMs_ >= 0) blend = easeCross(double(clock_.elapsed() - fadeStartMs_) / kCrossFadeMs);
 
     std::vector<CoreLayer> layers;
-    const CoreFrame current = coreFrame(mode_, shownLevel_, t, sinceMode);
+    const CoreFrame current = coreFrame(mode_, shownLevel_, t, sinceMode, style_);
     layers.push_back({mode_, current, colorFor(mode_), blend});
     double coreScale = current.coreScale;
     QColor accent = colorFor(mode_);
     CoreNodes lit = litFor(mode_);
     if (blend < 1.0) {
-        const CoreFrame old = coreFrame(previous_, shownLevel_, t, sinceMode + kCrossFadeMs / 1000.0);
+        const CoreFrame old = coreFrame(previous_, shownLevel_, t, sinceMode + kCrossFadeMs / 1000.0, style_);
         layers.push_back({previous_, old, colorFor(previous_), 1.0 - blend});
         coreScale = old.coreScale + (current.coreScale - old.coreScale) * blend;
         accent = mixColor(colorFor(previous_), colorFor(mode_), blend);
         if (blend < 0.5) lit |= litFor(previous_);
     }
+    accent = NexaCorePainter::shiftedHue(accent, current.hueShift);
 
     CorePaint paint;
     paint.accent = accent;
@@ -235,7 +247,7 @@ QPixmap NexaCoreWidget::snapshot(CoreMode mode, int size, bool nodes, qreal devi
     paint.ground = ground_;
     paint.glyph = ground_;
     // At rest: well into the state, so one-shot motion (the fast-path ping) has passed.
-    const CoreFrame frame = coreFrame(mode, 0.0, 0.0, 10.0);
+    const CoreFrame frame = coreFrame(mode, 0.0, 0.0, 10.0, style_);
     const CoreLayer layer{mode, frame, paint.accent, 1.0};
     const std::array<CoreLayer, 1> layers{layer};
     NexaCorePainter::paint(painter, QRectF(0, 0, size, size).adjusted(0.5, 0.5, -0.5, -0.5), paint,

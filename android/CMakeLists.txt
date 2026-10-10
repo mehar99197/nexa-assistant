@@ -48,6 +48,7 @@ if(NEXA_PHONE_STANDALONE)
         "${NEXA_ROOT}/ui/NexaCoreWidget.h" "${NEXA_ROOT}/ui/NexaCoreWidget.cc"
         "${NEXA_ROOT}/ui/NexaIcons.h" "${NEXA_ROOT}/ui/NexaIcons.cc"
         "${NEXA_ROOT}/ui/NexaTheme.h" "${NEXA_ROOT}/ui/NexaTheme.cc"
+        "${NEXA_ROOT}/ui/NexaThemes.h" "${NEXA_ROOT}/ui/NexaThemes.cc"
     )
     set_source_files_properties("${NEXA_ROOT}/ui/theme.qss" PROPERTIES QT_RESOURCE_ALIAS theme.qss)
     set_source_files_properties("${NEXA_ROOT}/ui/chevron-down.svg" PROPERTIES QT_RESOURCE_ALIAS chevron-down.svg)

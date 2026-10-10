@@ -22,6 +22,9 @@ add_library(nexa_core STATIC
     intent/IntentRouter.h intent/IntentRouter.cc
     intent/PcIntents.h intent/PcIntents.cc
     intent/PhoneIntents.h intent/PhoneIntents.cc
+    mcp/McpClient.h mcp/McpClient.cc
+    mcp/McpConnectors.h mcp/McpConnectors.cc
+    mcp/McpTransport.h mcp/McpTransport.cc
     policy/PanicController.h policy/PanicController.cc
     policy/PolicyEngine.h policy/PolicyEngine.cc
     tools/FunctionTool.h tools/FunctionTool.cc

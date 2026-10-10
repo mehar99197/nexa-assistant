@@ -297,6 +297,7 @@ nexa--NexaCoreWidget {
     qproperty-mutedColor: @muted@;
     qproperty-textColor: @text@;
     qproperty-groundColor: @ground@;
+    qproperty-coreStyle: @coreStyle@;
 }
 
 /* Last, after the generic rules of the same specificity: the transcript keeps the window's ground. */
