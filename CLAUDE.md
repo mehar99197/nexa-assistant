@@ -15,7 +15,10 @@ ctest --test-dir build --output-on-failure
 ./build/app/nexa-assistant
 ```
 
-Debug build (`-Werror`): `cmake --preset debug && cmake --build build-debug`. Sanitizers: `cmake --preset asan && cmake --build build-asan && ./build-asan/tests/nexa_tests`.
+Debug build (`-Werror`): `cmake --preset debug && cmake --build build-debug`. Sanitizers: `cmake --preset asan && cmake --build build-asan && ./build-asan/tests/nexa_tests`. The tests run
+under a QApplication (offscreen), and Qt's GUI plugins leave allocations behind at exit that LeakSanitizer
+reports: run with `ASAN_OPTIONS=detect_leaks=0` for the memory-error check, and judge leaks by whether any
+frame is `in nexa::` (`… 2>&1 | grep "in nexa::"`).
 Verbose logs: `QT_LOGGING_RULES="nexa.*.debug=true" ./build/app/nexa-assistant` (categories `nexa.app`,
 `nexa.config`, `nexa.net`, `nexa.ai`, `nexa.voice`).
 Scripted run: `./build/app/nexa-assistant --ask "open calculator" --ask "volume 50"` — submits each request in

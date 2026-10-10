@@ -166,10 +166,15 @@ void RemoteClient::pair(const QString &code, const QString &deviceName, std::fun
 }
 
 void RemoteClient::connectToNexa() {
-    wanted_ = true;
+    retry_.stop();
     rejected_ = false;
     attempts_ = 0;
-    retry_.stop();
+    if (socket_->state() != QAbstractSocket::UnconnectedState) {
+        // A fresh start, not a retry: whatever was there goes, quietly.
+        wanted_ = false;
+        socket_->abort();
+    }
+    wanted_ = true;
     open();
 }
 
