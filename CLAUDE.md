@@ -79,8 +79,12 @@ models over its slow `auto/*` combos).
   `HelperService` (every privileged method replies late, after polkit). It is started by D-Bus on demand and
   exits after ten idle minutes.
 - `system/helper/`, `system/commands/RootCommandRunner`, `system/input/` — the client side:
-  `HelperInputBackend` (uinput, reaches every window), `XTestInputBackend` (X11 only — on Wayland it cannot
-  reach native windows), `InputBackendSelector` (picks one and explains why).
+  `HelperInputBackend` (uinput, reaches every window), `RemoteDesktopSession` + `PortalInputBackend` (the
+  desktop's RemoteDesktop portal: no root, GNOME asks once and the restore token is kept in
+  `~/.local/share/nexa/remote-desktop-token`), `CombinedInputBackend` (helper types and clicks, portal places
+  the pointer — GNOME ignores the helper's absolute device), `XTestInputBackend` (X11 only — on Wayland it
+  cannot reach native windows), `InputBackendSelector` (picks one and explains why). Mutter reads portal
+  pointer positions in the stream's *pixels*, not the documented logical units (`StreamUnits`).
 - `remote/` arrives with M6 (see ARCHITECTURE.md → File tree).
 - `packaging/` — `org.nexa.Assistant.desktop`, the helper's polkit policy, D-Bus and systemd files, and
   `install-helper.sh` / `uninstall-helper.sh`; `scripts/` — model and engine downloads, desktop-entry install.

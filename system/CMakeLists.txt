@@ -9,8 +9,11 @@ add_library(nexa_system STATIC
     helper/HelperClient.h helper/HelperClient.cc
     commands/RootCommandRunner.h commands/RootCommandRunner.cc
     input/IInputBackend.h
+    input/CombinedInputBackend.h input/CombinedInputBackend.cc
     input/HelperInputBackend.h input/HelperInputBackend.cc
     input/InputBackendSelector.h input/InputBackendSelector.cc
+    input/PortalInputBackend.h input/PortalInputBackend.cc
+    input/RemoteDesktopSession.h input/RemoteDesktopSession.cc
     input/XTestInputBackend.h input/XTestInputBackend.cc
     info/SystemInfo.h info/SystemInfo.cc
     media/MprisController.h media/MprisController.cc

@@ -427,7 +427,8 @@ void addInputTools(ToolRegistry &registry, const InputProvider &input, ScreenCap
         if (!backend) {
             done(Error{ErrorCode::NotSupported,
                        u"Nexa cannot type or click on this desktop: the root helper is not installed "
-                       "(sudo ./packaging/install-helper.sh) and there is no X11 fallback."_s});
+                       "(sudo ./packaging/install-helper.sh), the desktop offers no remote-control portal, and "
+                       "there is no X11 fallback."_s});
         }
         return backend;
     };

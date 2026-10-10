@@ -23,6 +23,7 @@
 #include "system/helper/HelperClient.h"
 #include "system/input/IInputBackend.h"
 #include "system/input/InputBackendSelector.h"
+#include "system/input/RemoteDesktopSession.h"
 #include "system/files/FileAccess.h"
 #include "system/info/SystemInfo.h"
 #include "system/media/MprisController.h"
@@ -88,18 +89,21 @@ Result<QByteArray> loadRecording(const QString &path) {
 }
 
 // Which backend types and clicks can change while Nexa runs — installing the helper switches it
-// from XTEST to uinput. Retired backends are kept alive, because a tool call already in flight may
-// still be holding one.
+// from the portal to uinput. Retired backends are kept alive, because a tool call already in flight
+// may still be holding one.
 class InputBackends {
 public:
-    explicit InputBackends(HelperClient *helper) : helper_(helper) { reselect(); }
+    InputBackends(HelperClient *helper, RemoteDesktopSession *remoteDesktop)
+        : helper_(helper), remoteDesktop_(remoteDesktop) {
+        reselect();
+    }
 
     IInputBackend *current() const { return current_; }
     QString summary() const { return summary_; }
     QStringList notes() const { return notes_; }
 
     void reselect() {
-        InputBackendSelector::Choice choice = InputBackendSelector::choose(helper_);
+        InputBackendSelector::Choice choice = InputBackendSelector::choose(helper_, remoteDesktop_);
         summary_ = choice.summary;
         notes_ = choice.notes;
         current_ = choice.backend.get();
@@ -108,6 +112,7 @@ public:
 
 private:
     HelperClient *helper_;
+    RemoteDesktopSession *remoteDesktop_;
     std::vector<std::unique_ptr<IInputBackend>> kept_;
     IInputBackend *current_{nullptr};
     QString summary_;
@@ -178,10 +183,14 @@ int main(int argc, char *argv[]) {
     ScreenCapture screen;
 
     // Root commands and input injection go through nexa-helper, which is started by D-Bus only
-    // when one of them is actually used, and authorises every call against polkit.
+    // when one of them is actually used, and authorises every call against polkit. Putting the
+    // pointer on a given spot goes through the desktop's RemoteDesktop portal instead, which
+    // GNOME asks the user to allow once.
     HelperClient helperClient;
     RootCommandRunner rootCommands(&helperClient);
-    InputBackends input(&helperClient);
+    RemoteDesktopSession remoteDesktop(QApplication::desktopFileName(), RemoteDesktopSession::defaultTokenPath());
+    InputBackends input(&helperClient, &remoteDesktop);
+    panic.addHandler([&remoteDesktop] { remoteDesktop.close(); });
     QObject::connect(&helperClient, &HelperClient::readyChanged, &app, [&input] { input.reselect(); });
     panic.addHandler([&helperClient] { helperClient.cancelAllJobs(); });
 
