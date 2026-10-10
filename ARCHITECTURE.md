@@ -9,7 +9,7 @@
 | M0 — scaffold + docs | ✅ done — CMake skeleton, `ARCHITECTURE.md`, `CLAUDE.md`, presets, `.gitignore` |
 | M1 — streaming chat on OmniRoute | ✅ done 2026-10-09 — verified live: OmniRoute `/v1/models` (3838 models), streamed Markdown replies with styled code, Esc cancel, Settings → Test connection; 51 unit/HTTP tests green (also under ASan/UBSan) |
 | M2 — tools, fast path, agent loop, PC screen | ✅ done 2026-10-10 — verified live: fast path `open calculator` 2 ms, `volume 100` 45 ms, `run uname -sr` 17 ms, `close calculator` 8 ms (no model); compound request → agent ran `open_app` + `get_volume` + `run_command` in one round, all in the Actions panel and `audit.jsonl` (0600); `take a screenshot` → GNOME portal (no prompt, ~4 s) → vision model described the screen; SIGTERM mid-command → clean exit, process group killed; 99 test cases green (also ASan/UBSan, `-Werror`) |
-| M3 — root helper + input injection | 🔄 built 2026-10-10 — `nexa-helper` (polkit + uinput + job manager), `proto/` contract with generated proxy *and* adaptor, `HelperClient`, `RootCommandRunner`, the three input backends, six new tools and `packaging/`; 140 test cases green. **Not yet verified live**: installing it needs the user's sudo, and the typing test puts keystrokes into a real window, so both are theirs to run (`sudo ./packaging/install-helper.sh`). Without it Nexa reports the install command instead of failing quietly |
+| M3 — root helper + input injection | 🔄 verified in part 2026-10-10 — `nexa-helper` (polkit + uinput + job manager), `proto/` contract with generated proxy *and* adaptor, `HelperClient`, `RootCommandRunner`, the three input backends, six new tools and `packaging/`; 149 test cases green (also ASan/UBSan, `-Werror`). Live: installed, `busctl` shows the contract, `run_root_command ["id"]` → `uid=0(root)`, typed text landed in a native Wayland window. **Open**: the password was being asked for on every call — now one polkit action and the answer remembered against the login (`SessionGrants`), needs a reinstall to take effect; absolute pointer positioning (`mouse_move_abs`) still lands in the wrong place |
 | M4 — voice | ✅ done 2026-10-10 — verified live: a spoken "open the calculator" acted on it (OmniRoute `anyapi/google/gemini-2.5-flash-lite` heard it, `gtts/default` spoke the reply); offline whisper.cpp `base.en` + Piper did the same end to end in **611 ms**; "what is the capital of France?" went to the agent and was read back; 129 test cases green |
 | M5 — Android bridge (ADB) | ⏳ not started |
 | M6 — web remote (phone → Linux) | ⏳ not started |
@@ -54,6 +54,10 @@
 - M3: the fast path's `press_keys` sent `["ctrl","s"]` while the tool's schema asks for `"ctrl+s"`; the intent now joins them, and the tool accepts either. `type …` no longer matches a noun phrase such as "type of file".
 - M3: input tools are marked `privileged`, so `confirm-risky` mode asks before synthetic keystrokes even though nothing runs as root. The helper exposes **no** method that reads a key, a button, the pointer or the screen — it is an output device only, and the D-Bus contract says so.
 - M3: `packaging/org.nexa.Helper.conf` lets any local context *send* to the helper, because D-Bus can only answer for the service as a whole. polkit is the real gate: `allow_any`/`allow_inactive` are `no`, so only the person at the active seat can authorise, per action.
+- M3: **one** polkit action (`org.nexa.helper.control`), not the planned `run-command` + `inject-input`. Anything that can type into any window can open a terminal and run what it likes, so two actions were the same power asked for twice — and meant two password prompts.
+- M3: `auth_admin_keep` alone does not deliver "ask once". polkit remembers its answer against the **process** that asked, and Nexa is many short-lived processes (every `--ask` run, every restart), so each one was a stranger to it and got a fresh prompt — the journal showed ten prompts for ten calls, each from a different bus name. Asking polkit about a `unix-session` subject instead would have the right lifetime but **aborts polkitd 127**, and each crash loses every authorisation it held. So the helper remembers it itself: `SessionGrants` records the login's id and start time in `/run/nexa-helper/grants.json` (tmpfs, 0700/0600, root), which survives the ten-minute idle exit and a polkitd restart but not a logout or a reboot. Only the *fact* that the user said yes is stored — the password goes to the desktop's own agent and is never seen by Nexa.
+- M3: the caller's identity for all of this is its **uid as the bus reports it** (`serviceUid`), resolved through logind to that user's *display* session — the same fallback polkit itself uses, and necessary because a process started outside the login (from a terminal, or a scripted `--ask` run) belongs to no logind session of its own. Every call re-checks that the session is `Active` and not `Remote`, so the privilege goes away while another user is at the screen, not just when the password is first asked for.
+- M3: calls arriving while the password prompt is on screen **queue behind it** instead of each starting their own; the helper answers them all from the one decision. An agent turn with half a dozen keystrokes and clicks would otherwise mean half a dozen prompts.
 
 
 ## Context
@@ -189,8 +193,11 @@ Ai Assistant/
 │   └── web/index.html, app.js, style.css, manifest.json, sw.js   PWA: chat with streamed replies, action log, push-to-talk (AudioWorklet → 16 kHz Int16 PCM over WS; optional Web Speech API text mode), reply audio playback, reconnect with stored token
 ├── helper/
 │   ├── main.cc                    QCoreApplication, register org.nexa.Helper on system bus, idle-exit timer
-│   ├── HelperService.h/.cc        adaptor impl: authorise (delayed reply) then dispatch
+│   ├── HelperService.h/.cc        adaptor impl: authorise (delayed reply) then dispatch; calls arriving while the prompt is up queue behind it
 │   ├── PolkitAuthorizer.h/.cc     PolkitQt1::Authority::checkAuthorization(SystemBusNameSubject(sender), AllowUserInteraction)
+│   ├── LoginSession.h             the caller's graphical login: uid, logind session id + start time, active, remote
+│   ├── LoginSessions.h/.cc        logind adapter: uid (from the bus) → that user's display session, and whether it is the one at the screen
+│   ├── SessionGrants.h/.cc        which logins have already been authorised (/run/nexa-helper/grants.json, 0600) — polkit remembers per *process*, which is the wrong lifetime
 │   ├── JobManager.h/.cc           child processes in own process groups, OutputChunk/Finished signals, cancel = killpg
 │   └── UinputDevice.h/.cc         virtual keyboard + relative mouse device, and absolute-pointer device (EV_ABS + INPUT_PROP_DIRECT)
 ├── app/
@@ -201,7 +208,7 @@ Ai Assistant/
 ├── tests/                         Catch2 v3: SseParser (adversarial splits), ToolCallAccumulator ×3 providers, ToolSpec mapping, TextToolParser, KeyMap, IntentRouter grammar (incl. phone phrases), DesktopEntry Exec parsing, PolicyEngine, ConfigStore round-trip, Agent (scripted model), VoicePure (Wav, AudioConverter, EnergyVad, SentenceChunker, WakeWordDetector, Transcript, MultipartForm, cloud request/reply mapping), VoicePipeline (fake microphone/recogniser/voice), AdbParsers, RemoteProtocol, PairingManager
 ├── packaging/
 │   ├── org.nexa.Assistant.desktop desktop entry (id must be reverse-DNS: the portal needs it to grant global hotkeys)
-│   ├── org.nexa.helper.policy     polkit actions run-command + inject-input, auth_admin_keep
+│   ├── org.nexa.helper.policy     one polkit action org.nexa.helper.control, auth_admin_keep, allow_any/allow_inactive = no
 │   ├── org.nexa.Helper.conf       /etc/dbus-1/system.d: root owns; default context may send/receive
 │   ├── org.nexa.Helper.service    /usr/share/dbus-1/system-services: User=root, SystemdService=nexa-helper.service
 │   ├── nexa-helper.service        systemd Type=dbus, BusName=org.nexa.Helper, ExecStart=/usr/local/libexec/nexa-helper (light hardening only — it must run arbitrary root commands and reach /dev/uinput)
@@ -311,13 +318,15 @@ Tools registered: PC — `run_command`, `run_root_command`, `open_app`, `close_a
 
 **D-Bus contract** (`proto/org.nexa.Helper.xml`, generated proxy + adaptor so both sides can't drift):
 ```
-Ping() · Version() → s
+Ping() · Version() → s · IsAuthorized() → b · ForgetAuthorization()
 RunCommand(as argv, s cwd, as env "K=V", i timeoutMs) → t jobId     CancelJob(t jobId)
 signal OutputChunk(t jobId, y stream, ay data) · signal Finished(t jobId, i exitCode, s status)
 TypeText(s utf8) · PressKeys(au keycodes)  [press in order, release in reverse]
 MouseMove(i dx, i dy) · MouseMoveAbs(i x, i y, i screenW, i screenH) · MouseButton(u button, b down) · MouseScroll(i dx, i dy)
 ```
-**Authorisation:** on each privileged call take `message().service()` (caller's unique bus name), `setDelayedReply(true)`, call `PolkitQt1::Authority::checkAuthorization("org.nexa.helper.run-command" | "org.nexa.helper.inject-input", SystemBusNameSubject(sender), AllowUserInteraction)`; reply after the result. Never trust caller-supplied identity. Both actions `auth_admin_keep` (user is in `sudo`, polkit's admin group → own password, cached for the session). Log every decision to the journal.
+**Authorisation — the password is asked for once per *login*, not once per caller.** On each privileged call: `setDelayedReply(true)`; ask the bus for the caller's uid (`serviceUid(message().service())` — never a caller-supplied identity); ask logind for that uid's display session and refuse unless it is `Active` and not `Remote` (the same rule as `allow_inactive`/`allow_any` = no, enforced on *every* call, including ones that never reach polkit); if `SessionGrants` already holds that login, do the work; otherwise `checkAuthorization("org.nexa.helper.control", SystemBusNameSubject(sender), AllowUserInteraction)` and record the login on success. Calls that arrive while the prompt is on screen queue behind it, so six quick actions are one prompt. Log every polkit decision to the journal.
+
+One action, not two: anything that can type into any window can open a terminal, so `run-command` and `inject-input` were the same power asked for twice. `auth_admin_keep` on its own is **not** enough — polkit ties what it remembers to the asking *process*, and Nexa is many short-lived processes over a day, so the prompt came back every time (and asking polkit about a `unix-session` subject instead makes polkitd 127 abort, losing everything it had remembered). Hence `SessionGrants`: the *fact* that the user said yes, against the login's id + start time, in `/run` (tmpfs, 0700/0600 root) so it survives the helper's idle exit but not a logout or a reboot. Revoked by Settings → Helper → Forget my password (`ForgetAuthorization`, which also clears polkit's own grant), or by logging out.
 
 **uinput:** open `/dev/uinput` once; keyboard device: `UI_SET_EVBIT EV_KEY` + every `KEY_*` in KeyMap, `EV_REL` with `REL_X/REL_Y/REL_WHEEL/REL_HWHEEL`, `BTN_LEFT/RIGHT/MIDDLE`; `UI_DEV_SETUP` + `UI_DEV_CREATE`. Each logical action = `input_event` writes + `EV_SYN/SYN_REPORT`; ~3 ms between key events. Second device for absolute pointer: `EV_ABS` with `UI_ABS_SETUP` ranges `0..screenW-1`, `0..screenH-1` and `INPUT_PROP_DIRECT` so Mutter maps it to the whole output — coordinates are **physical pixels** (same space as the portal screenshot), which sidesteps the 1.25× scale factor; multi-monitor targets the primary output (documented). `UI_DEV_DESTROY` on exit.
 
@@ -419,7 +428,8 @@ sudo ./packaging/install-helper.sh                   # M3: nexa-helper + polkit/
 - Unit: `ctest --test-dir build` (Catch2). Highest-value: adversarially split SSE streams, per-provider tool-call accumulation, KeyMap round-trip, IntentRouter grammar, AdbParsers, RemoteProtocol.
 - Chat: OmniRoute key entered in settings → model list appears → incremental tokens; cancel mid-stream; `curl -s -H "Authorization: Bearer $KEY" http://localhost:20128/v1/models` as the reference.
 - Fast path: time `open firefox` / `volume 30` / `on my phone open youtube` in the action log (< 50 ms PC, < 300 ms phone); confirm no LLM request was made.
-- Helper: `busctl --system introspect org.nexa.Helper /org/nexa/Helper`, `pkaction --action-id org.nexa.helper.run-command --verbose`, `journalctl -u nexa-helper -f` while running `run_root_command ["id"]` → one password prompt then `uid=0`.
+- Helper: `busctl --system introspect org.nexa.Helper /org/nexa/Helper`, `pkaction --action-id org.nexa.helper.control --verbose`, `journalctl -u nexa-helper -f` while running `run_root_command ["id"]` → one password prompt then `uid=0`.
+- Asked once, not again: after that first prompt, run several privileged actions from *separate* Nexa processes (`--ask` runs count) and from both tool families — `journalctl -u nexa-helper | grep "asking polkit"` must show exactly one line per login. `sudo systemctl stop nexa-helper` and repeat: still no prompt (the grant is in `/run`, not in memory). Settings → Helper → Forget my password, then one more action → exactly one new prompt.
 - Input: type a shifted ASCII sentence into GNOME Text Editor via `type_text`; `press_keys ctrl+a`; `mouse_move_abs` to a screenshot-derived coordinate and click.
 - Screen: "see this" → `audit.jsonl` shows `take_screenshot`, the model describes the screen, the file is removed afterwards; "see my phone" likewise via `screencap`.
 - Voice: `--voice-file <wav>` replays a recording as a spoken request (Piper can make one); PTT hotkey from another focused app; wake word "hey nexa, open files"; barge-in while TTS is speaking; panic hotkey during `run_command ["sleep","60"]` kills it (`pgrep sleep` empty). The granted hotkeys appear in Settings → Keyboard once `scripts/install-desktop-entry.sh` has run.

@@ -29,6 +29,12 @@ for file in "${FILES[@]}"; do
     fi
 done
 
+# Where the helper kept the fact that a login had given it a password.
+if [[ -d /run/nexa-helper ]]; then
+    rm -rf /run/nexa-helper
+    echo "Removed /run/nexa-helper"
+fi
+
 systemctl daemon-reload
 systemctl reload dbus 2>/dev/null || true
 

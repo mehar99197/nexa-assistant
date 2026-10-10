@@ -12,9 +12,12 @@ inline constexpr QLatin1StringView kService{"org.nexa.Helper"};
 inline constexpr QLatin1StringView kPath{"/org/nexa/Helper"};
 inline constexpr QLatin1StringView kInterface{"org.nexa.Helper"};
 
-// polkit actions, both auth_admin_keep: the user is asked once per session.
-inline constexpr QLatin1StringView kActionRunCommand{"org.nexa.helper.run-command"};
-inline constexpr QLatin1StringView kActionInjectInput{"org.nexa.helper.inject-input"};
+// The one polkit action, auth_admin_keep: the user is asked for a password once per login.
+//
+// One action and not two (running commands as root, typing and clicking) because the two cannot
+// meaningfully be told apart: anything that can type into any window can open a terminal and run
+// whatever it likes. Two actions only meant two password prompts for the same power.
+inline constexpr QLatin1StringView kActionControl{"org.nexa.helper.control"};
 
 // D-Bus error names the helper returns, so the client can tell cases apart without matching text.
 inline constexpr QLatin1StringView kErrorDenied{"org.nexa.Helper.Error.Denied"};

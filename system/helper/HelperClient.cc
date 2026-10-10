@@ -130,6 +130,25 @@ void HelperClient::awaitString(const QDBusPendingCall &call, TextDone done) {
     });
 }
 
+void HelperClient::awaitFlag(const QDBusPendingCall &call, FlagDone done) {
+    auto *watcher = new QDBusPendingCallWatcher(call, this);
+    connect(watcher, &QDBusPendingCallWatcher::finished, this, [this, done](QDBusPendingCallWatcher *finished) {
+        finished->deleteLater();
+        const QDBusPendingReply<bool> reply = *finished;
+        const Error error = reply.isError() ? errorFrom(reply.error()) : Error{};
+        noteOutcome(reply.isError(), error);
+        done(reply.isError() ? Result<bool>{error} : Result<bool>{reply.value()});
+    });
+}
+
+void HelperClient::isAuthorized(FlagDone done) {
+    awaitFlag(proxy_->IsAuthorized(), std::move(done));
+}
+
+void HelperClient::forgetAuthorization(Done done) {
+    awaitVoid(proxy_->ForgetAuthorization(), std::move(done));
+}
+
 void HelperClient::probe(TextDone done) {
     proxy_->setTimeout(kProbeTimeoutMs);
     awaitString(proxy_->Version(), [this, done](Result<QString> version) {

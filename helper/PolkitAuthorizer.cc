@@ -43,17 +43,12 @@ void PolkitAuthorizer::startNext() {
     Authority *authority = Authority::instance();
     authority->clearError();
     busy_ = true;
-    // The caller's login session, derived from the process id the bus reported. Asking about the
-    // session is what lets auth_admin_keep remember the answer past the end of this process.
-    // Without a process id there is nothing to resolve, so fall back to the bus name and accept
-    // that the user will be asked again.
     // The caller's unique bus name, as the bus reported it on the message — never an identity the
     // caller put in the message body.
     //
     // Not the login session, though that would look tidier: polkit 127 *aborts* when asked about a
     // unix-session subject, and every polkitd crash throws away the authorisations it was
-    // remembering, which turns "ask once" into "ask every time". polkit already resolves a bus name
-    // to its session itself, so auth_admin_keep remembers the answer for the whole login either way.
+    // remembering. The helper remembers the answer against the login itself instead.
     const PolkitQt1::SystemBusNameSubject subject(request.callerBusName);
     qCDebug(lcApp).noquote() << "asking polkit about" << request.actionId << "for" << request.callerBusName;
 
@@ -65,6 +60,18 @@ void PolkitAuthorizer::startNext() {
         authority->clearError();
         finish(false, tr("polkit could not be reached: %1").arg(details));
     }
+}
+
+void PolkitAuthorizer::revoke(const QString &callerBusName) {
+    Authority *authority = Authority::instance();
+    authority->clearError();
+    const PolkitQt1::SystemBusNameSubject subject(callerBusName);
+    if (!authority->revokeTemporaryAuthorizationsSync(subject)) {
+        // Nothing to revoke is the common case and not a problem: polkit forgets a process-scoped
+        // grant on its own as soon as that process is gone.
+        qCDebug(lcApp).noquote() << "polkit had nothing to revoke for" << callerBusName;
+    }
+    authority->clearError();
 }
 
 void PolkitAuthorizer::finish(bool allowed, const QString &reason) {

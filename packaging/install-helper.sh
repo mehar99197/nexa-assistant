@@ -47,15 +47,31 @@ systemctl daemon-reload
 # The bus rereads /etc/dbus-1/system.d on a reload; without this the first call is refused.
 systemctl reload dbus 2>/dev/null || kill -HUP "$(pgrep -o dbus-daemon)" 2>/dev/null || true
 
+# An already-running helper keeps the bus name for up to ten idle minutes, so without this the old
+# binary would go on answering — and an older one asks polkit about actions this policy file no
+# longer declares, which polkit can only refuse. D-Bus starts the new one on the next call.
+if systemctl is-active --quiet nexa-helper.service || pgrep -x nexa-helper >/dev/null; then
+    systemctl stop nexa-helper.service 2>/dev/null || true
+    pkill -x nexa-helper 2>/dev/null || true
+    echo "Stopped the previous helper; the bus will start the new one on demand."
+fi
+
 echo
 echo "Checking the installation:"
 
 ok=0
-if pkaction --action-id org.nexa.helper.run-command >/dev/null 2>&1; then
-    echo "  polkit knows org.nexa.helper.run-command"
+if pkaction --action-id org.nexa.helper.control >/dev/null 2>&1; then
+    echo "  polkit knows org.nexa.helper.control"
 else
-    echo "  polkit does NOT know the actions — is polkitd running?" >&2
+    echo "  polkit does NOT know the action — is polkitd running?" >&2
     ok=1
+fi
+
+# A password remembered on behalf of a helper that has just been replaced is of no use to anyone:
+# this installation starts by asking once.
+if [[ -d /run/nexa-helper ]]; then
+    rm -rf /run/nexa-helper
+    echo "  cleared the authorisation the previous helper had been given"
 fi
 
 # Starts the helper through D-Bus activation and asks it for its version. Version() needs no
@@ -76,8 +92,9 @@ fi
 
 echo
 if [[ "$ok" -eq 0 ]]; then
-    echo "Done. Nexa can now run commands as root and type for you; it will ask for your password"
-    echo "once per session. The helper exits on its own after ten idle minutes."
+    echo "Done. Nexa can now run commands as root and type for you. It asks for your password once"
+    echo "per login — the desktop's own prompt, never Nexa's — and the helper exits on its own after"
+    echo "ten idle minutes. To be asked again: Settings → Helper → Forget my password, or log out."
 else
     echo "Installed, but the checks above did not all pass." >&2
 fi

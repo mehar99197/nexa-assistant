@@ -42,7 +42,9 @@ private:
     QWidget *buildVoiceTab();
     QWidget *buildHelperTab();
     void showHelperStatus();
+    void showAuthorizationState();
     void testHelper();
+    void forgetAuthorization();
     QWidget *buildPolicyTab();
     QWidget *buildGeneralTab();
     void populateProviders();
@@ -94,7 +96,9 @@ private:
     QLabel *voiceTestResult_{nullptr};
     QLabel *helperState_{nullptr};
     QLabel *inputState_{nullptr};
+    QLabel *authState_{nullptr};
     QPushButton *helperTestButton_{nullptr};
+    QPushButton *helperForgetButton_{nullptr};
     QComboBox *policyCombo_{nullptr};
     QPlainTextEdit *systemPromptEdit_{nullptr};
 };

@@ -326,17 +326,25 @@ QWidget *SettingsDialog::buildHelperTab() {
     inputState_ = new QLabel(page);
     inputState_->setWordWrap(true);
     inputState_->setTextInteractionFlags(Qt::TextSelectableByMouse);
+    authState_ = new QLabel(page);
+    authState_->setWordWrap(true);
+    authState_->setTextInteractionFlags(Qt::TextSelectableByMouse);
 
     helperTestButton_ = new QPushButton(tr("&Test the helper"), page);
     helperTestButton_->setToolTip(tr("Starts the helper and asks for its version. This needs no password."));
     connect(helperTestButton_, &QPushButton::clicked, this, &SettingsDialog::testHelper);
 
+    helperForgetButton_ = new QPushButton(tr("&Forget my password"), page);
+    helperForgetButton_->setToolTip(tr("Nexa asks for your password again the next time it needs the helper."));
+    connect(helperForgetButton_, &QPushButton::clicked, this, &SettingsDialog::forgetAuthorization);
+
     auto *explanation = new QLabel(
         tr("The helper is a small program that runs as root, started only when it is needed and stopping again "
            "after ten idle minutes. Nexa uses it for two things: running commands as an administrator, and "
            "typing and clicking for you (on Wayland nothing else can reach other windows).\n\n"
-           "Every single call asks polkit first, so you type your own password — once per session, into the "
-           "desktop's own prompt, never into Nexa. Each action is written to the Actions panel, to "
+           "The first of those actions in a login asks polkit, so you type your own password once — into the "
+           "desktop's own prompt, never into Nexa. All that is then remembered, until you log out or press "
+           "Forget, is that you said yes. Every action is written to the Actions panel, to "
            "~/.local/share/nexa/audit.jsonl and to the system journal. The helper cannot read your keyboard or "
            "your screen: it only sends events.\n\n"
            "Install it with:  sudo ./packaging/install-helper.sh\n"
@@ -349,10 +357,16 @@ QWidget *SettingsDialog::buildHelperTab() {
     auto *form = new QFormLayout;
     form->addRow(tr("Root helper:"), helperState_);
     form->addRow(tr("Typing and clicking:"), inputState_);
+    form->addRow(tr("Password:"), authState_);
+
+    auto *buttons = new QHBoxLayout;
+    buttons->addWidget(helperTestButton_);
+    buttons->addWidget(helperForgetButton_);
+    buttons->addStretch();
 
     auto *layout = new QVBoxLayout(page);
     layout->addLayout(form);
-    layout->addWidget(helperTestButton_, 0, Qt::AlignLeft);
+    layout->addLayout(buttons);
     layout->addSpacing(8);
     layout->addWidget(explanation);
     layout->addStretch();
@@ -373,6 +387,31 @@ void SettingsDialog::showHelperStatus() {
     if (status_.inputSummary) lines.append(status_.inputSummary());
     if (status_.inputNotes) lines += status_.inputNotes();
     inputState_->setText(lines.isEmpty() ? tr("unknown") : lines.join(u'\n'));
+    showAuthorizationState();
+}
+
+// Whether the password has already been given for this login. Only asked of a helper that is
+// already running: opening this tab is no reason to start root-privileged code.
+void SettingsDialog::showAuthorizationState() {
+    const bool installed = HelperClient::isInstalled();
+    helperForgetButton_->setEnabled(installed && status_.helper != nullptr);
+    if (!installed) {
+        authState_->setText(tr("—"));
+        return;
+    }
+    if (status_.helper == nullptr || !status_.helper->isReady()) {
+        authState_->setText(tr("Asked for once per login, by the desktop's own prompt."));
+        return;
+    }
+    status_.helper->isAuthorized([this](Result<bool> authorized) {
+        if (!authorized) {
+            authState_->setText(authorized.error().message);
+            return;
+        }
+        authState_->setText(authorized.value()
+                                ? tr("Given for this login — nothing will ask again until you log out.")
+                                : tr("Asked for once, the next time Nexa needs the helper."));
+    });
 }
 
 void SettingsDialog::testHelper() {
@@ -390,6 +429,19 @@ void SettingsDialog::testHelper() {
             helperState_->setStyleSheet(u"color: #e5534b;"_s);
         }
         if (status_.inputSummary) showHelperStatus();
+    });
+}
+
+void SettingsDialog::forgetAuthorization() {
+    if (!status_.helper) return;
+    helperForgetButton_->setEnabled(false);
+    status_.helper->forgetAuthorization([this](Result<void> done) {
+        helperForgetButton_->setEnabled(true);
+        if (!done) {
+            authState_->setText(done.error().message);
+            return;
+        }
+        authState_->setText(tr("Forgotten — the next action asks for your password again."));
     });
 }
 

@@ -1,7 +1,9 @@
 #include "core/Logging.h"
 #include "helper/HelperService.h"
 #include "helper/JobManager.h"
+#include "helper/LoginSessions.h"
 #include "helper/PolkitAuthorizer.h"
+#include "helper/SessionGrants.h"
 #include "helper/UinputDevice.h"
 #include "proto/HelperTypes.h"
 #include "proto/KeyMap.h"
@@ -26,9 +28,10 @@ constexpr int kIdleExitMs = 10 * 60 * 1000;
 
 } // namespace
 
-// nexa-helper: the small root-privileged part of Nexa. It runs on the system bus, authorises every
-// privileged call against polkit, and does two things on request — run a command as root, and send
-// keyboard and pointer events through /dev/uinput. It reads no input and watches nothing.
+// nexa-helper: the small root-privileged part of Nexa. It runs on the system bus, authorises the
+// caller's login against polkit — once per login, not once per caller — and does two things on
+// request: run a command as root, and send keyboard and pointer events through /dev/uinput. It
+// reads no input and watches nothing.
 int main(int argc, char *argv[]) {
     QCoreApplication app(argc, argv);
     QCoreApplication::setApplicationName(u"nexa-helper"_s);
@@ -47,9 +50,11 @@ int main(int argc, char *argv[]) {
     }
 
     PolkitAuthorizer authorizer;
+    LoginSessions sessions(bus);
+    SessionGrants grants;       // reloaded from /run, so an idle exit does not lose the password
     JobManager jobs;
     UinputDevice input;
-    HelperService service(&authorizer, &jobs, &input);
+    HelperService service(&authorizer, &sessions, &grants, &jobs, &input);
     new OrgNexaHelperAdaptor(&service);         // generated from proto/org.nexa.Helper.xml
 
     if (!bus.registerObject(helper::kPath, &service)) {

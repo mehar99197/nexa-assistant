@@ -16,6 +16,9 @@ add_executable(nexa_tests
     OpenAiProviderTest.cc
     OpenAiStreamTest.cc
     PolicyEngineTest.cc
+    # The helper's own authorisation record. Pure enough to test here without any root privilege,
+    # and worth testing: it is what keeps the password prompt from coming back.
+    SessionGrantsTest.cc ../helper/SessionGrants.cc
     SseParserTest.cc
     SystemPureTest.cc
     ToolCallAccumulatorTest.cc

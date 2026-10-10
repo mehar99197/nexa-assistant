@@ -4,14 +4,16 @@
   both sides: the client proxy and the service adaptor are generated from this file, so they cannot
   drift apart.
 
-  Every method below is privileged. The helper authorises each call against polkit, using the
-  caller's unique bus name as the subject — never an identity the caller supplied — and refuses the
-  call if polkit says no. The two actions are declared in packaging/org.nexa.helper.policy:
+  Every method below is privileged, apart from the first four. The helper works out which user is
+  calling by asking the bus — never from an identity the caller supplied — then which graphical
+  login that user has, and refuses the call unless that login is the one at the screen. The first
+  call of a login is authorised against polkit's single action, declared in
+  packaging/org.nexa.helper.policy:
 
-      org.nexa.helper.run-command    RunCommand, CancelJob
-      org.nexa.helper.inject-input   TypeText, PressKeys, Mouse*
+      org.nexa.helper.control    everything below
 
-  Both are auth_admin_keep, so the user is asked for a password once per session.
+  It is auth_admin_keep, and the helper remembers the answer against the login, so the password is
+  asked for once per login however many Nexa processes come and go.
 
   Input is written, never read: there is no method here that reports keystrokes, pointer position
   or window contents. The helper is an output device only.
@@ -26,6 +28,21 @@
     <method name="Version">
       <arg name="version" type="s" direction="out"/>
     </method>
+
+    <!--
+      Whether this login has already been authorised, so Nexa can say whether the next action will
+      ask for a password. Not privileged: it tells the caller only about its own login.
+    -->
+    <method name="IsAuthorized">
+      <arg name="authorized" type="b" direction="out"/>
+    </method>
+
+    <!--
+      Gives up this login's authorisation, so the next action asks for the password again. Not
+      privileged — giving up a privilege needs none — and it only ever affects the caller's own
+      login. Logging out does the same thing.
+    -->
+    <method name="ForgetAuthorization"/>
 
     <!--
       Runs argv as root, in its own process group, and returns a job id at once. Output arrives as

@@ -6,7 +6,10 @@ qt_add_executable(nexa_helper
     main.cc
     HelperService.h HelperService.cc
     JobManager.h JobManager.cc
+    LoginSession.h
+    LoginSessions.h LoginSessions.cc
     PolkitAuthorizer.h PolkitAuthorizer.cc
+    SessionGrants.h SessionGrants.cc
     UinputDevice.h UinputDevice.cc
 )
 set_target_properties(nexa_helper PROPERTIES OUTPUT_NAME nexa-helper)

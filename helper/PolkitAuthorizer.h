@@ -11,14 +11,15 @@ namespace nexa {
 // Asks polkit whether a caller may perform an action, before the helper does anything privileged.
 //
 // Who the caller is comes from the bus, never from the message body: the helper hands over the
-// caller's unique D-Bus name and the bus resolves it to a process id, so a program cannot claim to
-// be another one. That process id is then turned into the **login session** it belongs to, and the
-// session is what polkit is asked about.
+// caller's unique D-Bus name and the bus resolves it to the process behind it, so a program cannot
+// claim to be another one.
 //
-// Both Nexa actions are auth_admin_keep, so polkit asks for a password once and then remembers it
-// for the rest of the login session — the bus name is enough for that, because polkit resolves it
-// to a session itself. Asking about the session directly instead crashes polkitd 127, and a crash
-// loses everything it was remembering.
+// What polkit remembers, and what it does not. The action is auth_admin_keep, so polkit asks for a
+// password once and then remembers the answer — but against the *process* that asked, which for
+// Nexa is the wrong lifetime: every new Nexa process is a stranger to it and gets a fresh prompt.
+// Asking polkit about the login session instead would have the right lifetime, but polkitd 127
+// aborts when asked that, and a crash loses everything it was remembering. So the answer is kept
+// by the helper instead (see SessionGrants) and polkit is asked once per login.
 //
 // The password is typed into the desktop's own authentication agent, never into Nexa, so it never
 // passes through this code.
@@ -33,6 +34,10 @@ public:
     explicit PolkitAuthorizer(QObject *parent = nullptr);
 
     void check(const QString &actionId, const QString &callerBusName, Answer answer);
+
+    // Drops whatever polkit is still remembering for this caller, so giving up an authorisation
+    // means it on both sides.
+    void revoke(const QString &callerBusName);
 
 private:
     struct Request {

@@ -28,6 +28,7 @@ class HelperClient : public QObject {
 public:
     using Done = std::function<void(Result<void>)>;
     using TextDone = std::function<void(Result<QString>)>;
+    using FlagDone = std::function<void(Result<bool>)>;
     using JobOutput = std::function<void(quint8 stream, const QByteArray &data)>;
     using JobFinished = std::function<void(int exitCode, const QString &status)>;
 
@@ -42,6 +43,13 @@ public:
 
     // Starts the helper if needed and reports its version, or why it could not be reached.
     void probe(TextDone done);
+
+    // Whether this login has already given the helper its password, so the GUI can say whether the
+    // next action will ask for one. Asking does not prompt for anything.
+    void isAuthorized(FlagDone done);
+    // Gives up this login's authorisation: the next action asks for the password again. Logging out
+    // does the same.
+    void forgetAuthorization(Done done);
     // What probe() last found: empty while it has not run or the helper is fine.
     QString unavailableReason() const { return unavailable_; }
     bool isReady() const { return ready_; }
@@ -71,9 +79,10 @@ private:
         JobFinished finished;
     };
 
-    // The three reply shapes the contract uses: nothing, a string, and RunCommand's job id.
+    // The reply shapes the contract uses: nothing, a string, a flag, and RunCommand's job id.
     void awaitVoid(const QDBusPendingCall &call, Done done);
     void awaitString(const QDBusPendingCall &call, TextDone done);
+    void awaitFlag(const QDBusPendingCall &call, FlagDone done);
     void noteOutcome(bool failed, const Error &error);
 
     void onOutputChunk(qulonglong jobId, uchar stream, const QByteArray &data);

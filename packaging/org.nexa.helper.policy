@@ -6,34 +6,32 @@
   What Nexa's root helper is allowed to do, and on whose authority. Installed to
   /usr/share/polkit-1/actions/org.nexa.helper.policy.
 
-  Both actions are auth_admin_keep: the user must prove they are an administrator by typing their
-  own password, and polkit then remembers that for the rest of the session. The prompt comes from
-  the desktop's own authentication agent, so no password is ever seen by Nexa.
+  One action, not one per method. Running a command as root and typing into any window are the same
+  power in practice — anything that can type can open a terminal — so splitting them only meant
+  being asked for the same password twice.
+
+  auth_admin_keep: the user must prove they are an administrator by typing their own password, and
+  the answer is then remembered for the rest of the login. The prompt comes from the desktop's own
+  authentication agent, so no password is ever seen by Nexa. The helper is what remembers the
+  answer, not polkit, because polkit remembers it against the asking *process* and Nexa is many
+  short-lived processes over a day — see helper/SessionGrants.h.
 
   allow_any and allow_inactive are "no", so a remote or background session cannot even ask — only
-  the person sitting at the active seat can authorise anything.
+  the person sitting at the active seat can authorise anything. The helper checks the same thing
+  itself on every call, including the ones that do not reach polkit because the login has already
+  been authorised.
 
   To see the installed policy, run pkaction with the action id and the verbose flag.
-  To revoke a cached session authorisation: log out, or restart the polkit service.
+  To revoke it: Settings → Helper → Forget authorisation in Nexa, or simply log out.
 -->
 <policyconfig>
 
   <vendor>Nexa</vendor>
   <vendor_url>https://github.com/mehar99197/nexa-assistant</vendor_url>
 
-  <action id="org.nexa.helper.run-command">
-    <description>Run a command as an administrator</description>
-    <message>Nexa needs your password to run a command as an administrator.</message>
-    <defaults>
-      <allow_any>no</allow_any>
-      <allow_inactive>no</allow_inactive>
-      <allow_active>auth_admin_keep</allow_active>
-    </defaults>
-  </action>
-
-  <action id="org.nexa.helper.inject-input">
-    <description>Use the keyboard and mouse</description>
-    <message>Nexa needs your password to type and click for you.</message>
+  <action id="org.nexa.helper.control">
+    <description>Act as an administrator on this computer</description>
+    <message>Nexa needs your password to run commands as an administrator and to type and click for you.</message>
     <defaults>
       <allow_any>no</allow_any>
       <allow_inactive>no</allow_inactive>

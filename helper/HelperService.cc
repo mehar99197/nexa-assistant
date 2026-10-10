@@ -2,12 +2,15 @@
 
 #include "core/Logging.h"
 #include "helper/JobManager.h"
+#include "helper/LoginSessions.h"
 #include "helper/PolkitAuthorizer.h"
+#include "helper/SessionGrants.h"
 #include "helper/UinputDevice.h"
 #include "proto/HelperTypes.h"
 #include "proto/KeyMap.h"
 
-#include <QDBusConnection>
+#include <QDBusConnectionInterface>
+#include <QDBusReply>
 
 #include <linux/input-event-codes.h>
 
@@ -42,35 +45,83 @@ Result<int> buttonCode(uint button) {
     }
 }
 
+// One login, named so calls can queue behind the prompt that is already on screen.
+QString loginKey(const LoginSession &session) {
+    return u"%1:%2"_s.arg(session.uid).arg(session.id);
+}
+
+void sendResult(const QDBusConnection &bus, const QDBusMessage &request, const Result<QVariantList> &result) {
+    if (!result) {
+        qCWarning(lcApp).noquote() << "failed:" << result.error().message;
+        bus.send(request.createErrorReply(errorNameFor(result.error().code), result.error().message));
+        return;
+    }
+    bus.send(request.createReply(result.value()));
+}
+
 } // namespace
 
-HelperService::HelperService(PolkitAuthorizer *authorizer, JobManager *jobs, UinputDevice *input, QObject *parent)
-    : QObject(parent), authorizer_(authorizer), jobs_(jobs), input_(input) {
+HelperService::HelperService(PolkitAuthorizer *authorizer, LoginSessions *sessions, SessionGrants *grants,
+                             JobManager *jobs, UinputDevice *input, QObject *parent)
+    : QObject(parent), authorizer_(authorizer), sessions_(sessions), grants_(grants), jobs_(jobs), input_(input) {
     connect(jobs_, &JobManager::outputChunk, this, &HelperService::OutputChunk);
     connect(jobs_, &JobManager::finished, this, &HelperService::Finished);
 }
 
-void HelperService::whenAllowed(QLatin1StringView action, std::function<Result<QVariantList>()> work) {
+LoginSession HelperService::callerSession() const {
+    QDBusConnectionInterface *daemon = connection().interface();
+    if (daemon == nullptr) return {};
+    // The bus learned the caller's user id from the kernel when it connected. Nothing in the
+    // message can change it, which is what makes this safe to authorise against.
+    const QDBusReply<uint> uid = daemon->serviceUid(message().service());
+    if (!uid.isValid()) return {};
+    return sessions_->displaySessionOf(uid.value());
+}
+
+void HelperService::whenAllowed(std::function<Result<QVariantList>()> work) {
     emit called();
     const QDBusMessage request = message();
     const QDBusConnection bus = connection();
-    // The subject is the caller's unique bus name as the bus reports it, not anything the caller
-    // put in the message.
     const QString caller = request.service();
     setDelayedReply(true);
 
-    authorizer_->check(action, caller, [this, request, bus, work](bool allowed, const QString &reason) mutable {
-        if (!allowed) {
-            bus.send(request.createErrorReply(helper::kErrorDenied, reason));
-            return;
+    const LoginSession session = callerSession();
+    if (!session.isValid()) {
+        bus.send(request.createErrorReply(
+            helper::kErrorDenied,
+            tr("No graphical login was found for the caller, so there is nothing to authorise against.")));
+        return;
+    }
+    if (!session.isAtTheScreen()) {
+        bus.send(request.createErrorReply(
+            helper::kErrorDenied, tr("Only the login session at this computer's own screen may do this.")));
+        return;
+    }
+
+    if (grants_->has(session)) {
+        qCDebug(lcApp).noquote() << "login session" << session.id << "is already authorised";
+        sendResult(bus, request, work());
+        return;
+    }
+
+    // One prompt, however many calls arrive while it is on screen. Without this, a handful of
+    // quick actions in a row would each put up their own password prompt.
+    const QString key = loginKey(session);
+    const bool promptIsUp = waiting_.contains(key);
+    waiting_[key].push_back(Pending{request, bus, std::move(work)});
+    if (promptIsUp) return;
+
+    authorizer_->check(helper::kActionControl, caller, [this, session, key](bool allowed, const QString &reason) {
+        // Remembered against the login, so the next Nexa process is not a stranger to it.
+        if (allowed) grants_->add(session);
+        const std::vector<Pending> pending = waiting_.take(key);
+        for (const Pending &call : pending) {
+            if (!allowed) {
+                call.bus.send(call.request.createErrorReply(helper::kErrorDenied, reason));
+                continue;
+            }
+            sendResult(call.bus, call.request, call.work());
         }
-        const Result<QVariantList> result = work();
-        if (!result) {
-            qCWarning(lcApp).noquote() << "failed:" << result.error().message;
-            bus.send(request.createErrorReply(errorNameFor(result.error().code), result.error().message));
-            return;
-        }
-        bus.send(request.createReply(result.value()));
     });
 }
 
@@ -83,9 +134,32 @@ QString HelperService::Version() {
     return QString::fromLatin1(NEXA_VERSION);
 }
 
+bool HelperService::IsAuthorized() {
+    emit called();
+    // Not privileged: it says only whether this login has already answered the prompt, which is
+    // what the caller would find out by making a call anyway.
+    const LoginSession session = callerSession();
+    return session.isAtTheScreen() && grants_->has(session);
+}
+
+void HelperService::ForgetAuthorization() {
+    emit called();
+    // Giving up an authorisation needs no authorisation — and it has to work even from a session
+    // that is no longer the one on the screen, so only the login itself has to make sense here.
+    const LoginSession session = callerSession();
+    if (!session.isValid()) return;
+    const bool dropped = grants_->forget(session);
+    // polkit may still be holding its own short-lived grant for this caller; without clearing that
+    // too, "forget" would look as though it had not worked.
+    authorizer_->revoke(message().service());
+    if (dropped) {
+        qCInfo(lcApp).noquote() << "authorisation for login session" << session.id << "given up on request";
+    }
+}
+
 qulonglong HelperService::RunCommand(const QStringList &argv, const QString &cwd, const QStringList &env,
                                      int timeoutMs) {
-    whenAllowed(helper::kActionRunCommand, [this, argv, cwd, env, timeoutMs]() -> Result<QVariantList> {
+    whenAllowed([this, argv, cwd, env, timeoutMs]() -> Result<QVariantList> {
         const Result<quint64> job = jobs_->start(argv, cwd, env, timeoutMs);
         if (!job) return job.error();
         return QVariantList{QVariant::fromValue(qulonglong(job.value()))};
@@ -94,7 +168,7 @@ qulonglong HelperService::RunCommand(const QStringList &argv, const QString &cwd
 }
 
 void HelperService::CancelJob(qulonglong jobId) {
-    whenAllowed(helper::kActionRunCommand, [this, jobId]() -> Result<QVariantList> {
+    whenAllowed([this, jobId]() -> Result<QVariantList> {
         const Result<void> cancelled = jobs_->cancel(jobId);
         if (!cancelled) {
             // A job that is already gone deserves its own name, not a generic failure.
@@ -107,7 +181,7 @@ void HelperService::CancelJob(qulonglong jobId) {
 }
 
 QString HelperService::TypeText(const QString &utf8) {
-    whenAllowed(helper::kActionInjectInput, [this, utf8]() -> Result<QVariantList> {
+    whenAllowed([this, utf8]() -> Result<QVariantList> {
         if (utf8.isEmpty()) return Error{ErrorCode::InvalidArgument, u"There is no text to type."_s};
         const TypePlan plan = keymap::forText(utf8);
         if (plan.strokes.isEmpty()) {
@@ -121,7 +195,7 @@ QString HelperService::TypeText(const QString &utf8) {
 }
 
 void HelperService::PressKeys(const QList<uint> &keycodes) {
-    whenAllowed(helper::kActionInjectInput, [this, keycodes]() -> Result<QVariantList> {
+    whenAllowed([this, keycodes]() -> Result<QVariantList> {
         if (keycodes.isEmpty()) return Error{ErrorCode::InvalidArgument, u"No keys were given."_s};
         if (keycodes.size() > 8) return Error{ErrorCode::InvalidArgument, u"That is too many keys at once."_s};
         QList<int> codes;
@@ -137,14 +211,14 @@ void HelperService::PressKeys(const QList<uint> &keycodes) {
 }
 
 void HelperService::MouseMove(int dx, int dy) {
-    whenAllowed(helper::kActionInjectInput, [this, dx, dy]() -> Result<QVariantList> {
+    whenAllowed([this, dx, dy]() -> Result<QVariantList> {
         if (const Result<void> moved = input_->moveBy(dx, dy); !moved) return moved.error();
         return QVariantList{};
     });
 }
 
 void HelperService::MouseMoveAbs(int x, int y, int screenW, int screenH) {
-    whenAllowed(helper::kActionInjectInput, [this, x, y, screenW, screenH]() -> Result<QVariantList> {
+    whenAllowed([this, x, y, screenW, screenH]() -> Result<QVariantList> {
         if (screenW < 2 || screenH < 2) {
             return Error{ErrorCode::InvalidArgument,
                          u"The screen size %1x%2 cannot be right."_s.arg(screenW).arg(screenH)};
@@ -155,7 +229,7 @@ void HelperService::MouseMoveAbs(int x, int y, int screenW, int screenH) {
 }
 
 void HelperService::MouseButton(uint button, bool down) {
-    whenAllowed(helper::kActionInjectInput, [this, button, down]() -> Result<QVariantList> {
+    whenAllowed([this, button, down]() -> Result<QVariantList> {
         const Result<int> code = buttonCode(button);
         if (!code) return code.error();
         if (const Result<void> clicked = input_->button(code.value(), down); !clicked) return clicked.error();
@@ -164,7 +238,7 @@ void HelperService::MouseButton(uint button, bool down) {
 }
 
 void HelperService::MouseScroll(int dx, int dy) {
-    whenAllowed(helper::kActionInjectInput, [this, dx, dy]() -> Result<QVariantList> {
+    whenAllowed([this, dx, dy]() -> Result<QVariantList> {
         if (const Result<void> scrolled = input_->scroll(dx, dy); !scrolled) return scrolled.error();
         return QVariantList{};
     });

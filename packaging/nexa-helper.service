@@ -17,6 +17,11 @@ Restart=no
 MemoryDenyWriteExecute=yes
 RestrictRealtime=yes
 
+# Deliberately no RuntimeDirectory=nexa-helper, tempting as it looks: systemd would delete the
+# directory every time the helper idles out, and with it the record that this login has already
+# given its password — so the prompt would come back every ten minutes. The helper creates
+# /run/nexa-helper itself, 0700 and root-owned, and /run is cleared at boot anyway.
+
 # Its log is the record of what was allowed and what ran:  journalctl -u nexa-helper
 StandardOutput=journal
 StandardError=journal
