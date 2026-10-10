@@ -43,6 +43,63 @@ AndroidDevice::Done say(ITool::Done done) {
     };
 }
 
+constexpr int kBlindVolumeSteps = 15;   // a phone's usual number of volume steps, when it will not say
+
+// Where a phone reports its media volume, in the order tried: the `media` command (on every
+// Android), `cmd media_session` (Android 8 and later, silent on some phones) and the audio
+// service's dump, which always knows but can only be changed with the volume keys.
+struct VolumeSource {
+    QString get;
+    QString set;        // %1 = the index to set; empty: only the keys can
+};
+
+const QList<VolumeSource> &volumeSources() {
+    static const QList<VolumeSource> sources{
+        {u"media volume --stream %1 --get"_s.arg(kMediaStream),
+         u"media volume --show --stream %1 --set %2"_s.arg(kMediaStream)},
+        {u"cmd media_session volume --stream %1 --get"_s.arg(kMediaStream),
+         u"cmd media_session volume --show --stream %1 --set %2"_s.arg(kMediaStream)},
+        {u"dumpsys audio"_s, {}},
+    };
+    return sources;
+}
+
+struct MediaVolume {
+    StreamVolume volume;
+    QString set;
+};
+
+// Asks each source in turn until one answers.
+void readMediaVolume(AndroidDevice *device, qsizetype attempt, std::function<void(Result<MediaVolume>)> done) {
+    const QList<VolumeSource> &sources = volumeSources();
+    if (attempt >= sources.size()) {
+        done(Error{ErrorCode::NotSupported, u"This phone does not report its volume."_s});
+        return;
+    }
+    device->shell(sources[attempt].get, kDumpTimeoutMs,
+                  [device, attempt, done = std::move(done)](Result<AdbClient::Output> output) mutable {
+                      if (!output) {
+                          done(output.error());
+                          return;
+                      }
+                      const VolumeSource &source = volumeSources()[attempt];
+                      const QString printed = output.value().text();
+                      const std::optional<StreamVolume> volume =
+                          source.set.isEmpty() ? adb::parseDumpsysVolume(printed, u"STREAM_MUSIC"_s) : adb::parseVolume(printed);
+                      if (volume) {
+                          done(MediaVolume{*volume, source.set});
+                          return;
+                      }
+                      readMediaVolume(device, attempt + 1, std::move(done));
+                  });
+}
+
+QString volumeKeys(int steps) {
+    QStringList keys;
+    for (int i = 0; i < std::abs(steps); ++i) keys.append(steps > 0 ? u"KEYCODE_VOLUME_UP"_s : u"KEYCODE_VOLUME_DOWN"_s);
+    return u"input keyevent "_s + keys.join(u' ');
+}
+
 // Coordinates are read off the last phone screenshot by default, because that is what the model
 // can see; "screen" takes them as the phone's own pixels.
 struct PhonePoint {
@@ -303,37 +360,39 @@ void addControlTools(ToolRegistry &registry, AndroidDevice *device, const std::f
                 done(Error{ErrorCode::InvalidArgument, u"Give either \"level\" or \"change\""_s});
                 return;
             }
-            const QString get = u"cmd media_session volume --stream %1 --get"_s.arg(kMediaStream);
-            device->shell(get, kDumpTimeoutMs, [device, level, change, done](Result<AdbClient::Output> output) {
-                if (!output) {
-                    done(output.error());
-                    return;
-                }
-                const std::optional<StreamVolume> volume = adb::parseVolume(output.value().text());
-                if (!volume) {
-                    // Not every Android version has `cmd media_session`; the volume keys always work.
+            readMediaVolume(device, 0, [device, level, change, done](Result<MediaVolume> read) {
+                if (!read) {
+                    // Nothing on this phone says where the volume is. The keys still move it, blind.
                     if (!change) {
                         done(Error{ErrorCode::NotSupported,
                                    u"This phone does not report its volume, so it can only be changed by steps."_s});
                         return;
                     }
-                    const int steps = std::max(1, int(std::lround(std::abs(*change) / 100.0 * 15)));
-                    QStringList keys;
-                    for (int i = 0; i < steps; ++i) keys.append(*change > 0 ? u"KEYCODE_VOLUME_UP"_s : u"KEYCODE_VOLUME_DOWN"_s);
-                    device->act(u"input keyevent "_s + keys.join(u' '),
+                    const int steps = std::max(1, int(std::lround(std::abs(*change) / 100.0 * kBlindVolumeSteps)));
+                    device->act(volumeKeys(*change > 0 ? steps : -steps),
                                 u"Pressed volume %1 %2 times on the phone."_s.arg(*change > 0 ? u"up"_s : u"down"_s).arg(steps),
                                 say(done));
                     return;
                 }
-                const int range = volume->maximum - volume->minimum;
+                const StreamVolume &volume = read.value().volume;
+                const int range = volume.maximum - volume.minimum;
                 const int target = std::clamp(
-                    level ? volume->minimum + int(std::lround(*level / 100.0 * range))
-                          : volume->current + int(std::lround(*change / 100.0 * range)),
-                    volume->minimum, volume->maximum);
-                const int percent = int(std::lround(100.0 * (target - volume->minimum) / range));
-                device->act(u"cmd media_session volume --show --stream %1 --set %2"_s.arg(kMediaStream).arg(target),
-                            u"Phone media volume set to %1% (%2 of %3)."_s.arg(percent).arg(target).arg(volume->maximum),
-                            say(done));
+                    level ? volume.minimum + int(std::lround(*level / 100.0 * range))
+                          : volume.current + int(std::lround(*change / 100.0 * range)),
+                    volume.minimum, volume.maximum);
+                const int percent = int(std::lround(100.0 * (target - volume.minimum) / range));
+                const QString sentence =
+                    u"Phone media volume set to %1% (%2 of %3)."_s.arg(percent).arg(target).arg(volume.maximum);
+                if (!read.value().set.isEmpty()) {
+                    device->act(read.value().set.arg(target), sentence, say(done));
+                    return;
+                }
+                // Only the dump knows it: walk there with the keys.
+                if (target == volume.current) {
+                    done(text(u"The phone's media volume is already at %1%."_s.arg(percent)));
+                    return;
+                }
+                device->act(volumeKeys(target - volume.current), sentence, say(done));
             });
         },
         cancel));

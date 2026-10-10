@@ -68,8 +68,11 @@ QList<QStringList> parseContentRows(const QString &output, const QStringList &co
 QStringList parseLauncherComponents(const QString &output);
 // `pm list packages`: package names.
 QStringList parsePackages(const QString &output);
-// `cmd media_session volume --get`: "volume is 7 in range [0..15]".
+// `media volume --get` and `cmd media_session volume --get`: "volume is 7 in range [0..15]".
 std::optional<StreamVolume> parseVolume(const QString &output);
+// `dumpsys audio`: the block of one stream ("STREAM_MUSIC"), which every Android prints. The current
+// value is the `streamVolume:` line where there is one, else the entry for the device in use.
+std::optional<StreamVolume> parseDumpsysVolume(const QString &output, const QString &stream);
 // `dumpsys battery`: the "level:" line.
 std::optional<int> parseBatteryLevel(const QString &output);
 // Lines of the form key=value; the first occurrence of a key wins.

@@ -253,6 +253,52 @@ std::optional<StreamVolume> parseVolume(const QString &output) {
     return parsed;
 }
 
+// - STREAM_MUSIC:
+//    Muted: false
+//    Min: 0
+//    Max: 30
+//    streamVolume:30                                   <- Android 11 and later
+//    Current: 2 (speaker): 30, 4 (headset): 29, 40000000 (default): 15
+//    Devices: speaker
+std::optional<StreamVolume> parseDumpsysVolume(const QString &output, const QString &stream) {
+    // The block runs from the stream's heading to the next line that starts at column 0.
+    const QRegularExpression heading(u"^- %1:[ \\t]*$"_s.arg(QRegularExpression::escape(stream)),
+                                     QRegularExpression::MultilineOption);
+    const QRegularExpressionMatch start = heading.match(output);
+    if (!start.hasMatch()) return std::nullopt;
+    static const QRegularExpression nextBlock(u"^\\S"_s, QRegularExpression::MultilineOption);
+    const qsizetype from = start.capturedEnd();
+    const qsizetype to = output.indexOf(nextBlock, from);
+    const QString block = output.mid(from, to < 0 ? -1 : to - from);
+
+    static const QRegularExpression line(u"^\\s*(Min|Max|streamVolume):\\s*(\\d+)\\s*$"_s, QRegularExpression::MultilineOption);
+    StreamVolume parsed;
+    std::optional<int> current;
+    for (QRegularExpressionMatchIterator it = line.globalMatch(block); it.hasNext();) {
+        const QRegularExpressionMatch m = it.next();
+        const int value = m.captured(2).toInt();
+        if (m.captured(1) == u"Min"_s) parsed.minimum = value;
+        else if (m.captured(1) == u"Max"_s) parsed.maximum = value;
+        else current = value;
+    }
+    if (!current) {
+        // Older phones: the value for the device the stream plays on, else the default one.
+        static const QRegularExpression devices(u"^\\s*Devices:\\s*([A-Za-z0-9_]+)"_s, QRegularExpression::MultilineOption);
+        static const QRegularExpression entry(u"\\(([A-Za-z0-9_]+)\\):\\s*(\\d+)"_s);
+        const QString device = devices.match(block).captured(1);
+        std::optional<int> fallback;
+        for (QRegularExpressionMatchIterator it = entry.globalMatch(block); it.hasNext();) {
+            const QRegularExpressionMatch m = it.next();
+            if (m.captured(1) == device) current = m.captured(2).toInt();
+            else if (m.captured(1) == u"default"_s || !fallback) fallback = m.captured(2).toInt();
+        }
+        if (!current) current = fallback;
+    }
+    if (!current || parsed.maximum <= parsed.minimum) return std::nullopt;
+    parsed.current = std::clamp(*current, parsed.minimum, parsed.maximum);
+    return parsed;
+}
+
 std::optional<int> parseBatteryLevel(const QString &output) {
     static const QRegularExpression level(u"^\\s*level:\\s*(\\d+)\\s*$"_s, QRegularExpression::MultilineOption);
     const QRegularExpressionMatch m = level.match(output);

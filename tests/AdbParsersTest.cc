@@ -176,6 +176,40 @@ TEST_CASE("Volume, battery and properties") {
     CHECK_FALSE(adb::parseVolume(u"Unknown command: volume"_s));
     CHECK_FALSE(adb::parseVolume(u"volume is 3 in range [5..5]"_s));      // no range at all
 
+    // `dumpsys audio`, Android 11: the streamVolume line counts.
+    const QString dump = u"Audio routes:\n  mMainType=0x0\n- STREAM_RING:\n   Muted: false\n   Min: 0\n   Max: 7\n"
+                         "   Current: 2 (speaker): 5, 40000000 (default): 5\n   Devices: speaker\n"
+                         "- STREAM_MUSIC:\n   Muted: false\n   Muted Internally: false\n   Min: 0\n   Max: 30\n"
+                         "   streamVolume:30\n"
+                         "   Current: 1 (earpiece): 30, 2 (speaker): 30, 4 (headset): 29, 80 (bt_a2dp): 13, 40000000 (default): 15\n"
+                         "   Devices: speaker\n- STREAM_ALARM:\n   Min: 0\n   Max: 7\n   streamVolume:6\n"_s;
+    const std::optional<StreamVolume> music = adb::parseDumpsysVolume(dump, u"STREAM_MUSIC"_s);
+    REQUIRE(music);
+    CHECK(music->current == 30);
+    CHECK(music->minimum == 0);
+    CHECK(music->maximum == 30);
+    const std::optional<StreamVolume> alarm = adb::parseDumpsysVolume(dump, u"STREAM_ALARM"_s);     // the last block
+    REQUIRE(alarm);
+    CHECK(alarm->current == 6);
+    CHECK(alarm->maximum == 7);
+    CHECK_FALSE(adb::parseDumpsysVolume(dump, u"STREAM_VOICE_CALL"_s));
+    // Android 8: no streamVolume line, so the device in use decides — and the default one without it.
+    const QString older = u"- STREAM_MUSIC:\n   Muted: false\n   Min: 0\n   Max: 15\n"
+                          "   Current: 2 (speaker): 15, 4 (headset): 11, 40000000 (default): 13\n   Devices: headset\n"_s;
+    const std::optional<StreamVolume> headset = adb::parseDumpsysVolume(older, u"STREAM_MUSIC"_s);
+    REQUIRE(headset);
+    CHECK(headset->current == 11);
+    CHECK(headset->maximum == 15);
+    const std::optional<StreamVolume> ring = adb::parseDumpsysVolume(dump, u"STREAM_RING"_s);
+    REQUIRE(ring);
+    CHECK(ring->current == 5);
+    const std::optional<StreamVolume> unknownDevice =
+        adb::parseDumpsysVolume(u"- STREAM_MUSIC:\n   Max: 15\n   Current: 2 (speaker): 9, 40000000 (default): 13\n   Devices: usb\n"_s,
+                                u"STREAM_MUSIC"_s);
+    REQUIRE(unknownDevice);
+    CHECK(unknownDevice->current == 13);
+    CHECK_FALSE(adb::parseDumpsysVolume(u"- STREAM_MUSIC:\n   Muted: false\n   Current: 2 (speaker): 9\n"_s, u"STREAM_MUSIC"_s));   // no range
+
     CHECK(adb::parseBatteryLevel(u"Current Battery Service state:\n  AC powered: false\n  level: 85\n  scale: 100\n"_s) == 85);
     CHECK_FALSE(adb::parseBatteryLevel(u"  scale: 100\n"_s));
 

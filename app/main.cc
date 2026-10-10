@@ -381,17 +381,24 @@ int main(int argc, char *argv[]) {
     };
     queue(parser.values(sayOption), parser.values(voiceFileOption), parser.values(askOption), 800);
 
-    // A later start: bring the window forward and take over its requests.
+    // A later start: take over its requests. Without any, it means "show me Nexa" and the window
+    // comes forward; with some, it is a script or a shortcut at work, and the window only comes
+    // out of hiding — it must not take the focus from what the user is doing.
     QObject::connect(&instance, &SingleInstance::messageReceived, &window, [&](const QJsonObject &message) {
-        window.show();
-        window.raise();
-        window.activateWindow();
         const auto strings = [&message](const QString &key) {
             QStringList values;
             for (const QJsonValue &value : message.value(key).toArray()) values.append(value.toString());
             return values;
         };
-        queue(strings(u"say"_s), strings(u"voiceFile"_s), strings(u"ask"_s), 250);
+        const QStringList say = strings(u"say"_s), voiceFiles = strings(u"voiceFile"_s), asks = strings(u"ask"_s);
+        if (say.isEmpty() && voiceFiles.isEmpty() && asks.isEmpty()) {
+            window.show();
+            window.raise();
+            window.activateWindow();
+            return;
+        }
+        if (!window.isVisible()) window.show();
+        queue(say, voiceFiles, asks, 250);
     });
     return app.exec();
 }
