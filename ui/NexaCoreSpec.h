@@ -36,6 +36,17 @@ QString coreStyleKey(CoreStyle style);              // "aurora"
 QString coreStyleBlurb(CoreStyle style);            // one line for the theme gallery
 std::optional<CoreStyle> coreStyleFromKey(QStringView key);
 
+// What the core is drawn as — every design picks one. The same frames (breath, ring angle,
+// ticks, satellites, sonar, comet, packets) are read by each shape in its own geometry.
+enum class CoreShape { Ring, Orb, Hex, Bars, Iris, Crystal, Arc, Dot };
+inline constexpr int kCoreShapeCount = 8;
+inline constexpr std::array<CoreShape, kCoreShapeCount> kCoreShapes{
+    CoreShape::Ring, CoreShape::Orb,     CoreShape::Hex, CoreShape::Bars,
+    CoreShape::Iris, CoreShape::Crystal, CoreShape::Arc, CoreShape::Dot};
+QString coreShapeName(CoreShape shape);             // "Crystal"
+QString coreShapeKey(CoreShape shape);              // "crystal"
+std::optional<CoreShape> coreShapeFromKey(QStringView key);
+
 QString coreModeName(CoreMode mode);                // "Fast path": shown beside the core, never colour alone
 QString coreModeKey(CoreMode mode);                 // "fast": the colour token (--nx-fast) and the wire name
 std::optional<CoreMode> coreModeFromKey(QStringView key);

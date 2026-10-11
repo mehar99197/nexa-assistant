@@ -28,7 +28,8 @@ run it with `QT_QPA_PLATFORM=offscreen` to keep it off the user's screen. `--say
 request; the three run in that order, one at a time. **To check the look**, add `--screenshot <file.png>`: once the
 requests are done and Nexa is idle, it saves a picture of the window and quits — it works offscreen, so
 `QT_QPA_PLATFORM=offscreen ./build/app/nexa-assistant --new-instance --theme light --ask "run uname -sr" --screenshot /tmp/nexa.png`
-shows the light scheme with a fast-path reply without touching the screen (`--theme` is for that run only);
+shows the light scheme with a fast-path reply without touching the screen (`--theme <palette>` and `--design <design>`
+are for that run only and never reach the settings; `--design console` shows the terminal design in its own palette);
 `--screenshot-settings <dir>` saves every Settings tab the same way. The phone app's screens come out of
 `NEXA_TEST_SCREENSHOTS=<dir> ./build/tests/nexa_tests "The phone app pairs*"`, and the web remote's page can be looked
 at in any browser without a phone through `scripts/preview-web-remote.py` (a stand-in server that plays a
@@ -94,11 +95,20 @@ models over its slow `auto/*` combos).
   `NexaThemes` (the catalogue: 26 colour families × dark/light = 52 theme packs generated around a hue with the
   design's own shape of palette and contrast guaranteed, each family wearing one of eight motion styles —
   `CoreStyle`: Classic, Orbit, Pulse, Aurora, Comet, Nebula, Storm, Minimal — which `coreFrame` applies and the sheet
-  hands the core as `qproperty-coreStyle`; `config.ui.theme` is `system`, `dark`, `light` or a pack id) and
-  `NexaIcons` (line icons painted in the theme's colour).
+  hands the core as `qproperty-coreStyle`; `config.ui.theme` is `system`, `dark`, `light` or a pack id),
+  `NexaDesigns` (the **designs** — a palette is colours, a design is the shape of everything else: a
+  `WindowLayout` (Studio, Focus, Console, Sidebar, Orb, Dashboard, Bottom), a `CoreShape` (Ring, Orb, Hex, Bars,
+  Iris, Crystal, Arc, Dot — each a `Shape` strategy in `NexaCorePainter` reading the same frames in its own
+  geometry), a motion style, the corners, the type face and size, and the transcript's `BubbleStyle`; eight of them
+  (studio, focus, console, sidebar, orb, dashboard, gauge, paper), each drawn in a palette of its own;
+  `config.ui.design`; the sheet takes `@radius@`, `@radiusSmall@`, `@font@`, `@fontSize@`, `@chatFont@`,
+  `@coreShape@`, `@bubbleStyle@`) and `NexaIcons` (line icons painted in the theme's colour).
 - `app/` — Qt Widgets GUI (MainWindow: toolbar pills, the core with the state's name beside it, ChatView with
   bubbles and "NEXA fast path · 2 ms" headers, ActionLogDock as cards, MicButton = the core as the Talk button,
-  a monospace status bar, the sun/moon theme toggle; SettingsDialog, TrayIcon) and the AppController mediator,
+  a monospace status bar, the sun/moon theme toggle; its pieces are built once and `applyDesign()` /
+  `rebuildCentral()` arrange them for the design on — header beside or above the chat, a centred column, the
+  Actions panel on a side or the bottom or hidden, tiles; SettingsDialog with the design and palette galleries,
+  TrayIcon) and the AppController mediator,
   which also resolves the core's state from the voice pipeline, running tools, the fast path, the agent and a
   provider out of reach (`coreModeChanged`, `litNodesChanged`); SingleInstance (one copy per user), RemoteBridge
   (the web remote's view of the app); `main.cc` is the composition root and applies the theme first.

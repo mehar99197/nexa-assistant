@@ -11,6 +11,7 @@
 #include "core/mcp/McpConnectors.h"
 #include "system/helper/HelperClient.h"
 #include "ui/NexaCoreWidget.h"
+#include "ui/NexaDesigns.h"
 #include "ui/NexaThemes.h"
 #include "voice/VoiceBackends.h"
 #include "voice/tts/ITextToSpeech.h"
@@ -126,6 +127,7 @@ void SettingsDialog::accept() {
     config_.systemPrompt = systemPromptEdit_->toPlainText().trimmed();
     config_.policyMode = policyCombo_->currentData().toString();
     if (const QListWidgetItem *theme = themeGallery_->currentItem()) config_.ui.theme = theme->data(Qt::UserRole).toString();
+    if (const QListWidgetItem *design = designGallery_->currentItem()) config_.ui.design = design->data(Qt::UserRole).toString();
     storeConnector();
     storeVoice();
     config_.android.autoReconnect = phoneReconnect_->isChecked();
@@ -1032,8 +1034,33 @@ QWidget *SettingsDialog::buildGeneralTab() {
     themeGallery_->setToolTip(tr("Every theme is the same design in other colours; its motion style is named under it."));
     fillThemeGallery();
 
+    // The designs: each a different arrangement, core and type; choosing one brings the palette
+    // it was drawn in, which the palette gallery below may then change.
+    designGallery_ = new QListWidget(page);
+    designGallery_->setViewMode(QListView::IconMode);
+    designGallery_->setIconSize(QSize(112, 72));
+    designGallery_->setGridSize(QSize(136, 120));
+    designGallery_->setSpacing(4);
+    designGallery_->setResizeMode(QListView::Adjust);
+    designGallery_->setMovement(QListView::Static);
+    designGallery_->setWordWrap(true);
+    designGallery_->setUniformItemSizes(true);
+    designGallery_->setFixedHeight(258);    // two rows of them
+    designGallery_->setVerticalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
+    fillDesignGallery();
+    connect(designGallery_, &QListWidget::currentItemChanged, this, [this](QListWidgetItem *current, QListWidgetItem *) {
+        if (!current) return;
+        const DesignSpec design = NexaDesigns::resolve(current->data(Qt::UserRole).toString());
+        for (int i = 0; i < themeGallery_->count(); ++i) {
+            if (themeGallery_->item(i)->data(Qt::UserRole).toString() == design.palette) themeGallery_->setCurrentRow(i);
+        }
+    });
+
     auto *layout = new QVBoxLayout(page);
-    layout->addWidget(new QLabel(tr("Theme (%n of them, in eight motion styles):", nullptr, int(NexaThemes::all().size()) + 1), page));
+    layout->addWidget(new QLabel(tr("Design (%n, each its own arrangement and core):", nullptr, int(NexaDesigns::all().size())), page));
+    layout->addWidget(designGallery_);
+    layout->addSpacing(6);
+    layout->addWidget(new QLabel(tr("Palette (%n of them, in eight motion styles):", nullptr, int(NexaThemes::all().size()) + 1), page));
     layout->addWidget(themeGallery_, 2);
     layout->addSpacing(8);
     layout->addWidget(new QLabel(tr("System prompt (sent at the start of every conversation):"), page));
@@ -1231,6 +1258,131 @@ QPixmap themeSwatch(const ThemePack &pack) {
 }
 
 } // namespace
+
+namespace {
+
+// A design as a picture: the arrangement in panels on its own palette's ground, its core in place.
+QPixmap designSwatch(const DesignSpec &design) {
+    constexpr int kWidth = 112;
+    constexpr int kHeight = 72;
+    const qreal ratio = 2.0;
+    const ThemePack pack = NexaThemes::resolve(design.palette);
+    QPixmap pixmap(QSize(kWidth, kHeight) * ratio);
+    pixmap.setDevicePixelRatio(ratio);
+    pixmap.fill(Qt::transparent);
+    QPainter painter(&pixmap);
+    painter.setRenderHint(QPainter::Antialiasing, true);
+    const double corner = std::clamp(design.radius / 2.0, 0.0, 8.0);
+    painter.setPen(QPen(pack.tokens.line, 1));
+    painter.setBrush(pack.tokens.ground);
+    painter.drawRoundedRect(QRectF(0.5, 0.5, kWidth - 1, kHeight - 1), corner + 2, corner + 2);
+
+    const auto panel = [&painter, &pack, corner](const QRectF &rect) {
+        painter.setPen(QPen(pack.tokens.line, 1));
+        painter.setBrush(pack.tokens.panel);
+        painter.drawRoundedRect(rect, corner, corner);
+    };
+    const auto lines = [&painter, &pack](const QRectF &rect, int count) {
+        painter.setPen(QPen(pack.tokens.muted, 1.2));
+        for (int i = 0; i < count; ++i) {
+            const double y = rect.top() + 4 + i * 5.0;
+            painter.drawLine(QPointF(rect.left() + 4, y), QPointF(rect.left() + 4 + (i % 2 ? rect.width() * 0.5 : rect.width() * 0.75), y));
+        }
+    };
+    QPointF corePlace(16, 18);
+    double coreSize = 22;
+    switch (design.layout) {
+    case WindowLayout::Studio:
+        panel(QRectF(4, 4, 104, 8));
+        panel(QRectF(4, 16, 74, 52));
+        lines(QRectF(4, 30, 74, 36), 5);
+        panel(QRectF(82, 16, 26, 52));
+        corePlace = QPointF(16, 24);
+        coreSize = 16;
+        break;
+    case WindowLayout::Focus:
+        panel(QRectF(30, 34, 52, 34));
+        lines(QRectF(30, 34, 52, 34), 4);
+        corePlace = QPointF(56, 18);
+        coreSize = 26;
+        break;
+    case WindowLayout::Console:
+        panel(QRectF(4, 4, 104, 46));
+        lines(QRectF(4, 4, 104, 46), 7);
+        panel(QRectF(4, 54, 104, 14));
+        corePlace = QPointF(12, 61);
+        coreSize = 10;
+        break;
+    case WindowLayout::Sidebar:
+        panel(QRectF(4, 4, 30, 64));
+        panel(QRectF(38, 4, 70, 64));
+        lines(QRectF(38, 4, 70, 64), 7);
+        corePlace = QPointF(19, 18);
+        coreSize = 22;
+        break;
+    case WindowLayout::Orb:
+        panel(QRectF(34, 56, 44, 10));
+        corePlace = QPointF(56, 28);
+        coreSize = 44;
+        break;
+    case WindowLayout::Dashboard:
+        panel(QRectF(4, 4, 50, 30));
+        panel(QRectF(58, 4, 50, 30));
+        panel(QRectF(4, 38, 50, 30));
+        panel(QRectF(58, 38, 50, 30));
+        lines(QRectF(58, 4, 50, 30), 4);
+        lines(QRectF(4, 38, 50, 30), 4);
+        corePlace = QPointF(29, 19);
+        coreSize = 22;
+        break;
+    case WindowLayout::Bottom:
+        panel(QRectF(4, 4, 104, 14));
+        panel(QRectF(4, 22, 104, 30));
+        lines(QRectF(4, 22, 104, 30), 4);
+        panel(QRectF(4, 56, 104, 12));
+        corePlace = QPointF(14, 11);
+        coreSize = 12;
+        break;
+    }
+
+    NexaCoreWidget core;
+    core.setAnimated(false);
+    core.setStyle(pack.style);
+    core.setShape(design.shape);
+    core.setIdleColor(pack.tokens.idle);
+    core.setWakeColor(pack.tokens.wake);
+    core.setListenColor(pack.tokens.listen);
+    core.setSttColor(pack.tokens.stt);
+    core.setThinkColor(pack.tokens.think);
+    core.setActColor(pack.tokens.act);
+    core.setSpeakColor(pack.tokens.speak);
+    core.setFastColor(pack.tokens.fast);
+    core.setErrorColor(pack.tokens.error);
+    core.setPanelColor(pack.tokens.panel);
+    core.setLineColor(pack.tokens.line);
+    core.setMutedColor(pack.tokens.muted);
+    core.setTextColor(pack.tokens.text);
+    core.setGroundColor(pack.tokens.ground);
+    const QRectF where(corePlace.x() - coreSize / 2, corePlace.y() - coreSize / 2, coreSize, coreSize);
+    painter.drawPixmap(where, core.snapshot(CoreMode::Idle, int(coreSize), coreSize >= 20, ratio),
+                       QRectF(0, 0, coreSize * ratio, coreSize * ratio));
+    return pixmap;
+}
+
+} // namespace
+
+void SettingsDialog::fillDesignGallery() {
+    designGallery_->clear();
+    for (const DesignSpec &design : NexaDesigns::all()) {
+        auto *item = new QListWidgetItem(design.name);
+        item->setData(Qt::UserRole, design.id);
+        item->setToolTip(design.blurb);
+        item->setIcon(designSwatch(design));
+        designGallery_->addItem(item);
+        if (design.id == config_.ui.design) designGallery_->setCurrentItem(item);
+    }
+    if (!designGallery_->currentItem()) designGallery_->setCurrentRow(0);
+}
 
 void SettingsDialog::fillThemeGallery() {
     themeGallery_->clear();

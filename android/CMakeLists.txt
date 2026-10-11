@@ -46,6 +46,7 @@ if(NEXA_PHONE_STANDALONE)
         "${NEXA_ROOT}/ui/NexaCorePainter.h" "${NEXA_ROOT}/ui/NexaCorePainter.cc"
         "${NEXA_ROOT}/ui/NexaCoreSpec.h" "${NEXA_ROOT}/ui/NexaCoreSpec.cc"
         "${NEXA_ROOT}/ui/NexaCoreWidget.h" "${NEXA_ROOT}/ui/NexaCoreWidget.cc"
+        "${NEXA_ROOT}/ui/NexaDesigns.h" "${NEXA_ROOT}/ui/NexaDesigns.cc"
         "${NEXA_ROOT}/ui/NexaIcons.h" "${NEXA_ROOT}/ui/NexaIcons.cc"
         "${NEXA_ROOT}/ui/NexaTheme.h" "${NEXA_ROOT}/ui/NexaTheme.cc"
         "${NEXA_ROOT}/ui/NexaThemes.h" "${NEXA_ROOT}/ui/NexaThemes.cc"

@@ -2,6 +2,7 @@
 // motion spec gives them, how the controller's activity resolves to one state, where the moving
 // parts are at a given moment, and that the theme fills every token in.
 
+#include "ui/NexaCorePainter.h"
 #include "ui/NexaCoreSpec.h"
 #include "ui/NexaCoreWidget.h"
 #include "ui/NexaTheme.h"
@@ -180,6 +181,28 @@ TEST_CASE("The theme fills every token in, for both schemes") {
     CHECK(NexaTheme::schemeFor(u"dark"_s) == ThemeScheme::Dark);
     CHECK(NexaTheme::schemeFor(u"light"_s) == ThemeScheme::Light);
     CHECK(NexaTheme::schemeKey(ThemeScheme::Light) == u"light"_s);
+}
+
+TEST_CASE("Every core shape paints the same state in its own geometry") {
+    NexaCoreWidget core;
+    core.setAnimated(false);
+    const QString directory = qEnvironmentVariable("NEXA_TEST_SCREENSHOTS");
+    QList<QImage> rendered;
+    for (const CoreShape shape : kCoreShapes) {
+        core.setShape(shape);
+        CHECK(core.shape() == shape);
+        CHECK(coreShapeFromKey(coreShapeKey(shape)) == shape);
+        for (const CoreMode mode : {CoreMode::Idle, CoreMode::Listening, CoreMode::Thinking, CoreMode::Acting}) {
+            const QPixmap picture = core.snapshot(mode, 160, true);
+            REQUIRE_FALSE(picture.isNull());
+            if (!directory.isEmpty()) picture.save(u"%1/core-%2-%3.png"_s.arg(directory, coreShapeKey(shape), coreModeKey(mode)));
+        }
+        const QImage idle = core.snapshot(CoreMode::Idle, 120, true).toImage();
+        for (const QImage &other : rendered) CHECK(other != idle);     // each shape looks like itself
+        rendered.append(idle);
+    }
+    CHECK(NexaCorePainter::polygonRadiusAt(0.0, 100.0, 6, 0.0) == Catch::Approx(100.0));            // a corner
+    CHECK(NexaCorePainter::polygonRadiusAt(30.0, 100.0, 6, 0.0) == Catch::Approx(100.0 * std::cos(3.14159265 / 6)));   // an edge's middle
 }
 
 TEST_CASE("The widget keeps moving while it is shown and something happens") {

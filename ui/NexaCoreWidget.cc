@@ -77,6 +77,16 @@ void NexaCoreWidget::setCoreStyleIndex(int index) {
     if (index >= 0 && index < kCoreStyleCount) setStyle(static_cast<CoreStyle>(index));
 }
 
+void NexaCoreWidget::setShape(CoreShape shape) {
+    if (shape_ == shape) return;
+    shape_ = shape;
+    update();
+}
+
+void NexaCoreWidget::setCoreShapeIndex(int index) {
+    if (index >= 0 && index < kCoreShapeCount) setShape(static_cast<CoreShape>(index));
+}
+
 void NexaCoreWidget::setLitNodes(CoreNodes nodes) {
     if (lit_ == nodes) return;
     lit_ = nodes;
@@ -222,7 +232,7 @@ void NexaCoreWidget::paintFrame(QPainter &painter, const QRectF &rect) const {
         paint.act = actColor();
         break;
     }
-    NexaCorePainter::paint(painter, rect, paint, CoreGeometry{nodes_, labels_}, lit, coreScale, layers);
+    NexaCorePainter::paint(painter, rect, paint, CoreGeometry{nodes_, labels_, shape_}, lit, coreScale, layers);
 }
 
 void NexaCoreWidget::paintEvent(QPaintEvent *) {
@@ -251,7 +261,7 @@ QPixmap NexaCoreWidget::snapshot(CoreMode mode, int size, bool nodes, qreal devi
     const CoreLayer layer{mode, frame, paint.accent, 1.0};
     const std::array<CoreLayer, 1> layers{layer};
     NexaCorePainter::paint(painter, QRectF(0, 0, size, size).adjusted(0.5, 0.5, -0.5, -0.5), paint,
-                           CoreGeometry{nodes, false}, litFor(mode), 1.0, layers);
+                           CoreGeometry{nodes, false, shape_}, litFor(mode), 1.0, layers);
     return pixmap;
 }
 

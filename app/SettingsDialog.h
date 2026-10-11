@@ -74,6 +74,7 @@ private:
     QWidget *buildPolicyTab();
     QWidget *buildGeneralTab();
     void fillThemeGallery();
+    void fillDesignGallery();
     void populateProviders();
     void showProvider(int row);
     void storeProvider();
@@ -149,6 +150,7 @@ private:
     QTimer *pairCountdown_{nullptr};
     QComboBox *policyCombo_{nullptr};
     QListWidget *themeGallery_{nullptr};
+    QListWidget *designGallery_{nullptr};
     QPlainTextEdit *systemPromptEdit_{nullptr};
     QListWidget *mcpList_{nullptr};
     QWidget *mcpForm_{nullptr};

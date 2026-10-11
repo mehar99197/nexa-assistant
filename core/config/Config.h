@@ -119,7 +119,8 @@ struct McpConfig {
 // Settings → General → Appearance, and the toolbar's theme toggle. "system" follows the desktop's
 // own light or dark setting.
 struct UiConfig {
-    QString theme{QStringLiteral("system")};    // system | dark | light
+    QString theme{QStringLiteral("system")};    // system | dark | light | a palette's id
+    QString design{QStringLiteral("studio")};   // one of ui/NexaDesigns: the shape of everything else
 
     QJsonObject toJson() const;
     static UiConfig fromJson(const QJsonObject &json);

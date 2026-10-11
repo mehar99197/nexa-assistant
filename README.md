@@ -151,9 +151,11 @@ nexa-assistant --pair-phone                                 # pair the Nexa Phon
 If Nexa is already running, these go to the running copy. `--new-instance` starts a separate one
 (for testing). `--screenshot <file.png>` saves a picture of the window once the requests are done,
 then quits (it works with `QT_QPA_PLATFORM=offscreen`); `--screenshot-settings <dir>` does the same
-for every Settings tab; `--theme dark|light|system|<pack>` picks the look for that run (a pack is one of
-the 52 themes in Settings → General, such as `ocean-dark` or `amber-light`), while the gallery there and
-the sun/moon button in the toolbar set it for good.
+for every Settings tab; `--theme dark|light|system|<palette>` and `--design <design>` pick the look for
+that run only (a palette is one of the 52 in Settings → General, such as `ocean-dark`; a design is one of
+the eight there — `studio`, `focus`, `console`, `sidebar`, `orb`, `dashboard`, `gauge`, `paper` — each its
+own arrangement, core shape, corners and type), while the galleries there and the sun/moon button in the
+toolbar set them for good.
 
 ## Connectors (MCP)
 

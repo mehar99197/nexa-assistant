@@ -5,6 +5,7 @@ qt_add_library(nexa_ui STATIC
     NexaCorePainter.h NexaCorePainter.cc
     NexaCoreSpec.h NexaCoreSpec.cc
     NexaCoreWidget.h NexaCoreWidget.cc
+    NexaDesigns.h NexaDesigns.cc
     NexaIcons.h NexaIcons.cc
     NexaTheme.h NexaTheme.cc
     NexaThemes.h NexaThemes.cc

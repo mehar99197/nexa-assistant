@@ -42,6 +42,7 @@
 #include "system/media/MprisController.h"
 #include "system/screen/ScreenCapture.h"
 #include "core/mcp/McpConnectors.h"
+#include "ui/NexaDesigns.h"
 #include "ui/NexaTheme.h"
 #include "ui/NexaThemes.h"
 #include "voice/VoiceTools.h"
@@ -177,8 +178,12 @@ int main(int argc, char *argv[]) {
         u"screenshot"_s, u"Save a picture of the window to <file> once the start-up requests are done, then quit."_s,
         u"file"_s);
     parser.addOption(screenshotOption);
-    const QCommandLineOption themeOption(u"theme"_s, u"Look for this run only: system, dark or light."_s, u"scheme"_s);
+    const QCommandLineOption themeOption(
+        u"theme"_s, u"Palette for this run only: system, dark, light, or a palette's id (ocean-dark)."_s, u"palette"_s);
     parser.addOption(themeOption);
+    const QCommandLineOption designOption(
+        u"design"_s, u"Design for this run only: studio, focus, console, sidebar, orb, dashboard, gauge, paper."_s, u"design"_s);
+    parser.addOption(designOption);
     const QCommandLineOption settingsShotsOption(
         u"screenshot-settings"_s, u"Save a picture of every Settings tab into <dir>, then quit."_s, u"dir"_s);
     parser.addOption(settingsShotsOption);
@@ -216,9 +221,14 @@ int main(int argc, char *argv[]) {
     Config config = loadConfig(store, startupWarning);
     // The look: Nexa's own stylesheet and palette — the design's pair as set (or as the desktop
     // is), or any theme pack from the gallery, with the motion style it wears.
-    if (parser.isSet(themeOption)) config.ui.theme = parser.value(themeOption);
-    const ThemePack startingTheme = NexaThemes::resolve(config.ui.theme);
-    NexaTheme::apply(&app, startingTheme.tokens, startingTheme.style);
+    // --design and --theme are for this run only: they never reach the saved settings. A design
+    // was drawn in a palette of its own; a --theme beside it still wins.
+    QString runDesign = parser.isSet(designOption) ? parser.value(designOption) : QString();
+    QString runPalette = parser.isSet(themeOption) ? parser.value(themeOption) : QString();
+    if (!runDesign.isEmpty() && runPalette.isEmpty()) runPalette = NexaDesigns::resolve(runDesign).palette;
+    const ThemePack startingTheme = NexaThemes::resolve(runPalette.isEmpty() ? config.ui.theme : runPalette);
+    const DesignSpec startingDesign = NexaDesigns::resolve(runDesign.isEmpty() ? config.ui.design : runDesign);
+    NexaTheme::apply(&app, startingTheme.tokens, startingTheme.style, startingDesign);
 
     // AI providers
     HttpClient http;
@@ -395,6 +405,7 @@ int main(int argc, char *argv[]) {
                                    .mcp = &mcp,
                                    .shortcuts = &shortcuts},
                       AuditLog::defaultPath());
+    if (!runDesign.isEmpty() || !runPalette.isEmpty()) window.wear(runPalette, runDesign);
     window.show();
     // Nexa in the top bar where the desktop shows tray icons; then closing the window only hides
     // it, and the hotkeys, wake word and web remote keep working.

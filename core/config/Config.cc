@@ -189,15 +189,18 @@ McpConfig McpConfig::fromJson(const QJsonObject &json) {
 }
 
 QJsonObject UiConfig::toJson() const {
-    return QJsonObject{{u"theme"_s, theme}};
+    return QJsonObject{{u"theme"_s, theme}, {u"design"_s, design}};
 }
 
 UiConfig UiConfig::fromJson(const QJsonObject &json) {
     UiConfig config;
-    // system, dark, light — or a theme pack's id ("ocean-dark"); the catalogue decides what it means.
+    // system, dark, light — or a palette's id ("ocean-dark"), and a design's id ("console"); the
+    // catalogues decide what they mean.
     static const QRegularExpression id(u"^[a-z0-9-]{1,40}$"_s);
     const QString theme = json.value(u"theme"_s).toString(config.theme);
     if (id.match(theme).hasMatch()) config.theme = theme;
+    const QString design = json.value(u"design"_s).toString(config.design);
+    if (id.match(design).hasMatch()) config.design = design;
     return config;
 }
 

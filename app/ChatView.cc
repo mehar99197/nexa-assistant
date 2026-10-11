@@ -27,7 +27,6 @@ constexpr int kMetaRole = 2;
 constexpr int kStepRole = 3;
 constexpr int kBubblePadX = 12;
 constexpr int kBubblePadY = 7;
-constexpr int kBubbleRadius = 12;
 
 bool isCodeBlock(const QTextBlock &block) {
     const QTextBlockFormat format = block.blockFormat();
@@ -350,8 +349,6 @@ void ChatView::paintEvent(QPaintEvent *event) {
         // document's text comes after.
         QPainter painter(viewport());
         painter.setRenderHint(QPainter::Antialiasing, true);
-        painter.setPen(Qt::NoPen);
-        painter.setBrush(userBubble_);
         const QPointF offset(-horizontalScrollBar()->value(), -verticalScrollBar()->value());
         const QAbstractTextDocumentLayout *layout = document()->documentLayout();
         const QRectF visible = event->rect();
@@ -364,8 +361,29 @@ void ChatView::paintEvent(QPaintEvent *event) {
             for (int i = 0; i < lines->lineCount(); ++i) text |= lines->lineAt(i).naturalTextRect();
             if (text.isEmpty()) continue;
             text.translate(lines->position() + offset);
-            painter.drawRoundedRect(text.adjusted(-kBubblePadX, -kBubblePadY, kBubblePadX, kBubblePadY),
-                                    kBubbleRadius, kBubbleRadius);
+            const QRectF box = text.adjusted(-kBubblePadX, -kBubblePadY, kBubblePadX, kBubblePadY);
+            switch (bubbleStyle_) {
+            case 1: {
+                // Lines: no bubble; a rule to the right of what you said, in the accent.
+                painter.setPen(Qt::NoPen);
+                painter.setBrush(accent_);
+                painter.drawRoundedRect(QRectF(box.right() - 3, box.top() + 2, 3, box.height() - 4), 1.5, 1.5);
+                break;
+            }
+            case 2: {
+                // Cards: a bordered panel across the width, the text at its right.
+                const QRectF card(viewport()->rect().left() + 16, box.top(), viewport()->rect().width() - 32, box.height());
+                painter.setPen(QPen(meta_.lighter(110), 1));
+                painter.setBrush(userBubble_);
+                painter.drawRoundedRect(card, bubbleRadius_ * 0.5, bubbleRadius_ * 0.5);
+                break;
+            }
+            default:
+                painter.setPen(Qt::NoPen);
+                painter.setBrush(userBubble_);
+                painter.drawRoundedRect(box, bubbleRadius_, bubbleRadius_);
+                break;
+            }
         }
     }
     QTextBrowser::paintEvent(event);

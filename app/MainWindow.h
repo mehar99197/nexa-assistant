@@ -2,6 +2,7 @@
 
 #include "app/SystemStatus.h"
 #include "ui/NexaCoreSpec.h"
+#include "ui/NexaDesigns.h"
 #include "ui/NexaIcons.h"
 #include "ui/NexaTheme.h"
 #include "ui/NexaThemes.h"
@@ -13,6 +14,7 @@
 #include <vector>
 
 class QAction;
+class QBoxLayout;
 class QComboBox;
 class QLabel;
 class QPlainTextEdit;
@@ -44,11 +46,14 @@ public:
     void openSettings(const QString &tab = {});
     // Opens Settings without blocking, saves a picture of each tab into `directory`, closes it.
     void snapshotSettings(const QString &directory);
+    // Wears a palette and a design for this run, without touching the settings (--theme, --design).
+    void wear(const QString &palette, const QString &design);
     // Asked when the window is closed: true means "hidden to the tray, keep running".
     void setCloseToTray(std::function<bool()> hide) { closeToTray_ = std::move(hide); }
     NexaCoreWidget *presence() const { return presence_; }    // the core beside the chat (the tray copies it)
     ThemeScheme scheme() const { return pack_.scheme; }
     const ThemePack &theme() const { return pack_; }
+    const DesignSpec &design() const { return design_; }
 
 protected:
     bool eventFilter(QObject *watched, QEvent *event) override;
@@ -69,6 +74,8 @@ private:
     void sendOrStop();
     void toggleTheme();
     void applyPack(const ThemePack &pack);
+    void applyDesign(const DesignSpec &design);     // arranges the pieces as the design says
+    void rebuildCentral();
     void refreshTheme();
     void promptForApiKey(const QString &providerName);
     void confirm(const QString &question, std::function<void(bool)> answer);
@@ -88,11 +95,18 @@ private:
     GlobalShortcuts *shortcuts_;
     SystemStatus status_;
     QString auditPath_;
-    ThemePack pack_;                // the theme on: colours, scheme and the core's motion style
+    ThemePack pack_;                // the palette on: colours, scheme and the core's motion style
+    DesignSpec design_;             // the design on: layout, core shape, corners, type
     ChatView *chatView_{nullptr};
     ActionLogDock *actionLog_{nullptr};
     NexaCoreWidget *presence_{nullptr};
     MicButton *micButton_{nullptr};
+    QWidget *header_{nullptr};      // the core with the state's name: beside the chat, or stacked
+    QBoxLayout *headerLayout_{nullptr};
+    QWidget *titles_{nullptr};
+    QWidget *inputBar_{nullptr};
+    NexaCoreWidget *statusCore_{nullptr};   // Console: the core in the status line
+    QLabel *statusState_{nullptr};
     QLabel *stateTitle_{nullptr};
     QLabel *stateHint_{nullptr};
     QPlainTextEdit *input_{nullptr};

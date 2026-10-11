@@ -27,6 +27,7 @@ add_executable(nexa_tests
     MdnsBrowserTest.cc
     MdnsPacketTest.cc
     NexaCoreSpecTest.cc
+    NexaDesignsTest.cc
     NexaThemesTest.cc
     PhoneIntentTest.cc
     PhoneLookupTest.cc

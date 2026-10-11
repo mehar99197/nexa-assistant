@@ -5,6 +5,8 @@
 QWidget {
     background: @ground@;
     color: @text@;
+    font-family: "@font@";
+    font-size: @fontSize@pt;
     selection-background-color: @idle@;
     selection-color: @onAccent@;
 }
@@ -24,7 +26,7 @@ QToolBar#mainToolbar {
 }
 QToolBar#mainToolbar::separator { width: 0; }
 
-QFrame#pill { background: @panel@; border: 1px solid @line@; border-radius: 8px; }
+QFrame#pill { background: @panel@; border: 1px solid @line@; border-radius: @radiusSmall@px; }
 QLabel#pillLabel { color: @muted@; padding-left: 4px; }
 QLabel#pillValue { color: @text@; font-family: "@mono@"; padding-right: 4px; }
 
@@ -41,7 +43,7 @@ QComboBox#modelCombo QLineEdit { background: transparent; border: 0; color: @tex
 QToolButton#iconButton {
     background: @panel@;
     border: 1px solid @line@;
-    border-radius: 8px;
+    border-radius: @radiusSmall@px;
     padding: 4px;
     min-width: 26px;
     min-height: 26px;
@@ -52,7 +54,7 @@ QToolButton#iconButton:pressed, QToolButton#iconButton:checked { background: @ac
 QToolButton#pillButton {
     background: @panel@;
     border: 1px solid @line@;
-    border-radius: 8px;
+    border-radius: @radiusSmall@px;
     padding: 7px 10px;
     color: @text@;
 }
@@ -62,7 +64,7 @@ QPushButton#stopAll {
     background: @errorSoft@;
     color: @error@;
     border: 1px solid @errorLine@;
-    border-radius: 8px;
+    border-radius: @radiusSmall@px;
     padding: 7px 12px;
     font-weight: 600;
 }
@@ -76,7 +78,7 @@ QLabel#stateHint { color: @muted@; }
 QPlainTextEdit#input {
     background: @panel@;
     border: 1px solid @line@;
-    border-radius: 10px;
+    border-radius: @radius@px;
     padding: 6px 8px;
     color: @text@;
 }
@@ -85,7 +87,7 @@ QPlainTextEdit#input:focus { border: 1px solid @idle@; }
 QToolButton#inputButton {
     background: @panel@;
     border: 1px solid @line@;
-    border-radius: 10px;
+    border-radius: @radius@px;
     min-width: 46px;
     min-height: 46px;
 }
@@ -96,7 +98,7 @@ QPushButton#send {
     background: @idle@;
     color: @onAccent@;
     border: 0;
-    border-radius: 10px;
+    border-radius: @radius@px;
     padding: 0 22px;
     font-weight: 600;
     min-height: 48px;
@@ -134,7 +136,7 @@ QLabel#brandTitle { font-size: 20px; font-weight: 700; }
 QLabel#statusPill {
     background: @panel@;
     border: 1px solid @line@;
-    border-radius: 14px;
+    border-radius: @radius@px;
     padding: 5px 12px;
     color: @muted@;
 }
@@ -144,7 +146,7 @@ QListWidget#messages::item:selected { background: transparent; color: @text@; }
 QLineEdit#phoneInput {
     background: @panel@;
     border: 1px solid @line@;
-    border-radius: 12px;
+    border-radius: @radius@px;
     padding: 10px 12px;
     min-height: 26px;
 }
@@ -152,7 +154,7 @@ QLineEdit#phoneInput:focus { border-color: @idle@; }
 QToolButton#send {
     background: @idle@;
     border: 0;
-    border-radius: 12px;
+    border-radius: @radius@px;
     min-width: 48px;
     min-height: 48px;
 }
@@ -167,7 +169,7 @@ QPushButton#primary:disabled { background: @panel2@; color: @muted@; }
 
 QDialog, QMessageBox, QInputDialog { background: @ground@; }
 
-QTabWidget::pane { border: 1px solid @line@; border-radius: 8px; top: -1px; background: @ground@; }
+QTabWidget::pane { border: 1px solid @line@; border-radius: @radiusSmall@px; top: -1px; background: @ground@; }
 QTabBar::tab {
     background: @panel@;
     color: @muted@;
@@ -175,8 +177,8 @@ QTabBar::tab {
     border-bottom: 0;
     padding: 6px 12px;
     margin-right: 2px;
-    border-top-left-radius: 6px;
-    border-top-right-radius: 6px;
+    border-top-left-radius: @radiusSmall@px;
+    border-top-right-radius: @radiusSmall@px;
 }
 QTabBar::tab:selected { color: @text@; background: @ground@; }
 QTabBar::tab:hover { color: @text@; }
@@ -185,7 +187,7 @@ QLineEdit, QPlainTextEdit, QTextEdit, QSpinBox, QDoubleSpinBox, QComboBox {
     background: @panel@;
     color: @text@;
     border: 1px solid @line@;
-    border-radius: 6px;
+    border-radius: @radiusSmall@px;
     padding: 4px 6px;
     selection-background-color: @idle@;
     selection-color: @onAccent@;
@@ -210,14 +212,14 @@ QPushButton {
     background: @panel@;
     color: @text@;
     border: 1px solid @line@;
-    border-radius: 8px;
+    border-radius: @radiusSmall@px;
     padding: 6px 14px;
 }
 QPushButton:hover { border-color: @muted@; }
 QPushButton:pressed { background: @panel2@; }
 QPushButton:disabled { color: @muted@; border-color: @line@; }
 QPushButton:default { border-color: @accentLine@; }
-QToolButton { background: transparent; border: 0; border-radius: 6px; padding: 3px; }
+QToolButton { background: transparent; border: 0; border-radius: @radiusSmall@px; padding: 3px; }
 QToolButton:hover { background: @panel2@; }
 QToolButton::menu-indicator { image: none; }
 
@@ -225,7 +227,7 @@ QListWidget, QListView, QTreeWidget, QTreeView, QTableView {
     background: @panel@;
     color: @text@;
     border: 1px solid @line@;
-    border-radius: 6px;
+    border-radius: @radiusSmall@px;
     outline: 0;
     alternate-background-color: @ground@;
 }
@@ -234,7 +236,7 @@ QListWidget::item:selected, QListView::item:selected, QTreeView::item:selected {
 QListWidget::item:hover, QTreeView::item:hover { background: @panel2@; }
 QHeaderView::section { background: @panel@; color: @muted@; border: 0; border-bottom: 1px solid @line@; padding: 4px; }
 
-QGroupBox { border: 1px solid @line@; border-radius: 8px; margin-top: 12px; padding-top: 8px; }
+QGroupBox { border: 1px solid @line@; border-radius: @radiusSmall@px; margin-top: 12px; padding-top: 8px; }
 QGroupBox::title { subcontrol-origin: margin; left: 10px; padding: 0 4px; color: @muted@; }
 QCheckBox, QRadioButton { background: transparent; spacing: 8px; }
 QCheckBox::indicator, QRadioButton::indicator, QGroupBox::indicator, QListView::indicator, QTreeView::indicator {
@@ -244,7 +246,7 @@ QCheckBox::indicator, QRadioButton::indicator, QGroupBox::indicator, QListView::
     border-radius: 4px;
     background: @panel@;
 }
-QRadioButton::indicator { border-radius: 8px; }
+QRadioButton::indicator { border-radius: @radiusSmall@px; }
 QCheckBox::indicator:hover, QRadioButton::indicator:hover { border-color: @idle@; }
 QCheckBox::indicator:checked, QGroupBox::indicator:checked, QListView::indicator:checked, QTreeView::indicator:checked {
     background: @idle@;
@@ -256,8 +258,8 @@ QCheckBox::indicator:disabled, QRadioButton::indicator:disabled { border-color: 
 QScrollArea { border: 0; background: transparent; }
 QScrollArea > QWidget > QWidget { background: transparent; }
 QSplitter::handle { background: @line@; }
-QTextBrowser { background: @panel@; border: 1px solid @line@; border-radius: 6px; }
-QProgressBar { background: @panel@; border: 1px solid @line@; border-radius: 6px; text-align: center; color: @text@; }
+QTextBrowser { background: @panel@; border: 1px solid @line@; border-radius: @radiusSmall@px; }
+QProgressBar { background: @panel@; border: 1px solid @line@; border-radius: @radiusSmall@px; text-align: center; color: @text@; }
 QProgressBar::chunk { background: @idle@; border-radius: 5px; }
 
 QMenu { background: @panel@; color: @text@; border: 1px solid @line@; padding: 4px; }
@@ -298,12 +300,16 @@ nexa--NexaCoreWidget {
     qproperty-textColor: @text@;
     qproperty-groundColor: @ground@;
     qproperty-coreStyle: @coreStyle@;
+    qproperty-coreShape: @coreShape@;
 }
 
 /* Last, after the generic rules of the same specificity: the transcript keeps the window's ground. */
 nexa--ChatView {
     background: @ground@;
     border: 0;
+    font-family: "@chatFont@";
+    qproperty-bubbleStyle: @bubbleStyle@;
+    qproperty-bubbleRadius: @radius@;
     qproperty-userBubbleColor: @panel@;
     qproperty-metaColor: @muted@;
     qproperty-accentColor: @idle@;
@@ -311,3 +317,11 @@ nexa--ChatView {
     qproperty-codeColor: @panel@;
     qproperty-monoFamily: "@mono@";
 }
+
+/* ---- designs: cards and tiles (Dashboard), the state in the status line (Console) */
+QFrame#tile { background: @panel@; border: 1px solid @line@; border-radius: @radius@px; }
+QFrame#tile > QWidget { background: transparent; }
+QWidget#stateHeader[tile="true"] { border: 0; }
+nexa--ChatView[tile="true"] { background: @panel@; }
+QLabel#statusState { color: @text@; font-weight: 700; }
+QLabel#orbTitle { font-size: 30px; font-weight: 700; }

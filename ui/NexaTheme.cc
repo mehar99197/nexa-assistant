@@ -111,11 +111,24 @@ QString NexaTheme::styleSheet(ThemeScheme scheme) {
 }
 
 QString NexaTheme::styleSheet(const ThemeTokens &t, CoreStyle style) {
+    return styleSheet(t, style, NexaDesigns::resolve(u"studio"_s));
+}
+
+QString NexaTheme::styleSheet(const ThemeTokens &t, CoreStyle style, const DesignSpec &design) {
     QFile file(u":/nexa/ui/theme.qss"_s);
     if (!file.open(QIODevice::ReadOnly)) return {};
     QString sheet = QString::fromUtf8(file.readAll());
+    const int basePoints = QFontDatabase::systemFont(QFontDatabase::GeneralFont).pointSize();
+    const QString chatFont = design.font == FontFace::Mono ? monoFamily() : NexaDesigns::fontFamily(design.font);
     const std::pair<QString, QString> values[] = {
         {u"coreStyle"_s, QString::number(static_cast<int>(style))},
+        {u"coreShape"_s, QString::number(static_cast<int>(design.shape))},
+        {u"bubbleStyle"_s, QString::number(static_cast<int>(design.bubbles))},
+        {u"radius"_s, QString::number(design.radius)},
+        {u"radiusSmall"_s, QString::number(std::max(0, int(std::lround(design.radius * 0.75))))},
+        {u"font"_s, NexaDesigns::fontFamily(design.font)},
+        {u"chatFont"_s, chatFont},
+        {u"fontSize"_s, QString::number(std::max(8, (basePoints > 0 ? basePoints : 10) + design.fontPoints))},
         {u"ground"_s, css(t.ground)},
         {u"panel"_s, css(t.panel)},
         {u"panel2"_s, css(t.panelRaised)},
@@ -180,6 +193,10 @@ void NexaTheme::apply(QApplication *app, ThemeScheme scheme) {
 }
 
 void NexaTheme::apply(QApplication *app, const ThemeTokens &tokens, CoreStyle style) {
+    apply(app, tokens, style, NexaDesigns::resolve(u"studio"_s));
+}
+
+void NexaTheme::apply(QApplication *app, const ThemeTokens &tokens, CoreStyle style, const DesignSpec &design) {
     // Fusion draws the same everywhere and leaves the look to the sheet and the palette; the
     // platform style would fight both.
     static bool styled = false;
@@ -188,7 +205,7 @@ void NexaTheme::apply(QApplication *app, const ThemeTokens &tokens, CoreStyle st
         styled = true;
     }
     app->setPalette(palette(tokens));
-    app->setStyleSheet(styleSheet(tokens, style));
+    app->setStyleSheet(styleSheet(tokens, style, design));
 }
 
 } // namespace nexa

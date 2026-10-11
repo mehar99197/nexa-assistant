@@ -63,6 +63,31 @@ std::optional<CoreStyle> coreStyleFromKey(QStringView key) {
     return std::nullopt;
 }
 
+QString coreShapeName(CoreShape shape) {
+    switch (shape) {
+    case CoreShape::Ring: return u"Ring"_s;
+    case CoreShape::Orb: return u"Orb"_s;
+    case CoreShape::Hex: return u"Hex"_s;
+    case CoreShape::Bars: return u"Bars"_s;
+    case CoreShape::Iris: return u"Iris"_s;
+    case CoreShape::Crystal: return u"Crystal"_s;
+    case CoreShape::Arc: return u"Arc"_s;
+    case CoreShape::Dot: return u"Dot"_s;
+    }
+    return {};
+}
+
+QString coreShapeKey(CoreShape shape) {
+    return coreShapeName(shape).toLower();
+}
+
+std::optional<CoreShape> coreShapeFromKey(QStringView key) {
+    for (const CoreShape shape : kCoreShapes) {
+        if (coreShapeKey(shape) == key) return shape;
+    }
+    return std::nullopt;
+}
+
 int coreStyleFrameRate(CoreStyle style, CoreMode mode) {
     const int base = coreTiming(mode).frameRateHz;
     return style == CoreStyle::Storm ? 60 : base;

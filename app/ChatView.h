@@ -21,6 +21,8 @@ class ChatView : public QTextBrowser {
     Q_PROPERTY(QColor errorColor READ errorColor WRITE setErrorColor)
     Q_PROPERTY(QColor codeColor READ codeColor WRITE setCodeColor)
     Q_PROPERTY(QString monoFamily READ monoFamily WRITE setMonoFamily)
+    Q_PROPERTY(int bubbleStyle READ bubbleStyle WRITE setBubbleStyle)     // 0 bubbles, 1 lines, 2 cards
+    Q_PROPERTY(int bubbleRadius READ bubbleRadius WRITE setBubbleRadius)
 public:
     explicit ChatView(QWidget *parent = nullptr);
 
@@ -47,6 +49,10 @@ public:
     void setErrorColor(const QColor &c) { error_ = c; }
     void setCodeColor(const QColor &c) { code_ = c; }
     void setMonoFamily(const QString &family) { monoFamily_ = family; }
+    int bubbleStyle() const { return bubbleStyle_; }
+    void setBubbleStyle(int style) { bubbleStyle_ = style; viewport()->update(); }
+    int bubbleRadius() const { return bubbleRadius_; }
+    void setBubbleRadius(int radius) { bubbleRadius_ = radius; viewport()->update(); }
 
 protected:
     void paintEvent(QPaintEvent *event) override;
@@ -86,6 +92,8 @@ private:
     QColor error_;
     QColor code_;
     QString monoFamily_;
+    int bubbleStyle_{0};
+    int bubbleRadius_{12};
 };
 
 } // namespace nexa

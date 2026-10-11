@@ -89,12 +89,14 @@ MainWindow::MainWindow(AppController *controller, ProviderRegistry *registry, To
       shortcuts_(shortcuts),
       status_(std::move(status)),
       auditPath_(auditPath),
-      pack_(NexaThemes::resolve(controller->config().ui.theme)) {
+      pack_(NexaThemes::resolve(controller->config().ui.theme)),
+      design_(NexaDesigns::resolve(controller->config().ui.design)) {
     setWindowTitle(tr("Nexa"));
     resize(1280, 800);
     buildToolbar();
     buildCentral();
     buildStatusBar();
+    applyDesign(design_);
     connectController();
     connectVoice();
     refreshTheme();
@@ -173,39 +175,36 @@ void MainWindow::buildToolbar() {
 }
 
 void MainWindow::buildCentral() {
-    auto *central = new QWidget(this);
-    auto *layout = new QVBoxLayout(central);
-    layout->setContentsMargins(0, 0, 0, 0);
-    layout->setSpacing(0);
-
+    // The pieces; applyDesign() arranges them as the design says.
     // The core, with the state's name beside it — never colour alone.
-    auto *header = new QWidget(central);
-    header->setObjectName(u"stateHeader"_s);
-    auto *headerLayout = new QHBoxLayout(header);
-    headerLayout->setContentsMargins(24, 12, 24, 12);
-    headerLayout->setSpacing(18);
-    presence_ = new NexaCoreWidget(header);
+    header_ = new QWidget(this);
+    header_->setObjectName(u"stateHeader"_s);
+    headerLayout_ = new QBoxLayout(QBoxLayout::LeftToRight, header_);
+    headerLayout_->setContentsMargins(24, 12, 24, 12);
+    headerLayout_->setSpacing(18);
+    presence_ = new NexaCoreWidget(header_);
     presence_->setDiameter(88);
     presence_->setShowNodes(true);
-    headerLayout->addWidget(presence_);
-    auto *titles = new QVBoxLayout;
+    headerLayout_->addWidget(presence_);
+    titles_ = new QWidget(header_);
+    auto *titles = new QVBoxLayout(titles_);
+    titles->setContentsMargins(0, 0, 0, 0);
     titles->setSpacing(2);
-    stateTitle_ = new QLabel(header);
+    stateTitle_ = new QLabel(titles_);
     stateTitle_->setObjectName(u"stateTitle"_s);
-    stateHint_ = new QLabel(header);
+    stateHint_ = new QLabel(titles_);
     stateHint_->setObjectName(u"stateHint"_s);
     stateHint_->setWordWrap(true);
     titles->addStretch();
     titles->addWidget(stateTitle_);
     titles->addWidget(stateHint_);
     titles->addStretch();
-    headerLayout->addLayout(titles, 1);
-    layout->addWidget(header);
+    headerLayout_->addWidget(titles_, 1);
+    headerLayout_->addStretch(0);   // stacked in a column, the words stay under the core
 
-    chatView_ = new ChatView(central);
-    layout->addWidget(chatView_, 1);
+    chatView_ = new ChatView(this);
 
-    auto *bar = new QWidget(central);
+    QWidget *bar = inputBar_ = new QWidget(this);
     bar->setObjectName(u"inputBar"_s);
     auto *inputRow = new QHBoxLayout(bar);
     inputRow->setContentsMargins(20, 12, 20, 14);
@@ -248,8 +247,6 @@ void MainWindow::buildCentral() {
         connect(talk, &QAction::triggered, voice, &VoicePipeline::toggleListening);
         addAction(talk);
     }
-    layout->addWidget(bar);
-    setCentralWidget(central);
 
     auto *stop = new QAction(this);
     stop->setShortcut(QKeySequence(Qt::Key_Escape));
@@ -267,8 +264,153 @@ void MainWindow::buildCentral() {
     input_->setFocus();
 }
 
+// Where everything goes, for the design on: the header beside the chat or stacked above it, the
+// chat full width or a centred column, the Actions panel on a side or along the bottom or kept
+// out of sight, the parts as cards. The pieces are built once; only their arrangement changes.
+void MainWindow::applyDesign(const DesignSpec &design) {
+    design_ = design;
+    for (NexaCoreWidget *core : {presence_, statusCore_}) {
+        if (core) core->setShape(design.shape);
+    }
+    if (micButton_) micButton_->setShape(design.shape);
+    rebuildCentral();
+    showCoreMode(controller_->coreMode());
+}
+
+void MainWindow::rebuildCentral() {
+    const WindowLayout layout = design_.layout;
+    auto *central = new QWidget(this);
+    auto *column = new QVBoxLayout(central);
+    column->setContentsMargins(0, 0, 0, 0);
+    column->setSpacing(0);
+
+    // The header: beside the chat, or stacked and centred; its size by layout.
+    const bool stacked = layout == WindowLayout::Focus || layout == WindowLayout::Orb || layout == WindowLayout::Sidebar;
+    headerLayout_->setDirection(stacked ? QBoxLayout::TopToBottom : QBoxLayout::LeftToRight);
+    headerLayout_->setAlignment(presence_, stacked ? Qt::AlignHCenter : Qt::AlignVCenter);
+    headerLayout_->setStretchFactor(titles_, stacked ? 0 : 1);
+    titles_->setSizePolicy(QSizePolicy::Preferred, stacked ? QSizePolicy::Maximum : QSizePolicy::Preferred);
+    headerLayout_->setContentsMargins(stacked ? QMargins(24, 24, 24, 12) : QMargins(24, 12, 24, 12));
+    stateTitle_->setAlignment(stacked ? Qt::AlignHCenter : Qt::AlignLeft);
+    stateHint_->setAlignment(stacked ? Qt::AlignHCenter : Qt::AlignLeft);
+    stateTitle_->setObjectName(layout == WindowLayout::Orb ? u"orbTitle"_s : u"stateTitle"_s);
+    repolish(stateTitle_);
+    int diameter = 88;
+    switch (layout) {
+    case WindowLayout::Focus: diameter = 160; break;
+    case WindowLayout::Orb: diameter = 240; break;
+    case WindowLayout::Sidebar: diameter = 140; break;
+    case WindowLayout::Dashboard: diameter = 96; break;
+    case WindowLayout::Bottom: diameter = 72; break;
+    default: break;
+    }
+    presence_->setDiameter(diameter);
+    header_->setVisible(layout != WindowLayout::Console);
+    header_->setMaximumWidth(layout == WindowLayout::Sidebar ? 300 : QWIDGETSIZE_MAX);
+    header_->setMinimumWidth(layout == WindowLayout::Sidebar ? 240 : 0);
+    header_->setProperty("tile", layout == WindowLayout::Dashboard);
+    repolish(header_);
+
+    // Centred layouts keep the conversation to a readable column.
+    const int maxWidth = layout == WindowLayout::Focus ? 820 : layout == WindowLayout::Orb ? 760 : QWIDGETSIZE_MAX;
+    chatView_->setMaximumWidth(maxWidth);
+    inputBar_->setMaximumWidth(maxWidth);
+    chatView_->setProperty("tile", layout == WindowLayout::Dashboard);
+    repolish(chatView_);
+    input_->setPlaceholderText(layout == WindowLayout::Console ? tr("› type a request  (Enter to send)")
+                               : maxWidth < 900                ? tr("Type a request…")
+                                                               : tr("Type a request…  (Enter to send, Shift+Enter for a new line)"));
+
+    const auto centred = [](QWidget *widget) {
+        auto *row = new QHBoxLayout;
+        row->setContentsMargins(0, 0, 0, 0);
+        row->addStretch();
+        row->addWidget(widget, 1);
+        row->addStretch();
+        return row;
+    };
+    const auto tile = [central](QWidget *widget) {
+        auto *frame = new QFrame(central);
+        frame->setObjectName(u"tile"_s);
+        auto *inside = new QVBoxLayout(frame);
+        inside->setContentsMargins(6, 6, 6, 6);
+        inside->addWidget(widget);
+        return frame;
+    };
+
+    switch (layout) {
+    case WindowLayout::Studio:
+    case WindowLayout::Bottom:
+        column->addWidget(header_);
+        column->addWidget(chatView_, 1);
+        column->addWidget(inputBar_);
+        break;
+    case WindowLayout::Focus:
+    case WindowLayout::Orb:
+        column->addWidget(header_);
+        column->addLayout(centred(chatView_), 1);
+        column->addLayout(centred(inputBar_));
+        break;
+    case WindowLayout::Console:
+        column->addWidget(chatView_, 1);
+        column->addWidget(inputBar_);
+        break;
+    case WindowLayout::Sidebar: {
+        auto *row = new QHBoxLayout;
+        row->setContentsMargins(0, 0, 0, 0);
+        row->setSpacing(0);
+        row->addWidget(header_);
+        auto *right = new QVBoxLayout;
+        right->setContentsMargins(0, 0, 0, 0);
+        right->setSpacing(0);
+        right->addWidget(chatView_, 1);
+        right->addWidget(inputBar_);
+        row->addLayout(right, 1);
+        column->addLayout(row, 1);
+        break;
+    }
+    case WindowLayout::Dashboard:
+        column->setContentsMargins(12, 12, 12, 12);
+        column->setSpacing(12);
+        column->addWidget(tile(header_));
+        column->addWidget(tile(chatView_), 1);
+        column->addWidget(tile(inputBar_));
+        break;
+    }
+    // The pieces have moved into the new central widget; the old one, empty now, goes with it.
+    setCentralWidget(central);
+
+    // The Actions panel: on a side, along the bottom, or out of sight until asked (Ctrl+L).
+    const Qt::DockWidgetArea area = (layout == WindowLayout::Console || layout == WindowLayout::Bottom)
+                                        ? Qt::BottomDockWidgetArea
+                                        : layout == WindowLayout::Sidebar ? Qt::LeftDockWidgetArea : Qt::RightDockWidgetArea;
+    removeDockWidget(actionLog_);
+    addDockWidget(area, actionLog_);
+    const bool shown = !(layout == WindowLayout::Focus || layout == WindowLayout::Orb);
+    actionLog_->setVisible(shown);
+    if (area == Qt::BottomDockWidgetArea) {
+        resizeDocks({actionLog_}, {180}, Qt::Vertical);
+    } else {
+        resizeDocks({actionLog_}, {340}, Qt::Horizontal);
+    }
+
+    // Console: the state lives in the status line.
+    statusCore_->setVisible(layout == WindowLayout::Console);
+    statusState_->setVisible(layout == WindowLayout::Console);
+}
+
 void MainWindow::buildStatusBar() {
     statusBar()->setSizeGripEnabled(false);
+    // Console keeps the core and the state's name here; the other designs hide them.
+    statusCore_ = new NexaCoreWidget(this);
+    statusCore_->setDiameter(20);
+    statusCore_->setShowNodes(false);
+    statusCore_->hide();
+    statusBar()->addWidget(statusCore_);
+    statusState_ = new QLabel(this);
+    statusState_->setObjectName(u"statusState"_s);
+    statusState_->hide();
+    statusBar()->addWidget(statusState_);
     statusLabel_ = new QLabel(this);
     statusLabel_->setObjectName(u"statusMessage"_s);
     statusLabel_->setTextInteractionFlags(Qt::TextSelectableByMouse);
@@ -374,9 +516,16 @@ void MainWindow::connectController() {
     connect(controller_, &AppController::litNodesChanged, this, [this](unsigned nodes) { presence_->setLitNodes(nodes); });
     connect(controller_, &AppController::themeChanged, this,
             [this](const QString &theme) { applyPack(NexaThemes::resolve(theme)); });
-    connect(controller_, &AppController::configChanged, this, [this] {
+    connect(controller_, &AppController::configChanged, this, [this](const Config &updated) {
         showPolicy();
         if (status_.phone) showPhone(status_.phone->currentDescription());
+        // A new design: the pieces move, and the sheet is cut to its corners and type.
+        const DesignSpec design = NexaDesigns::resolve(updated.ui.design);
+        if (design.id != design_.id) {
+            applyDesign(design);
+            NexaTheme::apply(qApp, pack_.tokens, pack_.style, design_);
+            refreshTheme();
+        }
     });
 
     connect(executor_, &ToolExecutor::actionStarted, this,
@@ -429,9 +578,15 @@ void MainWindow::closeEvent(QCloseEvent *event) {
 void MainWindow::showCoreMode(CoreMode mode) {
     presence_->setMode(mode);
     if (micButton_) micButton_->setMode(mode);
+    if (statusCore_) statusCore_->setMode(mode);
     stateTitle_->setText(titleFor(mode));
     stateTitle_->setStyleSheet(u"color: %1;"_s.arg(presence_->colorFor(mode).name()));
     stateHint_->setText(hintFor(mode));
+    if (statusState_) {
+        statusState_->setText(titleFor(mode));
+        statusState_->setStyleSheet(u"color: %1;"_s.arg(presence_->colorFor(mode).name()));
+        statusState_->setToolTip(hintFor(mode));
+    }
 }
 
 QString MainWindow::titleFor(CoreMode mode) const {
@@ -536,7 +691,7 @@ void MainWindow::toggleTheme() {
 void MainWindow::applyPack(const ThemePack &pack) {
     if (pack.id == pack_.id) return;
     pack_ = pack;
-    NexaTheme::apply(qApp, pack_.tokens, pack_.style);
+    NexaTheme::apply(qApp, pack_.tokens, pack_.style, design_);
     refreshTheme();
 }
 
@@ -554,6 +709,14 @@ void MainWindow::openSettings(const QString &tab) {
     SettingsDialog dialog(controller_->config(), registry_, http_, status_, this);
     if (!tab.isEmpty()) dialog.showTab(tab);
     if (dialog.exec() == QDialog::Accepted) controller_->updateConfig(dialog.config());
+}
+
+void MainWindow::wear(const QString &palette, const QString &design) {
+    if (!design.isEmpty()) applyDesign(NexaDesigns::resolve(design));
+    const ThemePack pack = NexaThemes::resolve(palette.isEmpty() ? NexaThemes::settingFor(pack_) : palette);
+    pack_ = pack;
+    NexaTheme::apply(qApp, pack_.tokens, pack_.style, design_);
+    refreshTheme();
 }
 
 void MainWindow::snapshotSettings(const QString &directory) {
