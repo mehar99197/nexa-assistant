@@ -28,6 +28,7 @@ public:
 };
 
 // "screenshot", "see this", "what's on my screen" → take_screenshot, then the model answers.
+// "share my screen" / "stop sharing my screen" → screen sharing on or off (IntentMatch::shareScreen).
 class ScreenIntent : public IIntentHandler {
 public:
     std::optional<IntentMatch> match(const IntentInput &input) const override;

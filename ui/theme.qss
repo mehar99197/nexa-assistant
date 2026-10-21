@@ -92,7 +92,7 @@ QToolButton#inputButton {
     min-height: 46px;
 }
 QToolButton#inputButton:hover { background: @panel2@; border-color: @muted@; }
-QToolButton#inputButton:pressed { background: @accentSoft@; border-color: @idle@; }
+QToolButton#inputButton:pressed, QToolButton#inputButton:checked { background: @accentSoft@; border-color: @idle@; }
 
 QPushButton#send {
     background: @idle@;
@@ -124,6 +124,26 @@ nexa--ActionLogDock {
     qproperty-voiceChipColor: @accentSoft@;
     qproperty-monoFamily: "@mono@";
 }
+
+/* the Phone panel: the phone's screen, live */
+nexa--PhonePanel {
+    qproperty-mutedColor: @muted@;
+    qproperty-lineColor: @line@;
+    qproperty-accentColor: @idle@;
+    qproperty-errorColor: @error@;
+}
+QWidget#phoneBody { background: @ground@; border-left: 1px solid @line@; }
+QLabel#phoneInfo, QLabel#phoneStatus { color: @muted@; font-family: "@mono@"; font-size: 11px; }
+QLabel#phoneStatus[error="true"] { color: @error@; }
+QToolButton#phoneButton {
+    background: @panel@;
+    border: 1px solid @line@;
+    border-radius: @radiusSmall@px;
+    padding: 5px 10px;
+    color: @text@;
+}
+QToolButton#phoneButton:hover { background: @panel2@; border-color: @muted@; }
+QToolButton#phoneButton:checked { background: @accentSoft@; border-color: @idle@; }
 
 QStatusBar { background: @panel@; border-top: 1px solid @line@; color: @muted@; }
 QStatusBar::item { border: 0; }

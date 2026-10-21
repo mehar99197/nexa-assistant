@@ -23,6 +23,7 @@ namespace nexa {
 namespace {
 
 constexpr qsizetype kMaxShownOutput = 6'000;
+const QLatin1StringView kScreenshotTool{"take_screenshot"};
 
 // OmniRoute's auto/* routing combos are slow, so never pick one as the default.
 QString pickDefaultModel(const QStringList &models) {
@@ -55,6 +56,7 @@ AppController::AppController(AppServices services, Config config, QString enviro
       services_(services),
       config_(std::move(config)),
       environment_(std::move(environment)) {
+    applyScreenSharing();   // off until asked: the model works without looking
     conversation_.setSystemPrompt(systemPrompt());
     services_.policy->setMode(PolicyEngine::modeFromString(config_.policyMode));
 
@@ -213,6 +215,15 @@ void AppController::submit(const QString &text, const QString &source) {
         panic();
         return;
     }
+    if (match && match->shareScreen) {
+        setScreenShared(*match->shareScreen);
+        answerDirectly(prompt,
+                       screenShared_ ? tr("Your screen is shared: I will look at it when a request needs that.")
+                                     : tr("Screen sharing is off: I will work through commands and tools without "
+                                          "looking at your screen."),
+                       source);
+        return;
+    }
     if (!match && !canUseModel(true)) return;
 
     emit userMessageAccepted(prompt, source);
@@ -228,8 +239,37 @@ void AppController::submit(const QString &text, const QString &source) {
     runAgent(source);
 }
 
-void AppController::askAboutScreen(const QString &question) {
-    askAboutPicture(u"take_screenshot"_s, question, tr("Describe what is on my screen."));
+void AppController::setScreenShared(bool shared) {
+    if (screenShared_ == shared) return;
+    screenShared_ = shared;
+    applyScreenSharing();
+    conversation_.setSystemPrompt(systemPrompt());
+    qCInfo(lcApp) << "screen sharing" << (shared ? "on" : "off");
+    emit screenSharingChanged(shared);
+}
+
+void AppController::applyScreenSharing() {
+    if (screenShared_) {
+        services_.tools->offer(kScreenshotTool);
+    } else {
+        services_.tools->withhold(kScreenshotTool,
+                                  u"the user is not sharing the screen. Work through the other tools; if the request "
+                                  "cannot be done without seeing the screen, ask the user to switch Share screen on."_s);
+    }
+}
+
+// A reply with no tool and no model (a switch flipped): shown, spoken and remembered like any other.
+void AppController::answerDirectly(const QString &prompt, const QString &reply, const QString &source) {
+    emit userMessageAccepted(prompt, source);
+    beginReply(source);
+    activity_.fastPath = true;
+    refreshCoreMode();
+    emit replyRoute(u"fast"_s);
+    replyHasContent_ = true;
+    emit replyDelta(reply);
+    conversation_.addUser(forModel(prompt, source));
+    conversation_.addAssistant(reply);
+    finishReply(FinishReason::Stop);
 }
 
 void AppController::askAboutPhone(const QString &question) {
@@ -488,6 +528,12 @@ QString AppController::systemPrompt() const {
         prompt += u"\n\nMessages that start with [voice] were spoken, and your reply to them is read aloud: answer "
                   "in one to three short sentences of plain text, without Markdown, lists or code."_s;
     }
+    prompt += screenShared_
+                  ? u"\n\nThe user is sharing their screen with you: call take_screenshot whenever seeing it would help."_s
+                  : u"\n\nThe user is not sharing their screen, so you cannot see it and take_screenshot is not "
+                    "available. Do what was asked through run_command, open_app and the other tools; only when a "
+                    "request truly cannot be done without seeing the screen, say that Share screen (the button "
+                    "beside the input box) has to be switched on."_s;
     if (!environment_.isEmpty()) prompt += u"\n\nThis PC: "_s + environment_;
     return prompt;
 }

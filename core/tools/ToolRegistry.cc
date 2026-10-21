@@ -29,8 +29,18 @@ ITool *ToolRegistry::find(const QString &name) const {
 QList<ToolSpec> ToolRegistry::specs() const {
     QList<ToolSpec> result;
     result.reserve(qsizetype(tools_.size()));
-    for (const auto &tool : tools_) result.append(tool->spec());
+    for (const auto &tool : tools_) {
+        if (isOffered(tool->spec().name)) result.append(tool->spec());
+    }
     return result;
+}
+
+void ToolRegistry::withhold(const QString &name, const QString &reason) {
+    withheld_.insert(name, reason.isEmpty() ? QStringLiteral("it is not available now") : reason);
+}
+
+void ToolRegistry::offer(const QString &name) {
+    withheld_.remove(name);
 }
 
 void ToolRegistry::cancelAll() {

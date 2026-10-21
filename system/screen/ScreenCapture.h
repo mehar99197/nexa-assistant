@@ -21,6 +21,7 @@ class ScreenCapture : public QObject {
 public:
     struct Shot {
         QByteArray jpeg;
+        QImage image;               // the same picture, for showing it (the phone panel's mirror)
         QSize imageSize;            // size of `jpeg`
         QSize realSize;             // physical screen pixels
         double scale{1.0};          // real pixels per image pixel

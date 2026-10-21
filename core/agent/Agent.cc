@@ -136,6 +136,16 @@ void Agent::runNextTool() {
         return;
     }
 
+    // Withheld for now (the screen while it is not shared): the model learns why, nothing runs.
+    if (const QString reason = registry_->withheldReason(call.name); !reason.isEmpty()) {
+        const QString message = u"Error: %1 cannot be used now — %2"_s.arg(call.name, reason);
+        conversation_->addToolResult(call.id, call.name, message);
+        currentCall_.reset();
+        emit toolFinished(call.name, false, message, 0);
+        runNextTool();
+        return;
+    }
+
     emit toolStarted(call.name, arguments.object());
     QElapsedTimer timer;
     timer.start();

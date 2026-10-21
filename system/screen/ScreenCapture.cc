@@ -48,6 +48,7 @@ ScreenCapture::Shot ScreenCapture::encode(const QImage &image, int maxSide, int 
         scaled = image.scaled(maxSide, maxSide, Qt::KeepAspectRatio, Qt::SmoothTransformation);
     }
     scaled = scaled.convertToFormat(QImage::Format_RGB888);
+    shot.image = scaled;
     shot.imageSize = scaled.size();
     shot.scale = scaled.width() > 0 ? double(image.width()) / double(scaled.width()) : 1.0;
     QBuffer buffer(&shot.jpeg);

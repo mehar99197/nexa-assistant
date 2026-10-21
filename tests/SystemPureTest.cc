@@ -46,6 +46,8 @@ TEST_CASE("ScreenCapture::encode downscales to the long side and records the sca
     CHECK(shot.realSize == QSize(2560, 1440));
     CHECK(shot.scale == 2.0);
     CHECK(shot.jpeg.startsWith("\xFF\xD8"));
+    CHECK(shot.image.size() == shot.imageSize);     // the picture itself, for the phone panel's mirror
+    CHECK(shot.image.pixelColor(10, 10) == QColor(Qt::darkCyan));
 
     QImage small(800, 600, QImage::Format_RGB32);
     small.fill(Qt::white);

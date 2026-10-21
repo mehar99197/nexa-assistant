@@ -12,7 +12,11 @@ Not to be confused with Nexa Download Manager: this is a separate program, named
 
 - **Acts on the PC** — opens and closes apps, runs shell commands (and, with the helper, root
   commands), sets the volume, controls media players, reads and writes files (home and /tmp only),
-  reports system info, and looks at the screen.
+  reports system info, and looks at the screen — but only while you let it.
+- **Looks only when you share** — the Share screen button beside the input box (Ctrl+Shift+S, or say
+  "share my screen") is off at every start; until you switch it on, the model is not even offered the
+  screenshot tool and works through commands and tools alone. Asking "what's on my screen?" yourself
+  takes one picture either way.
 - **Fast path** — common requests ("open firefox", "volume 30", "pause music", "run df -h", "what's on
   my screen?", "on my phone open youtube") run directly in milliseconds, without waiting for a model.
 - **Agent** — anything else goes to the model, which calls the same tools step by step.
@@ -25,7 +29,8 @@ Not to be confused with Nexa Download Manager: this is a separate program, named
   provider's models by default, with whisper.cpp and Piper as an offline fallback.
 - **Controls your phone** (over USB or Wi-Fi, no app on the phone) — opens apps, taps, swipes and
   types, takes screenshots and describes them, reads notifications and text messages, starts calls
-  and messages, controls music and volume, and copies files both ways.
+  and messages, controls music and volume, and copies files both ways. While a phone is connected, a
+  Phone panel beside the chat (Ctrl+P) shows which one it is and its screen, live.
 - **Is controlled from your phone** — pair the phone's browser once, then type or hold-to-talk on the
   phone; the PC acts, and the phone shows the conversation and plays the spoken reply. There is also
   a small app for the phone (`android/`), which does the same natively and remembers the pairing.
@@ -106,12 +111,12 @@ aqt install-qt all_os android 6.10.2 android_arm64_v8a -m qtwebsockets qtmultime
 # Android SDK: command-line tools from developer.android.com into ~/Android/Sdk/cmdline-tools/latest, then
 sdkmanager "platform-tools" "platforms;android-35" "build-tools;35.0.0" "ndk;27.2.12479018"
 sudo apt install -y openjdk-21-jdk-headless   # a JDK with javac (the JRE is not enough); or a Temurin JDK in ~/Android/jdk-21
+scripts/download-android-openssl.sh           # OpenSSL for the APK (5 MB): Qt for Android has no TLS without it
 scripts/build-phone-apk.sh                    # configures with the kit, builds, signs, prints the APK's path
 adb install -r build-android/nexa-phone.apk
 ```
 
 The host tools come from the system's own Qt (it is the same version, and Debian ships
-scripts/download-android-openssl.sh           # OpenSSL for the APK (5 MB): Qt for Android has no TLS without it
 `androiddeployqt`), so no desktop kit is downloaded. The first build fetches Gradle and the Android
 plugin (about 600 MB). The APK is signed with the usual Android debug key unless `KEYSTORE`,
 `KEYSTORE_ALIAS` and `KEYSTORE_PASS` name your own. It carries OpenSSL 3 (KDAB's build for Android,

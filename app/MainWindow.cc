@@ -5,6 +5,7 @@
 #include "app/ChatView.h"
 #include "app/GlobalShortcuts.h"
 #include "app/MicButton.h"
+#include "app/PhonePanel.h"
 #include "app/SettingsDialog.h"
 #include "core/tools/ToolExecutor.h"
 #include "remote/RemoteServer.h"
@@ -34,6 +35,8 @@
 #include <QToolBar>
 #include <QToolButton>
 #include <QVBoxLayout>
+
+#include <initializer_list>
 
 using namespace Qt::StringLiterals;
 
@@ -119,7 +122,7 @@ void MainWindow::buildToolbar() {
     modelCombo_->setObjectName(u"modelCombo"_s);
     modelCombo_->setEditable(true);
     modelCombo_->setInsertPolicy(QComboBox::NoInsert);
-    modelCombo_->setMinimumContentsLength(26);
+    modelCombo_->setMinimumContentsLength(18);
     modelCombo_->setSizeAdjustPolicy(QComboBox::AdjustToMinimumContentsLengthWithIcon);
     modelCombo_->setToolTip(tr("Model used for replies (type to filter)"));
     modelCombo_->lineEdit()->setPlaceholderText(tr("model"));
@@ -144,6 +147,16 @@ void MainWindow::buildToolbar() {
     showActions->setText(tr("Actions panel"));
     showActions->setShortcut(QKeySequence(u"Ctrl+L"_s));
     toolbar->addWidget(makeIconButton(NexaIcons::Kind::Actions, u"iconButton"_s, showActions));
+
+    // The phone beside the chat while one is connected; the button brings it back by hand.
+    phonePanel_ = new PhonePanel(status_.phone, this);
+    addDockWidget(Qt::RightDockWidgetArea, phonePanel_);
+    phonePanel_->hide();
+    QAction *showPhonePanel = phonePanel_->toggleViewAction();
+    showPhonePanel->setText(tr("Phone panel"));
+    showPhonePanel->setToolTip(tr("The phone's screen, live, while one is connected · Ctrl+P"));
+    showPhonePanel->setShortcut(QKeySequence(u"Ctrl+P"_s));
+    toolbar->addWidget(makeIconButton(NexaIcons::Kind::Phone, u"iconButton"_s, showPhonePanel));
 
     auto *spacer = new QWidget(this);
     spacer->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Preferred);
@@ -218,11 +231,21 @@ void MainWindow::buildCentral() {
     input_->installEventFilter(this);
     inputRow->addWidget(input_, 1);
 
-    auto *seeScreen = new QAction(tr("See screen"), this);
-    seeScreen->setToolTip(tr("Take a screenshot and ask about it (the text in the box is the question) · Ctrl+Shift+S"));
-    seeScreen->setShortcut(QKeySequence(u"Ctrl+Shift+S"_s));
-    connect(seeScreen, &QAction::triggered, this, [this] { controller_->askAboutScreen(input_->toPlainText()); });
-    inputRow->addWidget(makeIconButton(NexaIcons::Kind::Pc, u"inputButton"_s, seeScreen));
+    // Share screen: a switch, off at every start. On, the model may take screenshots to see what
+    // you see; off, it works through commands and tools and never looks.
+    shareScreenAction_ = new QAction(tr("Share screen"), this);
+    shareScreenAction_->setCheckable(true);
+    shareScreenAction_->setToolTip(tr("Share your screen with Nexa: while this is on, the model may take screenshots "
+                                      "to see what you see. Off, it works through commands and tools without looking "
+                                      "· Ctrl+Shift+S"));
+    shareScreenAction_->setShortcut(QKeySequence(u"Ctrl+Shift+S"_s));
+    connect(shareScreenAction_, &QAction::toggled, this, [this](bool on) {
+        if (controller_->isScreenShared() == on) return;
+        controller_->setScreenShared(on);
+        chatView_->addNotice(on ? tr("Screen shared — Nexa may look at it while this is on.")
+                                : tr("Screen sharing stopped — Nexa works without looking at the screen."));
+    });
+    inputRow->addWidget(makeIconButton(NexaIcons::Kind::Pc, u"inputButton"_s, shareScreenAction_));
 
     auto *seePhone = new QAction(tr("See phone"), this);
     seePhone->setToolTip(tr("Take a screenshot of the phone and ask about it (the text in the box is the question) · "
@@ -279,6 +302,11 @@ void MainWindow::applyDesign(const DesignSpec &design) {
 
 void MainWindow::rebuildCentral() {
     const WindowLayout layout = design_.layout;
+    // A piece the new arrangement leaves out (Console has no header) must not go down with the
+    // old central widget: every piece is taken back first, and placed again below.
+    for (QWidget *piece : std::initializer_list<QWidget *>{header_, chatView_, inputBar_}) {
+        if (piece->parentWidget() != this) piece->setParent(this);
+    }
     auto *central = new QWidget(this);
     auto *column = new QVBoxLayout(central);
     column->setContentsMargins(0, 0, 0, 0);
@@ -394,6 +422,13 @@ void MainWindow::rebuildCentral() {
         resizeDocks({actionLog_}, {340}, Qt::Horizontal);
     }
 
+    // The Phone panel: on the right, outside the Actions panel when that is there too; in view
+    // while a phone is connected.
+    removeDockWidget(phonePanel_);
+    addDockWidget(Qt::RightDockWidgetArea, phonePanel_);
+    if (shown && area == Qt::RightDockWidgetArea) splitDockWidget(actionLog_, phonePanel_, Qt::Horizontal);
+    showPhonePanel(phonePanel_->isConnected());
+
     // Console: the state lives in the status line.
     statusCore_->setVisible(layout == WindowLayout::Console);
     statusState_->setVisible(layout == WindowLayout::Console);
@@ -418,6 +453,10 @@ void MainWindow::buildStatusBar() {
     statusLabel_->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Preferred);
     statusLabel_->installEventFilter(this);
     statusBar()->addWidget(statusLabel_, 1);
+
+    screenLabel_ = new QLabel(this);
+    statusBar()->addPermanentWidget(screenLabel_);
+    showScreenSharing(controller_->isScreenShared());
 
     helperLabel_ = new QLabel(this);
     statusBar()->addPermanentWidget(helperLabel_);
@@ -514,6 +553,8 @@ void MainWindow::connectController() {
     connect(controller_, &AppController::conversationCleared, chatView_, &ChatView::clearTranscript);
     connect(controller_, &AppController::coreModeChanged, this, &MainWindow::showCoreMode);
     connect(controller_, &AppController::litNodesChanged, this, [this](unsigned nodes) { presence_->setLitNodes(nodes); });
+    connect(controller_, &AppController::screenSharingChanged, this, &MainWindow::showScreenSharing);
+    connect(phonePanel_, &PhonePanel::phoneChanged, this, &MainWindow::showPhonePanel);
     connect(controller_, &AppController::themeChanged, this,
             [this](const QString &theme) { applyPack(NexaThemes::resolve(theme)); });
     connect(controller_, &AppController::configChanged, this, [this](const Config &updated) {
@@ -602,7 +643,8 @@ QString MainWindow::hintFor(CoreMode mode) const {
     const bool canListen = voice && voice->canListen();
     switch (mode) {
     case CoreMode::Idle:
-        return canListen ? tr("Type a request, or hold Talk and speak.") : tr("Type a request.");
+        return (canListen ? tr("Type a request, or hold Talk and speak.") : tr("Type a request."))
+               + (controller_->isScreenShared() ? tr(" Your screen is shared.") : QString());
     case CoreMode::WakeWord:
         return tr("Say “Hey Nexa” and your request, type one, or hold Talk.");
     case CoreMode::Listening:
@@ -817,6 +859,32 @@ void MainWindow::showRemote() {
     remoteLabel_->setText(clients == 0 ? tr("Remote: waiting") : tr("Remote: %n phone(s)", nullptr, clients));
     remoteLabel_->setToolTip(tr("The web remote is on: %1").arg(remote->lanUrl().isEmpty() ? remote->localUrl()
                                                                                              : remote->lanUrl()));
+}
+
+// The Phone panel comes with the phone and goes with it. Shown, it takes its width from the
+// Actions panel when the two share the right side — sized once it is in view, or the split
+// halves the Actions panel.
+void MainWindow::showPhonePanel(bool connected) {
+    phonePanel_->setVisible(connected);
+    if (!connected) return;
+    if (actionLog_->isVisible() && dockWidgetArea(actionLog_) == Qt::RightDockWidgetArea) {
+        resizeDocks({actionLog_, phonePanel_}, {320, 280}, Qt::Horizontal);
+    } else {
+        resizeDocks({phonePanel_}, {280}, Qt::Horizontal);
+    }
+}
+
+void MainWindow::showScreenSharing(bool shared) {
+    {
+        const QSignalBlocker blocker(shareScreenAction_);
+        shareScreenAction_->setChecked(shared);
+    }
+    screenLabel_->setText(shared ? tr("Screen: shared") : tr("Screen: not shared"));
+    screenLabel_->setToolTip(shared ? tr("Nexa may take screenshots to see what you see. Share screen (Ctrl+Shift+S) "
+                                         "switches it off.")
+                                    : tr("Nexa works through commands and tools without looking at your screen. Share "
+                                         "screen (Ctrl+Shift+S) lets it look."));
+    showCoreMode(controller_->coreMode());  // the hint beside the core says it too
 }
 
 void MainWindow::setBusy(bool busy) {

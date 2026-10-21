@@ -31,6 +31,8 @@ add_executable(nexa_tests
     NexaThemesTest.cc
     PhoneIntentTest.cc
     PhoneLookupTest.cc
+    # The window's Phone panel, built from app/ like the helper's record below.
+    PhonePanelTest.cc ../app/PhonePanel.cc
     PolicyEngineTest.cc
     PortalInputBackendTest.cc
     QrCodeTest.cc

@@ -1,0 +1,44 @@
+#!/bin/sh
+# A stand-in for adb with one phone always connected, to look at the Phone panel (and run the
+# phone's fast path) without a phone:
+#   PATH="$PWD/tests/fake-adb:$PATH" QT_QPA_PLATFORM=offscreen ./build/app/nexa-assistant --new-instance \
+#       --ask "on my phone open youtube" --screenshot /tmp/nexa.png
+# `devices -l` lists a Pixel 9 over USB, `shell` answers every command with the phone's properties
+# (so the tools see a phone, even if what they asked for makes no sense of the answer), and
+# `exec-out screencap -p` sends a drawn screen — rows of cards under a status bar — after a pause
+# like a real phone's. Everything else succeeds quietly.
+screen="${TMPDIR:-/tmp}/nexa-fake-adb-screen.png"
+if [ ! -s "$screen" ]; then
+    python3 -I - "$screen" <<'PY'
+import struct, sys, zlib
+w, h = 540, 1200
+def pixel(x, y):
+    if y < 60 or y >= 1000: return (31, 36, 46)
+    row = (y - 100) // 110
+    if 100 <= y < 980 and (y - 100) % 110 < 90 and 20 <= x < 520: return (42 + row * 6, 48, 60 + row * 10)
+    return (18, 20, 26)
+raw = bytearray()
+for y in range(h):
+    raw.append(0)
+    for x in range(w): raw.extend(pixel(x, y))
+def chunk(tag, data):
+    return struct.pack(">I", len(data)) + tag + data + struct.pack(">I", zlib.crc32(tag + data) & 0xffffffff)
+png = (b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", struct.pack(">IIBBBBB", w, h, 8, 2, 0, 0, 0))
+       + chunk(b"IDAT", zlib.compress(bytes(raw), 6)) + chunk(b"IEND", b""))
+open(sys.argv[1], "wb").write(png)
+PY
+fi
+if [ "$1" = "-s" ]; then shift 2; fi
+case "$1" in
+  devices)
+    echo "List of devices attached"
+    echo "FAKE123   device usb:1-1 product:fake model:Pixel_9 device:fake transport_id:1"
+    ;;
+  mdns) echo "List of discovered mdns services" ;;
+  shell)
+    echo "manufacturer=Google"; echo "model=Pixel 9"; echo "release=15"; echo "hardware=FAKE123"
+    echo "  level: 76"; echo "Physical size: 1080x2400"; echo "Success"
+    ;;
+  exec-out) sleep 0.3; cat "$screen" ;;
+esac
+exit 0

@@ -98,7 +98,19 @@ std::optional<IntentMatch> ScreenIntent::match(const IntentInput &input) const {
     static const QRegularExpression question(
         u"^(?:what(?:'s| is)\\s+on\\s+(?:my|the)\\s+screen|what do you see|what am i (?:looking at|seeing))$"_s);
 
+    // Switching the sharing itself: no tool, the controller does it.
+    static const QRegularExpression shareOn(
+        u"^(?:(?:start|begin)\\s+)?shar(?:e|ing)\\s+(?:my|the)\\s+screen(?:\\s+with\\s+you)?$"
+        "|^(?:turn|switch)\\s+(?:on\\s+screen\\s+shar(?:e|ing)|screen\\s+shar(?:e|ing)\\s+on)$"
+        "|^screen\\s+shar(?:e|ing)\\s+on$|^share\\s+screen$"_s);
+    static const QRegularExpression shareOff(
+        u"^(?:stop|end|quit)\\s+sharing\\s+(?:my|the)\\s+screen$|^unshare\\s+(?:my|the)\\s+screen$"
+        "|^(?:turn|switch)\\s+(?:off\\s+screen\\s+shar(?:e|ing)|screen\\s+shar(?:e|ing)\\s+off)$"
+        "|^screen\\s+shar(?:e|ing)\\s+off$|^stop\\s+(?:screen\\s+)?shar(?:e|ing)$"_s);
+
     const QString &text = input.normalized;
+    if (shareOn.match(text).hasMatch()) return IntentMatch{.shareScreen = true};
+    if (shareOff.match(text).hasMatch()) return IntentMatch{.shareScreen = false};
     if (question.match(text).hasMatch()) {
         return IntentMatch{.toolName = u"take_screenshot"_s, .forwardToAgent = true, .agentPrompt = input.text};
     }

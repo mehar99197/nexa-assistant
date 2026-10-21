@@ -23,6 +23,7 @@ struct IntentMatch {
     bool forwardToAgent{false}; // run the tool, then let the model answer with its result attached
     QString agentPrompt;        // what the model is asked when forwarding
     bool verbatimPayload{false};// the payload is user text (a command, text to type): skip the compound check
+    std::optional<bool> shareScreen;    // "share my screen" / "stop sharing": switch screen sharing, no tool
 };
 
 // One link of the IntentRouter chain: recognises a phrase family without any network call.

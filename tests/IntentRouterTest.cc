@@ -134,6 +134,30 @@ TEST_CASE("IntentRouter sends screen questions to the model with a screenshot") 
     CHECK(toolOf(f.router, u"I want to see this movie"_s) == u"<none>"_s);
 }
 
+TEST_CASE("IntentRouter switches screen sharing on and off by phrase, without a tool") {
+    Fixture f;
+    for (const QString &phrase : {u"share my screen"_s, u"Share the screen with you"_s, u"start sharing my screen"_s,
+                                  u"hey nexa, share screen"_s, u"turn on screen sharing"_s, u"screen share on"_s}) {
+        const auto on = f.router.route(phrase);
+        REQUIRE(on.has_value());
+        CHECK(on->toolName.isEmpty());
+        CHECK(on->shareScreen == true);
+    }
+    for (const QString &phrase : {u"stop sharing my screen"_s, u"unshare the screen"_s, u"turn off screen sharing"_s,
+                                  u"stop screen sharing"_s, u"screen sharing off"_s}) {
+        const auto off = f.router.route(phrase);
+        REQUIRE(off.has_value());
+        CHECK(off->shareScreen == false);
+    }
+    // Ordinary chat about sharing stays with the model.
+    for (const QString &phrase : {u"share this file with bob"_s, u"how do I share my screen in zoom"_s,
+                                  u"screen sharing is broken"_s, u"share my screen recording tips"_s}) {
+        CHECK_FALSE(f.router.route(phrase).has_value());
+    }
+    // And the one-off question still takes a picture itself, shared or not.
+    CHECK(toolOf(f.router, u"what's on my screen"_s) == u"take_screenshot"_s);
+}
+
 TEST_CASE("IntentRouter runs real commands verbatim and ignores chat that starts with run") {
     Fixture f;
     const auto ls = f.router.route(u"run ls -la ~/Downloads"_s);

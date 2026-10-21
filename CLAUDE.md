@@ -30,7 +30,10 @@ requests are done and Nexa is idle, it saves a picture of the window and quits �
 `QT_QPA_PLATFORM=offscreen ./build/app/nexa-assistant --new-instance --theme light --ask "run uname -sr" --screenshot /tmp/nexa.png`
 shows the light scheme with a fast-path reply without touching the screen (`--theme <palette>` and `--design <design>`
 are for that run only and never reach the settings; `--design console` shows the terminal design in its own palette);
-`--screenshot-settings <dir>` saves every Settings tab the same way. The phone app's screens come out of
+`--screenshot-settings <dir>` saves every Settings tab the same way. **Without a phone**, `tests/fake-adb/adb` stands in
+for adb with a Pixel always connected: `PATH="$PWD/tests/fake-adb:$PATH"` before the command above, plus
+`--ask "on my phone open youtube"` so the phone is looked up, shows the Phone panel with a drawn screen in it.
+The phone app's screens come out of
 `NEXA_TEST_SCREENSHOTS=<dir> ./build/tests/nexa_tests "The phone app pairs*"`, and the web remote's page can be looked
 at in any browser without a phone through `scripts/preview-web-remote.py` (a stand-in server that plays a
 conversation and walks the core through its states; `--once` for a screenshot, e.g. with
@@ -104,7 +107,8 @@ models over its slow `auto/*` combos).
   `config.ui.design`; the sheet takes `@radius@`, `@radiusSmall@`, `@font@`, `@fontSize@`, `@chatFont@`,
   `@coreShape@`, `@bubbleStyle@`) and `NexaIcons` (line icons painted in the theme's colour).
 - `app/` — Qt Widgets GUI (MainWindow: toolbar pills, the core with the state's name beside it, ChatView with
-  bubbles and "NEXA fast path · 2 ms" headers, ActionLogDock as cards, MicButton = the core as the Talk button,
+  bubbles and "NEXA fast path · 2 ms" headers, ActionLogDock as cards, PhonePanel = the phone beside the chat while
+  one is connected (its screen live, Ctrl+P), the Share screen switch in the input bar (Ctrl+Shift+S), MicButton = the core as the Talk button,
   a monospace status bar, the sun/moon theme toggle; its pieces are built once and `applyDesign()` /
   `rebuildCentral()` arrange them for the design on — header beside or above the chat, a centred column, the
   Actions panel on a side or the bottom or hidden, tiles; SettingsDialog with the design and palette galleries,
@@ -140,7 +144,8 @@ models over its slow `auto/*` combos).
   `AdbDiscovery` (connected phones and mDNS wireless-debugging offers; reconnects the remembered one),
   `MdnsBrowser` + `MdnsPacket` (Nexa's own DNS-SD browser — Debian's adb is built without mDNS, so
   `adb mdns services` never finds anything on this machine; the packet code is pure and tested),
-  `AndroidDevice` (which phone, plus every operation), `AndroidTools` (the 18 `android_*` tools), and three pure,
+  `AndroidDevice` (which phone, plus every operation), `AndroidTools` (the 18 `android_*` tools), `PhoneMirror` (the
+  phone's screen one picture after another for the window's Phone panel, while someone watches), and three pure,
   tested files — `AdbParsers` (adb and shell output), `AdbShell` (command lines; everything from a person or a
   model is single-quoted for the phone's `sh`), `PhoneLookup` (spoken name → app or contact). The phone is
   remembered by hardware serial (`config.android.serial`); `core/intent/PhoneIntents` is its fast path and
@@ -198,6 +203,10 @@ models over its slow `auto/*` combos).
 - QObjects handed out as `shared_ptr` (e.g. `ChatStream`) use a `deleteLater()` deleter, so they can be released from their own signals.
 - Never log or display API keys/tokens.
 - Every action goes through `ToolExecutor::execute` (fast path and agent alike) — never call a tool directly.
+- The model sees the PC screen **only while Share screen is on**: `AppController` withholds `take_screenshot`
+  (`ToolRegistry::withhold`) otherwise, so it is in no request and a call to it is refused with the reason; the
+  switch is off at every start. The user's own "what's on my screen?" is the one exception (they asked for that
+  picture). Never attach a screenshot to a request on Nexa's own initiative.
 - The helper is the only root-privileged code, and it is **write-only** for input: never add a method that
   reads keystrokes, pointer position or window contents. Authorise against what the *bus* says about the
   caller (uid, unique name), never an identity the caller sent — and against the login it resolves to, so the

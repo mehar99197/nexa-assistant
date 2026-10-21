@@ -67,10 +67,13 @@ public:
     void refreshModels();
 
     void submit(const QString &text, const QString &source = QStringLiteral("gui"));
-    // Takes a screenshot and asks the model about it (default: describe the screen).
-    void askAboutScreen(const QString &question);
-    // The same for the phone's screen.
+    // Takes a screenshot of the phone and asks the model about it (default: describe it).
     void askAboutPhone(const QString &question);
+    // The Share screen switch. Off at every start: the model is not offered take_screenshot and is
+    // told to work through commands and tools instead; on, it may look whenever that helps. Your
+    // own "what's on my screen?" takes one picture either way — you asked for it.
+    bool isScreenShared() const { return screenShared_; }
+    void setScreenShared(bool shared);
     void cancel();                                  // the current reply and its speech
     void cancelReply();                             // the current reply only
     void panic();                                   // everything: replies, tools, child processes, voice
@@ -107,9 +110,12 @@ signals:
     void panicked();
     void coreModeChanged(nexa::CoreMode mode);
     void litNodesChanged(unsigned nodes);           // CoreNodes: the satellites the running action lights
+    void screenSharingChanged(bool shared);
 
 private:
     void runFastPath(const QString &prompt, const IntentMatch &match, const QString &source);
+    void answerDirectly(const QString &prompt, const QString &reply, const QString &source);
+    void applyScreenSharing();
     void askAboutPicture(const QString &tool, const QString &question, const QString &fallback);
     void runAgent(const QString &source);
     bool canUseModel(bool report);
@@ -141,6 +147,7 @@ private:
     CoreNodes litNodes_{NoNode};
     int runningActions_{0};
     QString offlineReason_;
+    bool screenShared_{false};
 };
 
 } // namespace nexa

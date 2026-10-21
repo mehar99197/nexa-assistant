@@ -192,6 +192,34 @@ TEST_CASE("Agent sends tool images back as a user message") {
     CHECK(last.images[0].data == "JPEG");
 }
 
+TEST_CASE("Agent keeps a withheld tool from the model and refuses a call to it with the reason") {
+    Fixture f;
+    f.registry.withhold(u"look"_s, u"the user is not sharing the screen"_s);
+    f.provider.script = {{{}, {call(u"c1"_s, u"look"_s, u"{}"_s)}, {}}, {u"Then I cannot see it."_s, {}, {}}};
+    f.agent.run(&f.provider, &f.conversation, u"m"_s, u"gui"_s);
+    REQUIRE(f.waitDone());
+    CHECK(f.finish == FinishReason::Stop);
+    // Not offered: two tools instead of three, in every request.
+    REQUIRE(f.provider.requests.size() == 2);
+    for (const ChatRequest &request : f.provider.requests) {
+        CHECK(request.tools.size() == 2);
+        for (const ToolSpec &spec : request.tools) CHECK(spec.name != u"look"_s);
+    }
+    // Called anyway: the model is told why, and nothing ran (no image came back).
+    CHECK(f.toolRuns == QStringList{u"look:fail"_s});
+    const ChatMessage &result = f.provider.requests[1].messages.last();
+    CHECK(result.role == Role::Tool);
+    CHECK(result.text.contains(u"not sharing the screen"_s));
+    CHECK(result.images.isEmpty());
+    const QFile audit(f.audit.path());
+    CHECK((!audit.exists() || audit.size() == 0));
+
+    // Offered again, it runs as before.
+    f.registry.offer(u"look"_s);
+    CHECK(f.registry.specs().size() == 3);
+    CHECK(f.registry.find(u"look"_s) != nullptr);
+}
+
 TEST_CASE("Agent::cancel during a tool closes the call and stops") {
     Fixture f;
     f.provider.script = {{{}, {call(u"c1"_s, u"slow"_s, u"{}"_s), call(u"c2"_s, u"echo"_s, u"{}"_s)}, {}}};

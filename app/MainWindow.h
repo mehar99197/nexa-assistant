@@ -31,12 +31,15 @@ class HttpClient;
 class ProviderRegistry;
 class MicButton;
 class NexaCoreWidget;
+class PhonePanel;
 class ToolExecutor;
 
 // The desktop window: a toolbar of pills (provider, model, policy, Stop all, the theme), the Nexa
-// core with the state's name and a hint beside it, the transcript, the input bar with See screen,
-// See phone, Send and Talk (the core again), the Actions panel on the right and a one-line status
-// bar in monospace. Everything it shows comes from AppController's signals; nothing here decides.
+// core with the state's name and a hint beside it, the transcript, the input bar with Share screen
+// (a switch: off, the model never looks at the screen), See phone, Send and Talk (the core again),
+// the Actions panel on the right, the Phone panel beside it while a phone is connected (its screen,
+// live) and a one-line status bar in monospace. Everything it shows comes from AppController's
+// signals; nothing here decides.
 class MainWindow : public QMainWindow {
     Q_OBJECT
 public:
@@ -86,6 +89,8 @@ private:
     void showHelper();
     void showPhone(const QString &description);
     void showRemote();
+    void showScreenSharing(bool shared);
+    void showPhonePanel(bool connected);
     void setBusy(bool busy);
 
     AppController *controller_;
@@ -99,6 +104,7 @@ private:
     DesignSpec design_;             // the design on: layout, core shape, corners, type
     ChatView *chatView_{nullptr};
     ActionLogDock *actionLog_{nullptr};
+    PhonePanel *phonePanel_{nullptr};
     NexaCoreWidget *presence_{nullptr};
     MicButton *micButton_{nullptr};
     QWidget *header_{nullptr};      // the core with the state's name: beside the chat, or stacked
@@ -115,7 +121,9 @@ private:
     QLabel *providerLabel_{nullptr};
     QToolButton *policyButton_{nullptr};
     QAction *themeAction_{nullptr};
+    QAction *shareScreenAction_{nullptr};
     QLabel *statusLabel_{nullptr};
+    QLabel *screenLabel_{nullptr};
     QLabel *helperLabel_{nullptr};
     QLabel *sttLabel_{nullptr};
     QLabel *ttsLabel_{nullptr};
