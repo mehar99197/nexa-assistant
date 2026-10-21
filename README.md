@@ -111,9 +111,13 @@ adb install -r build-android/nexa-phone.apk
 ```
 
 The host tools come from the system's own Qt (it is the same version, and Debian ships
+scripts/download-android-openssl.sh           # OpenSSL for the APK (5 MB): Qt for Android has no TLS without it
 `androiddeployqt`), so no desktop kit is downloaded. The first build fetches Gradle and the Android
 plugin (about 600 MB). The APK is signed with the usual Android debug key unless `KEYSTORE`,
-`KEYSTORE_ALIAS` and `KEYSTORE_PASS` name your own.
+`KEYSTORE_ALIAS` and `KEYSTORE_PASS` name your own. It carries OpenSSL 3 (KDAB's build for Android,
+fetched at a fixed commit into `~/Android/android_openssl`), because Qt for Android ships only its TLS
+plugin: an APK without it answers every `https://` address with "TLS initialization failed" and can
+reach Nexa only over adb, so the build refuses to go on without it.
 
 ## Security, in brief
 

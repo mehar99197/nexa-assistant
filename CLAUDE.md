@@ -165,7 +165,12 @@ models over its slow `auto/*` combos).
   (`adb reverse tcp:7777`) and start the app on the connected phone with the address and the code as launch-intent
   extras (`nexa.address`, `nexa.code`, `nexa.name` — read by `android/LaunchIntent`), so it pairs by itself; the
   desktop build takes the same through `--pair <address> --code <code>`. It is a standalone CMake project for
-  the APK (`scripts/build-phone-apk.sh`; README → "The phone app") and is also built inside the Linux build as
+  the APK (`scripts/build-phone-apk.sh`; README → "The phone app"; the APK must carry OpenSSL —
+  `scripts/download-android-openssl.sh` fetches KDAB's build into `~/Android/android_openssl`, the CMake refuses to
+  configure without it and the build script checks the APK, because Qt for Android has no TLS of its own and an
+  APK without it fails every network address with "TLS initialization failed"; on the phone Qt tags log lines by
+  category, so the app's own lines and TLS complaints are read with `adb logcat -d -s default:* qt.network.ssl:*`,
+  and the app's first line says which OpenSSL it found) and is also built inside the Linux build as
   `nexa_phone_ui` + `./build/android/nexa-phone`, which is how `tests/PhoneWindowTest.cc` drives the real
   screens against the real server. Keep it free of anything Android could not build (no D-Bus, no `app/`).
 - `packaging/` — `org.nexa.Assistant.desktop`, the helper's polkit policy, D-Bus and systemd files, and

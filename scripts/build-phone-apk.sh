@@ -14,6 +14,8 @@ QT_ANDROID="${QT_ANDROID:-$HOME/Qt/$QT_VERSION/android_arm64_v8a}"
 QT_HOST_PATH="${QT_HOST_PATH:-/usr}"
 ANDROID_SDK_ROOT="${ANDROID_SDK_ROOT:-${ANDROID_HOME:-$HOME/Android/Sdk}}"
 ANDROID_NDK_ROOT="${ANDROID_NDK_ROOT:-$(ls -d "$ANDROID_SDK_ROOT"/ndk/* 2>/dev/null | sort -V | tail -n 1)}"
+# OpenSSL for the APK (scripts/download-android-openssl.sh): Qt for Android has no TLS without it.
+ANDROID_OPENSSL_DIR="${ANDROID_OPENSSL_DIR:-$HOME/Android/android_openssl}"
 # Gradle 8.14 (Qt's) runs on Java 17 to 24: the newest JDK in that range, not the newest there is —
 # and a JDK, with javac, not the JRE Debian installs by default (`apt install openjdk-21-jdk-headless`,
 # or a Temurin JDK unpacked under ~/Android).
@@ -38,10 +40,11 @@ else
 fi
 
 for required in "$QT_ANDROID/lib/cmake/Qt6/qt.toolchain.cmake" "$QT_HOST_PATH_CMAKE_DIR/Qt6HostInfo" \
-                "$ANDROID_SDK_ROOT/platform-tools" "${ANDROID_NDK_ROOT:-/nonexistent}/ndk-build" "$JAVA_HOME/bin/javac"; do
+                "$ANDROID_SDK_ROOT/platform-tools" "${ANDROID_NDK_ROOT:-/nonexistent}/ndk-build" "$JAVA_HOME/bin/javac" \
+                "$ANDROID_OPENSSL_DIR/ssl_3/arm64-v8a/libssl_3.so" "$ANDROID_OPENSSL_DIR/ssl_3/arm64-v8a/libcrypto_3.so"; do
     if [ ! -e "$required" ]; then
         echo "missing: $required" >&2
-        echo "(README → \"The phone app\" lists what to install)" >&2
+        echo "(README → \"The phone app\" lists what to install; scripts/download-android-openssl.sh fetches OpenSSL)" >&2
         exit 1
     fi
 done
@@ -51,6 +54,7 @@ cmake -S android -B "$BUILD_DIR" -G Ninja -DCMAKE_BUILD_TYPE=Release \
     -DCMAKE_TOOLCHAIN_FILE="$QT_ANDROID/lib/cmake/Qt6/qt.toolchain.cmake" \
     -DQT_HOST_PATH="$QT_HOST_PATH" -DQT_HOST_PATH_CMAKE_DIR="$QT_HOST_PATH_CMAKE_DIR" \
     -DANDROID_SDK_ROOT="$ANDROID_SDK_ROOT" -DANDROID_NDK_ROOT="$ANDROID_NDK_ROOT" \
+    -DNEXA_ANDROID_OPENSSL_DIR="$ANDROID_OPENSSL_DIR" \
     -DANDROID_ABI=arm64-v8a -DANDROID_PLATFORM=android-28
 cmake --build "$BUILD_DIR" --target nexa-phone_make_apk
 
@@ -69,6 +73,16 @@ if [ -n "$stripped" ]; then
         exit 1
     fi
 fi
+# And OpenSSL must be inside, or the app has no TLS: on 2026-10-11 an APK without it answered every
+# network address with "TLS initialization failed" while localhost over adb worked. (The listing is
+# read whole: `unzip | grep -q` under pipefail fails on a hit, grep leaving before unzip is done.)
+contents="$(unzip -Z1 "$built")"
+for lib in libcrypto_3.so libssl_3.so; do
+    if ! grep -qx "lib/arm64-v8a/$lib" <<< "$contents"; then
+        echo "the APK carries no $lib, so the phone app would have no TLS" >&2
+        exit 1
+    fi
+done
 
 # A release build comes out unsigned, and a phone installs nothing unsigned. Without a key of
 # your own (KEYSTORE, KEYSTORE_ALIAS, KEYSTORE_PASS), it is signed with the usual Android debug

@@ -31,6 +31,15 @@ bool isLoopback(const QString &host) {
     return host.compare(u"localhost"_s, Qt::CaseInsensitive) == 0 || QHostAddress(host).isLoopback();
 }
 
+// Qt for Android brings no TLS of its own: an APK without OpenSSL inside it (android/CMakeLists.txt,
+// scripts/download-android-openssl.sh) answers every https:// and wss:// address with Qt's bare
+// "TLS initialization failed". Said in words instead, before anything is tried.
+std::optional<Error> missingTls() {
+    if (QSslSocket::supportsSsl()) return std::nullopt;
+    return Error{ErrorCode::NotSupported,
+                 u"this app was built without TLS (OpenSSL is missing from it), so it can reach Nexa only at localhost through adb"_s};
+}
+
 } // namespace
 
 // ------------------------------------------------------------------ RemoteEndpoint
@@ -100,6 +109,10 @@ void RemoteClient::setEndpoint(const RemoteEndpoint &endpoint) {
 void RemoteClient::probe(std::function<void(Result<Certificate>)> done) {
     if (!endpoint_.tls) {
         done(Certificate{{}, true});
+        return;
+    }
+    if (const std::optional<Error> missing = missingTls()) {
+        done(*missing);
         return;
     }
     auto *socket = new QSslSocket(this);
@@ -194,10 +207,17 @@ void RemoteClient::open() {
         setState(State::Offline, u"Not paired."_s);
         return;
     }
-    if (endpoint_.tls && pinned_.isEmpty()) {
-        wanted_ = false;
-        setState(State::Offline, u"Nexa's certificate has not been trusted yet."_s);
-        return;
+    if (endpoint_.tls) {
+        if (const std::optional<Error> missing = missingTls()) {
+            wanted_ = false;
+            setState(State::Offline, missing->message);
+            return;
+        }
+        if (pinned_.isEmpty()) {
+            wanted_ = false;
+            setState(State::Offline, u"Nexa's certificate has not been trusted yet."_s);
+            return;
+        }
     }
     welcomed_ = false;
     setState(State::Connecting, u"connecting…"_s);

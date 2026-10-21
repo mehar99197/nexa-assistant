@@ -83,4 +83,28 @@ if(ANDROID)
     # Only what it does: reach Nexa, and hear the user while Talk is held.
     qt_add_android_permission(nexa-phone NAME android.permission.INTERNET)
     qt_add_android_permission(nexa-phone NAME android.permission.RECORD_AUDIO)
+
+    # TLS. Qt for Android ships its OpenSSL plugin but not OpenSSL: the APK has to carry libcrypto_3.so
+    # and libssl_3.so for the ABI, which the plugin loads by exactly those names. Without them the app
+    # has no TLS at all — every https:// and wss:// address ends in "TLS initialization failed", and
+    # only http://localhost through adb works — so a build without them is refused here rather than
+    # found out on the phone. scripts/download-android-openssl.sh fetches them (KDAB's prebuilt ones).
+    set(NEXA_ANDROID_OPENSSL_DIR "$ENV{HOME}/Android/android_openssl" CACHE PATH
+        "OpenSSL built for Android, in KDAB's layout: ssl_3/<abi>/libcrypto_3.so and libssl_3.so")
+    set(nexa_openssl_abi "${CMAKE_ANDROID_ARCH_ABI}")
+    if(NOT nexa_openssl_abi)
+        set(nexa_openssl_abi "${ANDROID_ABI}")
+    endif()
+    set(nexa_openssl_libs
+        "${NEXA_ANDROID_OPENSSL_DIR}/ssl_3/${nexa_openssl_abi}/libcrypto_3.so"
+        "${NEXA_ANDROID_OPENSSL_DIR}/ssl_3/${nexa_openssl_abi}/libssl_3.so"
+    )
+    foreach(lib IN LISTS nexa_openssl_libs)
+        if(NOT EXISTS "${lib}")
+            message(FATAL_ERROR "OpenSSL for Android is missing: ${lib}\n"
+                "Run scripts/download-android-openssl.sh, or point NEXA_ANDROID_OPENSSL_DIR at a copy; "
+                "without it the phone app cannot use HTTPS.")
+        endif()
+    endforeach()
+    set_property(TARGET nexa-phone APPEND PROPERTY QT_ANDROID_EXTRA_LIBS ${nexa_openssl_libs})
 endif()

@@ -11,6 +11,7 @@
 
 #include <QApplication>
 #include <QCommandLineParser>
+#include <QSslSocket>
 
 using namespace Qt::StringLiterals;
 
@@ -21,6 +22,12 @@ int main(int argc, char **argv) {
     QApplication app(argc, argv);
     QCoreApplication::setOrganizationName(u"Nexa"_s);
     QCoreApplication::setApplicationName(u"Nexa Phone"_s);
+    // One line in logcat that says whether OpenSSL is inside this build: Qt for Android has no TLS
+    // without it, and then only http://localhost through adb can reach Nexa (plain qWarning: the
+    // default category always reaches logcat, whatever the rules).
+    qWarning().noquote() << "nexa tls:"
+                         << (QSslSocket::supportsSsl() ? QSslSocket::sslLibraryVersionString()
+                                                       : u"none — OpenSSL is missing from this build"_s);
 
     // On the desktop the PC's hand-over can be played by hand: --pair localhost:7777 --code 123456.
     // The phone has no command line; parse() never exits the process, which process() would do on
