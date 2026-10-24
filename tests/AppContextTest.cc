@@ -132,6 +132,14 @@ TEST_CASE("AppContext tells the model what the app in front means for its tools"
     }
     context.noteOpened(kBrowser);
     CHECK(context.promptSentence({}).contains(u"xdg-open"_s));
+    // With the browser tools there, a page opens through them — in the browser they work in, which
+    // need not be the one in front.
+    const AppContext::Situation browsing{.browserTools = true, .browserTarget = u"the user's own Google Chrome"_s};
+    const QString sentence = context.promptSentence(browsing);
+    CHECK(sentence.contains(u"browser_navigate"_s));
+    CHECK(sentence.contains(u"browser_snapshot"_s));
+    CHECK(sentence.contains(u"the user's own Google Chrome"_s));
+    CHECK_FALSE(sentence.contains(u"xdg-open"_s));
 }
 
 TEST_CASE("AppContext types a command into the terminal in front, and only then") {

@@ -80,3 +80,17 @@ TEST_CASE("PolicyEngine mode names round-trip") {
     }
     CHECK(PolicyEngine::modeFromString(u"nonsense"_s) == PolicyMode::Autonomous);
 }
+
+TEST_CASE("PolicyEngine: a browser click asks in confirm-risky mode with its own risk; typed page text is not a command") {
+    const ToolSpec click{u"browser_click"_s, u"Click"_s, {}, true, true, u"acts on web pages in your browser, signed in as you"_s};
+    const ToolSpec type{u"browser_type"_s, u"Type"_s, {}, true, true, u"acts on web pages in your browser, signed in as you"_s};
+    const ToolSpec navigate{u"browser_navigate"_s, u"Go"_s, {}, true, false, {}};
+    const PolicyEngine risky(PolicyMode::ConfirmRisky);
+    const PolicyDecision clicked = risky.evaluate(click, QJsonObject{{u"target"_s, u"e42"_s}});
+    CHECK(clicked.needsConfirmation);
+    CHECK(clicked.reason == click.risk);
+    CHECK_FALSE(risky.evaluate(navigate, QJsonObject{{u"url"_s, u"https://example.com"_s}}).needsConfirmation);
+    // Text typed into a page is not judged as a shell command (only type_text's is).
+    CHECK_FALSE(risky.evaluate(type, QJsonObject{{u"text"_s, u"rm -rf /"_s}}).destructive);
+    CHECK_FALSE(PolicyEngine(PolicyMode::Autonomous).evaluate(click, {}).needsConfirmation);
+}

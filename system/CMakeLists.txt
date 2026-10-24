@@ -14,6 +14,9 @@ add_library(nexa_system STATIC
     apps/DesktopEntry.h apps/DesktopEntry.cc
     apps/DesktopEntryIndex.h apps/DesktopEntryIndex.cc
     audio/WpctlAudioController.h audio/WpctlAudioController.cc
+    browser/BrowserService.h browser/BrowserService.cc
+    browser/ChromeProfiles.h browser/ChromeProfiles.cc
+    browser/PlaywrightInstaller.h browser/PlaywrightInstaller.cc
     commands/LocalCommandRunner.h commands/LocalCommandRunner.cc
     files/FileAccess.h files/FileAccess.cc
     helper/HelperClient.h helper/HelperClient.cc

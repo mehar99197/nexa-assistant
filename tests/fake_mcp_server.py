@@ -1,18 +1,34 @@
 #!/usr/bin/env python3
 """A pretend MCP server on stdio, for tests/McpClientTest.cc: initialize, tools/list in two pages,
 tools/call for echo, add and fail, a ping of its own when FAKE_MCP_PING=1, and its version from
-FAKE_MCP_VERSION so the test can see that the environment reached it."""
+FAKE_MCP_VERSION so the test can see that the environment reached it. With FAKE_MCP_EXTRA=1 it also
+lists picture (text and a PNG), cwd (its working directory) and args (the arguments it was sent);
+with FAKE_MCP_REQUIRE=<path> it exits at once unless that file exists."""
 import json
 import os
 import sys
 
+if os.environ.get("FAKE_MCP_REQUIRE") and not os.path.exists(os.environ["FAKE_MCP_REQUIRE"]):
+    sys.exit(2)
+
+# A 1x1 PNG.
+PIXEL = ("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==")
+
 TOOLS = [
-    {"name": "echo", "description": "Says it back",
+    {"name": "echo", "description": "Says it back", "annotations": {"readOnlyHint": True},
      "inputSchema": {"type": "object", "properties": {"text": {"type": "string"}}, "required": ["text"]}},
     {"name": "add", "description": "Adds two numbers",
      "inputSchema": {"type": "object", "properties": {"a": {"type": "number"}, "b": {"type": "number"}}}},
     {"name": "fail", "description": "Always fails", "inputSchema": {"type": "object"}},
 ]
+EXTRA = [
+    {"name": "picture", "description": "A picture", "inputSchema": {"type": "object"}},
+    {"name": "cwd", "description": "Where it runs", "inputSchema": {"type": "object"}},
+    {"name": "args", "description": "What it was sent",
+     "inputSchema": {"type": "object", "properties": {"text": {"type": "string"}, "filename": {"type": "string"}}}},
+]
+if os.environ.get("FAKE_MCP_EXTRA") == "1":
+    TOOLS = TOOLS + EXTRA
 
 
 def send(message):
@@ -57,6 +73,13 @@ for line in sys.stdin:
             reply(mid, {"content": [{"type": "text", "text": str(arguments.get("a", 0) + arguments.get("b", 0))}]})
         elif name == "fail":
             reply(mid, {"isError": True, "content": [{"type": "text", "text": "boom"}]})
+        elif name == "picture":
+            reply(mid, {"content": [{"type": "text", "text": "a dot"},
+                                    {"type": "image", "mimeType": "image/png", "data": PIXEL}]})
+        elif name == "cwd":
+            reply(mid, {"content": [{"type": "text", "text": os.getcwd()}]})
+        elif name == "args":
+            reply(mid, {"content": [{"type": "text", "text": json.dumps(arguments, sort_keys=True)}]})
         elif name == "quit":
             sys.exit(3)
         else:

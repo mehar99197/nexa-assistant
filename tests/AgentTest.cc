@@ -379,6 +379,23 @@ TEST_CASE("ToolExecutor asks for confirmation and honours the answer") {
     CHECK(questions.size() == 2);
 }
 
+TEST_CASE("A tool that goes while its question is open is not run when the answer comes") {
+    Fixture f;
+    f.policy.setMode(PolicyMode::ConfirmAll);
+    std::function<void(bool)> pending;
+    f.executor.setConfirmer([&](const QString &, std::function<void(bool)> answer) { pending = std::move(answer); });
+
+    std::optional<Result<ToolResult>> result;
+    f.executor.execute(u"echo"_s, {{u"msg"_s, u"a"_s}}, u"gui"_s, [&](Result<ToolResult> r) { result = std::move(r); });
+    REQUIRE(pending);
+    CHECK_FALSE(result.has_value());
+    f.registry.remove(u"echo"_s);   // e.g. its connector listed its tools again: the old one is deleted
+    pending(true);
+    REQUIRE(result.has_value());
+    REQUIRE_FALSE(result->isOk());
+    CHECK(result->error().message.contains(u"no longer available"_s));
+}
+
 TEST_CASE("A model that cannot call tools is taught the convention, and its calls are read from the text") {
     Fixture f;
     f.provider.nativeTools = false;

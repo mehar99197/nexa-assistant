@@ -10,6 +10,8 @@ add_executable(nexa_tests
     QtStringMakers.h
     AgentTest.cc
     AppContextTest.cc
+    BrowserServiceTest.cc
+    ChromeProfilesTest.cc
     AnthropicProviderTest.cc
     ChatTestUtil.h
     CombinedInputBackendTest.cc
@@ -22,6 +24,8 @@ add_executable(nexa_tests
     KeyMapTest.cc
     LocalCommandRunnerTest.cc
     McpClientTest.cc
+    MemoryIntentTest.cc
+    MemoryStoreTest.cc
     OdfWriterTest.cc
     OfficeToolsTest.cc
     OpenAiProviderTest.cc
@@ -37,6 +41,8 @@ add_executable(nexa_tests
     # The window's Phone panel, built from app/ like the helper's record below.
     PhonePanelTest.cc ../app/PhonePanel.cc
     PolicyEngineTest.cc
+    SkillCatalogTest.cc
+    SkillParserTest.cc
     PortalInputBackendTest.cc
     QrCodeTest.cc
     PhoneWindowTest.cc

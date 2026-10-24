@@ -31,6 +31,10 @@ McpConnectors::~McpConnectors() {
     for (auto &[id, link] : links_) dropTools(link.get());
 }
 
+void McpConnectors::setShaping(Shaping shaping) {
+    shaping_ = std::move(shaping);
+}
+
 QString McpConnectors::toolName(const QString &serverId, const QString &tool) {
     return (u"mcp_"_s + sanitized(serverId) + u'_' + sanitized(tool)).left(64);
 }
@@ -52,9 +56,14 @@ void McpConnectors::apply(const QList<McpServerConfig> &servers) {
             ++it;
         }
     }
-    // New or changed: connected.
+    // New or changed: connected. Unchanged but failed: tried again.
     for (const McpServerConfig &server : servers) {
-        if (server.id.isEmpty() || links_.count(server.id)) continue;
+        if (server.id.isEmpty()) continue;
+        if (const auto existing = links_.find(server.id); existing != links_.end()) {
+            Link *link = existing->second.get();
+            if (server.enabled && link->status.state == u"failed"_s) connectLink(link);
+            continue;
+        }
         auto link = std::make_unique<Link>();
         link->config = server;
         link->status = Status{server.id, server.name, u"off"_s, {}, {}};
@@ -134,25 +143,34 @@ void McpConnectors::adoptTools(Link *link, const QList<McpClient::Tool> &tools) 
         spec.mutating = true;
         spec.privileged = true;
         spec.risk = tr("calls the %1 connector").arg(serverName);
+        if (shaping_.spec) {
+            std::optional<ToolSpec> shaped = shaping_.spec(tool, spec);
+            if (!shaped) continue;
+            spec = std::move(*shaped);
+        }
         const QString remoteName = tool.name;
-        registry_->add(std::make_unique<FunctionTool>(spec, [client, remoteName](const QJsonObject &arguments, ITool::Done done) {
+        const Shaping shaping = shaping_;
+        registry_->add(std::make_unique<FunctionTool>(spec, [client, remoteName, shaping](const QJsonObject &arguments, ITool::Done done) {
             if (!client || !client->isReady()) {
                 done(Error{ErrorCode::NotSupported, tr("The connector is not connected.")});
                 return;
             }
-            client->callTool(remoteName, arguments, [done](Result<QString> text) {
-                if (!text) {
-                    done(text.error());
+            const QJsonObject sent = shaping.arguments ? shaping.arguments(remoteName, arguments) : arguments;
+            client->callTool(remoteName, sent, [done, remoteName, shaping](Result<McpClient::CallResult> call) {
+                if (!call) {
+                    done(call.error());
                     return;
                 }
-                done(ToolResult{text.value()});
+                ToolResult result{call.value().text, std::nullopt};
+                if (!call.value().images.isEmpty()) result.image = call.value().images.constFirst();
+                done(shaping.result ? shaping.result(remoteName, std::move(result)) : std::move(result));
             });
         }));
         link->toolNames.append(spec.name);
     }
     link->status.tools = link->toolNames;
-    qCInfo(lcMcp).noquote() << serverName << "offers" << tools.size() << "tools";
-    setState(link, u"ready"_s, tr("%n tool(s)", nullptr, int(tools.size())));
+    qCInfo(lcMcp).noquote() << serverName << "offers" << tools.size() << "tools," << link->toolNames.size() << "taken";
+    setState(link, u"ready"_s, tr("%n tool(s)", nullptr, int(link->toolNames.size())));
 }
 
 void McpConnectors::dropTools(Link *link) {

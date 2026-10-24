@@ -1,6 +1,7 @@
 #pragma once
 
 #include "core/Result.h"
+#include "core/ai/ChatRequest.h"
 
 #include <QJsonObject>
 #include <QList>
@@ -28,6 +29,14 @@ public:
         QString name;
         QString description;
         QJsonObject inputSchema;    // a JSON Schema for the arguments object
+        QJsonObject annotations;    // the server's hints: readOnlyHint, destructiveHint, …
+        bool readOnly() const { return annotations.value(QStringLiteral("readOnlyHint")).toBool(); }
+    };
+    // What a tools/call answered: its text (an image named in it as "[image: image/png]") and the
+    // images themselves, decoded.
+    struct CallResult {
+        QString text;
+        QList<ImageAttachment> images;
     };
     struct ServerInfo {
         QString name;
@@ -38,20 +47,23 @@ public:
     static constexpr QLatin1StringView kProtocolVersion{"2025-06-18"};
     static constexpr int kRequestTimeoutMs = 30'000;
     static constexpr int kCallTimeoutMs = 120'000;
+    static constexpr qsizetype kMaxImageBytes = 8 << 20;   // a bigger picture is named, not kept
 
     explicit McpClient(std::unique_ptr<IMcpTransport> transport, QObject *parent = nullptr);
     ~McpClient() override;
 
     void open(std::function<void(Result<ServerInfo>)> done);        // start, initialize, initialized
     void listTools(std::function<void(Result<QList<Tool>>)> done);  // every page
-    // The text the tool answered with; an error the tool reports comes back as an Error.
-    void callTool(const QString &name, const QJsonObject &arguments, std::function<void(Result<QString>)> done);
+    // What the tool answered with; an error the tool reports comes back as an Error.
+    void callTool(const QString &name, const QJsonObject &arguments, std::function<void(Result<CallResult>)> done);
     void close();
     bool isReady() const { return ready_; }
     const ServerInfo &server() const { return server_; }
     QString describe() const;
 
-    // Pure: what a tools/call result says, and the tools a tools/list result holds.
+    // Pure: what a tools/call result says (its text, or with its images), and the tools a
+    // tools/list result holds.
+    static Result<CallResult> resultOf(const QJsonObject &result);
     static Result<QString> resultText(const QJsonObject &result);
     static QList<Tool> toolsIn(const QJsonObject &result);
 

@@ -36,6 +36,8 @@ public:
         bool canType{false};            // an input backend exists (the root helper, or the portal)
         bool askedFirst{false};         // the policy would ask before typing — and answering gives Nexa the keyboard
         bool remote{false};             // the request came from a phone, whose user cannot see the PC's windows
+        bool browserTools{false};       // the browser_* tools (Playwright) are there
+        QString browserTarget;          // …and where they work: "the user's own Google Chrome (profile "Ahmad"), …"
     };
 
     void noteOpened(const OpenedApp &app);      // open_app ran, from the fast path or the model

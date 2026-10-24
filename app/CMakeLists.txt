@@ -13,6 +13,9 @@ qt_add_executable(nexa_assistant
     SingleInstance.h SingleInstance.cc
     TrayIcon.h TrayIcon.cc
     SettingsDialog.h SettingsDialog.cc
+    BrowserSettingsPage.h BrowserSettingsPage.cc
+    MemorySettingsPage.h MemorySettingsPage.cc
+    SkillsSettingsPage.h SkillsSettingsPage.cc
     UnixSignals.h UnixSignals.cc
 )
 

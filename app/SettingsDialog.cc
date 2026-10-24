@@ -1,5 +1,9 @@
 #include "app/SettingsDialog.h"
 
+#include "app/BrowserSettingsPage.h"
+#include "app/MemorySettingsPage.h"
+#include "app/SkillsSettingsPage.h"
+
 #include "core/ai/IAiProvider.h"
 #include "app/GlobalShortcuts.h"
 #include "remote/PairingManager.h"
@@ -26,6 +30,7 @@
 #include <QLineEdit>
 #include <QListWidget>
 #include <QMenu>
+#include <QMessageBox>
 #include <QPainter>
 #include <QPlainTextEdit>
 #include <QProcess>
@@ -75,7 +80,7 @@ SettingsDialog::SettingsDialog(Config config, ProviderRegistry *registry, HttpCl
       http_(http),
       status_(std::move(status)) {
     setWindowTitle(tr("Settings"));
-    resize(820, 580);
+    resize(960, 600);
 
     tabs_ = new QTabWidget(this);
     tabs_->addTab(buildProvidersTab(), tr("Providers"));
@@ -84,6 +89,12 @@ SettingsDialog::SettingsDialog(Config config, ProviderRegistry *registry, HttpCl
     tabs_->addTab(buildAndroidTab(), tr("Android"));
     tabs_->addTab(buildRemoteTab(), tr("Remote"));
     tabs_->addTab(buildConnectorsTab(), tr("Connectors"));
+    browserPage_ = new BrowserSettingsPage(config_.browser, status_.browser, this);
+    memoryPage_ = new MemorySettingsPage(config_.memory, status_.memory, this);
+    skillsPage_ = new SkillsSettingsPage(config_.skills, status_.skills, this);
+    tabs_->addTab(browserPage_, tr("Browser"));
+    tabs_->addTab(memoryPage_, tr("Memory"));
+    tabs_->addTab(skillsPage_, tr("Skills"));
     tabs_->addTab(buildPolicyTab(), tr("Policy"));
     tabs_->addTab(buildGeneralTab(), tr("General"));
 
@@ -133,6 +144,15 @@ void SettingsDialog::accept() {
     config_.android.autoReconnect = phoneReconnect_->isChecked();
     config_.remote.enabled = remoteEnabled_->isChecked();
     config_.remote.port = remotePort_->value();
+    browserPage_->store(config_.browser);
+    memoryPage_->store(config_.memory);
+    skillsPage_->store(config_.skills);
+    // The memory's own file, not the config: what the page changed, applied to the memory as it is now.
+    if (const Result<void> edited = memoryPage_->applyEdits(); !edited) {
+        tabs_->setCurrentWidget(memoryPage_);
+        QMessageBox::warning(this, tr("Memory"), edited.error().message);
+        return;
+    }
     QDialog::accept();
 }
 

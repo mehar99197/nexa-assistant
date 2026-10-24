@@ -4,6 +4,7 @@
 
 #include <QFile>
 #include <QFileInfo>
+#include <QJsonArray>
 #include <QJsonObject>
 #include <QTemporaryDir>
 
@@ -44,6 +45,11 @@ Config sampleConfig() {
     config.remote.enabled = true;
     config.remote.port = 8443;
     config.agent.maxToolRounds = 12;
+    config.browser.mode = u"extension"_s;
+    config.browser.profile = u"Profile 1"_s;
+    config.browser.extensionToken = u"token-123"_s;
+    config.memory.learn = false;
+    config.skills.disabled = {u"web-browsing"_s};
     // A section this build does not know.
     config.extra.insert(u"future"_s, QJsonObject{{u"setting"_s, 42}});
     return config;
@@ -85,6 +91,34 @@ TEST_CASE("ConfigStore round-trips providers, prompt and unknown sections") {
     CHECK_FALSE(loaded.value().extra.contains(u"agent"_s));
     CHECK_FALSE(loaded.value().extra.contains(u"voice"_s));
     CHECK_FALSE(loaded.value().extra.contains(u"android"_s));
+    CHECK(loaded.value().browser.profile == u"Profile 1"_s);
+    CHECK(loaded.value().browser.extensionToken == u"token-123"_s);
+    CHECK_FALSE(loaded.value().memory.learn);
+    CHECK(loaded.value().skills.disabled == QStringList{u"web-browsing"_s});
+    for (const QString &section : {u"browser"_s, u"memory"_s, u"skills"_s, u"ui"_s, u"mcp"_s}) {
+        CHECK_FALSE(loaded.value().extra.contains(section));
+    }
+}
+
+TEST_CASE("The browser, memory and skills sections default when missing and refuse what they cannot use") {
+    const Config defaults = Config::fromJson(QJsonObject{});
+    CHECK(defaults.browser.enabled);
+    CHECK(defaults.browser.mode == u"auto"_s);
+    CHECK(defaults.browser.browser == u"chrome"_s);
+    CHECK(defaults.browser.profile.isEmpty());
+    CHECK(defaults.memory.enabled);
+    CHECK(defaults.memory.learn);
+    CHECK(defaults.skills.enabled);
+    CHECK(defaults.skills.disabled.isEmpty());
+
+    const Config odd = Config::fromJson(QJsonObject{
+        {u"browser"_s, QJsonObject{{u"mode"_s, u"telepathy"_s}, {u"browser"_s, u"../../bin"_s}, {u"profile"_s, u"../x"_s}}},
+        {u"skills"_s, QJsonObject{{u"disabled"_s, QJsonArray{u"ok-name"_s, u"Bad Name"_s, u"ok-name"_s, 7}}}},
+    });
+    CHECK(odd.browser.mode == u"auto"_s);
+    CHECK(odd.browser.browser == u"chrome"_s);
+    CHECK(odd.browser.profile.isEmpty());          // a path component: only Chrome's own names
+    CHECK(odd.skills.disabled == QStringList{u"ok-name"_s});
 }
 
 TEST_CASE("A phone remembered before Nexa understood the section is still remembered") {

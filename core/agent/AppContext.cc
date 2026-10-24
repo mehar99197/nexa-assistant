@@ -139,8 +139,14 @@ QString AppContext::promptSentence(const Situation &situation) const {
         }
         break;
     case AppKind::Browser:
-        sentence += u" A page or a search they ask for opens there with run_command \"xdg-open <url>\" (for a "
-                    "search, https://duckduckgo.com/?q=<words>)."_s;
+        // The browser tools work in one browser of their own, which need not be this one.
+        if (situation.browserTools) {
+            sentence += u" Pages and searches they ask for open with the browser_* tools (browser_navigate, then "
+                        "browser_snapshot to read the page), which work in %1."_s.arg(situation.browserTarget);
+        } else {
+            sentence += u" A page or a search they ask for opens there with run_command \"xdg-open <url>\" (for a "
+                        "search, https://duckduckgo.com/?q=<words>)."_s;
+        }
         break;
     case AppKind::Other:
         break;

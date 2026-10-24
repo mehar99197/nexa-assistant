@@ -22,9 +22,11 @@ class ConfigStore;
 class HttpClient;
 class IAiProvider;
 class IntentRouter;
+class MemoryStore;
 class PanicController;
 class PolicyEngine;
 class ProviderRegistry;
+class SkillCatalog;
 class ToolRegistry;
 class VoicePipeline;
 
@@ -43,6 +45,10 @@ struct AppServices {
     AppContext *context{nullptr};       // the app the user is in (filled by open_app, close_app)
     std::function<bool()> windowActive; // Nexa's own window has the keyboard focus
     std::function<bool()> canType;      // an input backend can type (the helper, or the portal)
+    MemoryStore *memory{nullptr};       // what Nexa remembers about the user (Settings → Memory)
+    SkillCatalog *skills{nullptr};      // the skills the model may load (Settings → Skills)
+    // Where the browser_* tools work, in words for the prompt; empty while they are not there.
+    std::function<QString()> browserTarget;
 };
 
 // Mediator between the GUI, voice and core. Each request takes the fast path when the
@@ -93,6 +99,11 @@ public:
     QString offlineReason() const { return offlineReason_; }    // why the core shows Offline
     // A line for the status bar (and the phones, when it is an error) from outside the controller.
     void report(const QString &message, bool isError) { emit statusChanged(message, isError); }
+    // A note in the chat as well as the status bar: something the user should read once.
+    void notify(const QString &message) {
+        emit replyNotice(message);
+        emit statusChanged(message, false);
+    }
 
     void setConfirmer(ToolExecutor::Confirmer confirmer);
     VoicePipeline *voice() const { return services_.voice; }
@@ -144,6 +155,7 @@ private:
     void setOffline(bool offline, const QString &reason = {});
     ProviderConfig *activeProviderConfig();
     QString systemPrompt(const QString &source = QString()) const;   // the request's source shapes it
+    QString browserParagraph() const;                                 // empty while there are no browser tools
     QString describe(const Error &error) const;
 
     AppServices services_;

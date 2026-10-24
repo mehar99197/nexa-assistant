@@ -10,6 +10,7 @@
 #include "core/tools/ToolExecutor.h"
 #include "remote/RemoteServer.h"
 #include "system/android/AndroidDevice.h"
+#include "system/browser/BrowserService.h"
 #include "system/helper/HelperClient.h"
 #include "ui/NexaCoreWidget.h"
 #include "voice/pipeline/VoicePipeline.h"
@@ -462,6 +463,14 @@ void MainWindow::buildStatusBar() {
     statusBar()->addPermanentWidget(screenLabel_);
     showScreenSharing(controller_->isScreenShared());
 
+    if (status_.browser) {
+        // Where the browser tools work; installing Playwright or adding the extension changes it.
+        browserLabel_ = new QLabel(this);
+        statusBar()->addPermanentWidget(browserLabel_);
+        showBrowser();
+        connect(status_.browser, &BrowserService::stateChanged, this, &MainWindow::showBrowser);
+    }
+
     helperLabel_ = new QLabel(this);
     statusBar()->addPermanentWidget(helperLabel_);
     showHelper();
@@ -768,13 +777,14 @@ void MainWindow::wear(const QString &palette, const QString &design) {
     refreshTheme();
 }
 
-void MainWindow::snapshotSettings(const QString &directory) {
+void MainWindow::snapshotSettings(const QString &directory, std::function<void()> done) {
     auto *dialog = new SettingsDialog(controller_->config(), registry_, http_, status_, this);
     dialog->setAttribute(Qt::WA_DeleteOnClose);
     dialog->show();
-    QTimer::singleShot(600, dialog, [dialog, directory] {
+    QTimer::singleShot(600, dialog, [dialog, directory, done = std::move(done)] {
         dialog->snapshotTabs(directory);
         dialog->close();
+        if (done) done();
     });
 }
 
@@ -889,6 +899,11 @@ void MainWindow::showAppContext(const QString &name, const QString &hint) {
     appLabel_->setToolTip(hint.isEmpty() ? QString()
                                          : hint + u'\n' + tr("Opening another app, or closing this one, moves on."));
     showCoreMode(controller_->coreMode());
+}
+
+void MainWindow::showBrowser() {
+    browserLabel_->setText(tr("Browser: %1").arg(status_.browser->summary()));
+    browserLabel_->setToolTip(status_.browser->detail());
 }
 
 void MainWindow::showScreenSharing(bool shared) {
