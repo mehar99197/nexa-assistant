@@ -9,6 +9,7 @@ add_executable(nexa_tests
     FakeHttpServer.h
     QtStringMakers.h
     AgentTest.cc
+    AppContextTest.cc
     AnthropicProviderTest.cc
     ChatTestUtil.h
     CombinedInputBackendTest.cc
@@ -21,6 +22,8 @@ add_executable(nexa_tests
     KeyMapTest.cc
     LocalCommandRunnerTest.cc
     McpClientTest.cc
+    OdfWriterTest.cc
+    OfficeToolsTest.cc
     OpenAiProviderTest.cc
     OpenAiStreamTest.cc
     PairingManagerTest.cc

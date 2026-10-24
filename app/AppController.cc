@@ -16,6 +16,8 @@
 
 #include <QElapsedTimer>
 
+#include <algorithm>
+
 using namespace Qt::StringLiterals;
 
 namespace nexa {
@@ -57,6 +59,8 @@ AppController::AppController(AppServices services, Config config, QString enviro
       config_(std::move(config)),
       environment_(std::move(environment)) {
     applyScreenSharing();   // off until asked: the model works without looking
+    contextExpiry_.setSingleShot(true);
+    connect(&contextExpiry_, &QTimer::timeout, this, &AppController::refreshAppContext);
     conversation_.setSystemPrompt(systemPrompt());
     services_.policy->setMode(PolicyEngine::modeFromString(config_.policyMode));
 
@@ -69,6 +73,10 @@ AppController::AppController(AppServices services, Config config, QString enviro
         replyHasContent_ = true;
         emit replyAction(tool, ok, summary, ms);
         emit replyStep(stepText(tool, summary, ms), ok);
+    });
+    connect(agent, &Agent::notice, this, [this](const QString &message) {
+        emit replyNotice(message);
+        emit statusChanged(message, true);
     });
     connect(agent, &Agent::finished, this, &AppController::finishReply);
     connect(agent, &Agent::failed, this, [this](const Error &error) {
@@ -89,7 +97,13 @@ AppController::AppController(AppServices services, Config config, QString enviro
                 activity_.acting = true;
                 refreshCoreMode();
             });
-    connect(services_.executor, &ToolExecutor::actionFinished, this, [this](quint64, bool, const QString &, qint64) {
+    connect(services_.executor, &ToolExecutor::actionFinished, this, [this](quint64, bool, const QString &tool, qint64) {
+        // open_app, close_app and create_document move the user elsewhere; a command or typing
+        // while an app is in front is a sign they are still there.
+        if (services_.context && (tool == u"type_text"_s || tool == u"run_command"_s || tool == u"create_document"_s)) {
+            services_.context->touch();
+        }
+        refreshAppContext();
         if (--runningActions_ > 0) return;
         runningActions_ = 0;
         activity_.acting = false;
@@ -144,6 +158,7 @@ void AppController::updateConfig(const Config &config) {
     config_ = config;
     conversation_.setSystemPrompt(systemPrompt());
     services_.policy->setMode(PolicyEngine::modeFromString(config_.policyMode));
+    refreshAppContext();    // a new policy may change whether commands are typed
     persist();
     emit configChanged(config_);
     emit themeChanged(config_.ui.theme);
@@ -208,6 +223,7 @@ void AppController::refreshModels() {
 void AppController::submit(const QString &text, const QString &source) {
     const QString prompt = text.trimmed();
     if (prompt.isEmpty() || busy_) return;
+    refreshAppContext();
 
     const std::optional<IntentMatch> match = services_.router->route(prompt);
     if (match && match->panic) {
@@ -223,6 +239,24 @@ void AppController::submit(const QString &text, const QString &source) {
                                           "looking at your screen."),
                        source);
         return;
+    }
+    // A command asked for while the user is in a terminal Nexa opened is typed into that
+    // terminal, where they can see it run, instead of running out of sight.
+    if (match && services_.context) {
+        const QString command = match->arguments.value(u"command"_s).toString();
+        const bool destructive = !PolicyEngine::destructiveReason(command).isEmpty();
+        if (const std::optional<IntentMatch> typed = services_.context->redirect(*match, situation(source), destructive)) {
+            services_.context->touch();
+            emit userMessageAccepted(prompt, source);
+            beginReply(source);
+            activity_.fastPath = true;
+            refreshCoreMode();
+            emit replyRoute(u"fast"_s);
+            replyHasContent_ = true;
+            emit replyDelta(tr("Into %1: `%2`").arg(services_.context->app().name, command.trimmed()));
+            runFastPath(prompt, *typed, source);
+            return;
+        }
     }
     if (!match && !canUseModel(true)) return;
 
@@ -246,6 +280,46 @@ void AppController::setScreenShared(bool shared) {
     conversation_.setSystemPrompt(systemPrompt());
     qCInfo(lcApp) << "screen sharing" << (shared ? "on" : "off");
     emit screenSharingChanged(shared);
+}
+
+QString AppController::appContextName() const {
+    return services_.context && services_.context->isActive() ? services_.context->app().name : QString();
+}
+
+QString AppController::appContextHint() const {
+    if (!services_.context) return {};
+    const AppContext::Situation now = situation();
+    return services_.context->hint(now.canType && !now.askedFirst);
+}
+
+AppContext::Situation AppController::situation(const QString &source) const {
+    AppContext::Situation situation{.nexaWindowActive = services_.windowActive ? services_.windowActive() : false,
+                                    .canType = services_.canType ? services_.canType() : false,
+                                    .remote = source.startsWith(u"phone"_s)};
+    // The policy asks before privileged typing in confirm-risky mode (and before every change in
+    // confirm-all); answering the question gives Nexa's window the keyboard.
+    if (const ITool *typer = services_.tools->find(u"type_text"_s)) {
+        situation.askedFirst = services_.policy->evaluate(typer->spec(), {}).needsConfirmation;
+    } else {
+        situation.canType = false;
+    }
+    return situation;
+}
+
+void AppController::refreshAppContext() {
+    if (!services_.context) return;
+    const QString id = services_.context->isActive() ? services_.context->app().id : QString();
+    // When it will be forgotten, the window hears of it then, not at the next request.
+    if (!id.isEmpty()) {
+        contextExpiry_.start(int(std::min<qint64>(services_.context->remainingMs() + 50, 0x7fffffff)));
+    } else {
+        contextExpiry_.stop();
+    }
+    const QString hint = appContextHint();
+    if (id == announcedApp_ && hint == announcedHint_) return;
+    announcedApp_ = id;
+    announcedHint_ = hint;
+    emit appContextChanged(appContextName(), hint);
 }
 
 void AppController::applyScreenSharing() {
@@ -336,15 +410,20 @@ void AppController::runFastPath(const QString &prompt, const IntentMatch &match,
                                                                                  : details)
                             + u"\n```"_s);
         }
-        // Keep the model's view of the conversation complete for later questions.
+        // Keep the model's view of the conversation complete for later questions. The result
+        // stands as the reply, in plain words: a bracketed note would be copied back by some
+        // models ("Done directly with …").
         conversation_.addUser(forModel(prompt, source));
-        conversation_.addAssistant(u"[Done directly with %1: %2]"_s.arg(match.toolName, result.value().text));
+        conversation_.addAssistant(result.value().text);
         finishReply(FinishReason::Stop);
     });
 }
 
 void AppController::runAgent(const QString &source) {
     qCDebug(lcApp) << "agent:" << currentModel();
+    // The prompt names the app the user is in, whether Nexa's window has the keyboard and where
+    // the request came from, which change between requests.
+    conversation_.setSystemPrompt(systemPrompt(source));
     activity_.fastPath = false;
     activity_.thinking = true;
     refreshCoreMode();
@@ -522,18 +601,28 @@ ProviderConfig *AppController::activeProviderConfig() {
     return config_.providers.isEmpty() ? nullptr : &config_.providers.first();
 }
 
-QString AppController::systemPrompt() const {
+QString AppController::systemPrompt(const QString &source) const {
     QString prompt = config_.systemPrompt;
     if (services_.voice) {
         prompt += u"\n\nMessages that start with [voice] were spoken, and your reply to them is read aloud: answer "
                   "in one to three short sentences of plain text, without Markdown, lists or code."_s;
     }
-    prompt += screenShared_
-                  ? u"\n\nThe user is sharing their screen with you: call take_screenshot whenever seeing it would help."_s
-                  : u"\n\nThe user is not sharing their screen, so you cannot see it and take_screenshot is not "
-                    "available. Do what was asked through run_command, open_app and the other tools; only when a "
-                    "request truly cannot be done without seeing the screen, say that Share screen (the button "
-                    "beside the input box) has to be switched on."_s;
+    if (!screenShared_) {
+        prompt += u"\n\nThe user is not sharing their screen, so you cannot see it and take_screenshot is not "
+                  "available. Do what was asked through run_command, open_app and the other tools; only when a "
+                  "request truly cannot be done without seeing the screen, say that Share screen (the button "
+                  "beside the input box) has to be switched on."_s;
+    } else if (services_.agent->cannotSeeImages(currentModel())) {
+        prompt += u"\n\nThe user is sharing their screen, but this model cannot see images, so take_screenshot "
+                  "would show you nothing: do what was asked through the other tools, and when a request needs the "
+                  "screen, say that a vision-capable model has to be chosen in the toolbar."_s;
+    } else {
+        prompt += u"\n\nThe user is sharing their screen with you: call take_screenshot whenever seeing it would help."_s;
+    }
+    if (services_.context) {
+        const QString app = services_.context->promptSentence(situation(source));
+        if (!app.isEmpty()) prompt += u"\n\n"_s + app;
+    }
     if (!environment_.isEmpty()) prompt += u"\n\nThis PC: "_s + environment_;
     return prompt;
 }

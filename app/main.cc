@@ -8,6 +8,7 @@
 #include "app/SystemStatus.h"
 #include "app/UnixSignals.h"
 #include "core/agent/Agent.h"
+#include "core/agent/AppContext.h"
 #include "core/Logging.h"
 #include "core/ai/ProviderRegistry.h"
 #include "core/audit/AuditLog.h"
@@ -21,6 +22,7 @@
 #include "core/tools/ToolExecutor.h"
 #include "core/tools/ToolRegistry.h"
 #include "system/SystemTools.h"
+#include "system/office/OfficeTools.h"
 #include "remote/PairingManager.h"
 #include "remote/RemoteServer.h"
 #include "remote/TlsIdentity.h"
@@ -285,6 +287,10 @@ int main(int argc, char *argv[]) {
         phone.withDevice([](Result<AdbDevice>) {});
     });
 
+    // The app the user is in — the one Nexa opened last for them — so the request after goes to
+    // the right place: a command into the terminal, a document into LibreOffice.
+    AppContext appContext;
+    const auto appOpened = [&appContext](const OpenedApp &app) { appContext.noteOpened(app); };
     registerSystemTools(tools, SystemServices{.commands = &commands,
                                               .apps = &apps,
                                               .audio = &audio,
@@ -292,7 +298,11 @@ int main(int argc, char *argv[]) {
                                               .files = &files,
                                               .screen = &screen,
                                               .rootCommands = &rootCommands,
-                                              .input = [&input] { return input.current(); }});
+                                              .input = [&input] { return input.current(); },
+                                              .appOpened = appOpened,
+                                              .appClosed = [&appContext](const OpenedApp &app) { appContext.noteClosed(app); }});
+    // Documents, presentations and spreadsheets as files for LibreOffice.
+    registerOfficeTools(tools, OfficeServices{.files = &files, .commands = &commands, .appOpened = appOpened});
 
     // Voice: microphone → recognition → requests; replies → speech (backends built by AppController)
     AudioCapture microphone;
@@ -320,7 +330,21 @@ int main(int argc, char *argv[]) {
     agent.setMaxSteps(config.agent.maxToolRounds);
 
     AppController controller(
-        AppServices{&store, &providers, &tools, &executor, &router, &agent, &panic, &policy, &voice, &http},
+        AppServices{.store = &store,
+                    .providers = &providers,
+                    .tools = &tools,
+                    .executor = &executor,
+                    .router = &router,
+                    .agent = &agent,
+                    .panic = &panic,
+                    .policy = &policy,
+                    .voice = &voice,
+                    .http = &http,
+                    .context = &appContext,
+                    // Typing goes to the window with the keyboard: when that is Nexa's own, it
+                    // must not be done.
+                    .windowActive = [] { return QApplication::activeWindow() != nullptr; },
+                    .canType = [&input] { return input.current() != nullptr; }},
         std::move(config), SystemInfo::summary());
 
     // The web remote: a phone's browser talks to Nexa. Off until Settings → Remote switches it on;

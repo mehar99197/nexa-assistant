@@ -1,5 +1,7 @@
 #pragma once
 
+#include "core/agent/AppContext.h"
+
 #include <functional>
 
 namespace nexa {
@@ -26,6 +28,10 @@ struct SystemServices {
     // Looked up when a tool runs, not when it is registered: which backend can type depends on
     // whether the root helper is installed, and that can change while Nexa is running.
     std::function<IInputBackend *()> input;
+    // The application the user is in, as far as Nexa can tell (core's AppContext): open_app and
+    // close_app report here, so the request after goes to the right place.
+    std::function<void(const OpenedApp &)> appOpened;
+    std::function<void(const OpenedApp &)> appClosed;
 };
 
 // Registers the PC tools: run_command, run_root_command, open_app, close_app, list_apps,

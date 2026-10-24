@@ -24,7 +24,8 @@ Verbose logs: `QT_LOGGING_RULES="nexa.*.debug=true" ./build/app/nexa-assistant` 
 Scripted run: `./build/app/nexa-assistant --ask "open calculator" --ask "volume 50"` — submits each request in
 turn, exactly as if typed. **If Nexa is already running, the requests go to that copy** (single instance, through a
 socket in `$XDG_RUNTIME_DIR`); add `--new-instance` for a separate test copy — it still reads the real config, so
-run it with `QT_QPA_PLATFORM=offscreen` to keep it off the user's screen. `--say "<text>"` speaks, `--voice-file <wav>` feeds a recording in as a spoken
+run it with `QT_QPA_PLATFORM=offscreen` to keep it off the user's screen (it still registers the global Talk hotkey and
+the web remote's port like the real one, so a press of the hotkey during a scripted run goes to the test copy). `--say "<text>"` speaks, `--voice-file <wav>` feeds a recording in as a spoken
 request; the three run in that order, one at a time. **To check the look**, add `--screenshot <file.png>`: once the
 requests are done and Nexa is idle, it saves a picture of the window and quits — it works offscreen, so
 `QT_QPA_PLATFORM=offscreen ./build/app/nexa-assistant --new-instance --theme light --ask "run uname -sr" --screenshot /tmp/nexa.png`
@@ -67,14 +68,18 @@ Build dependencies (one-time, needs sudo — the user runs it):
 
 Runtime: settings in `~/.config/nexa/config.json` (0600, holds API keys). The default provider is
 OmniRoute at `http://localhost:20128/v1` (OpenAI-compatible, needs its API key; prefer concrete
-models over its slow `auto/*` combos).
+models over its slow `auto/*` combos). OmniRoute is a system unit (`omniroute.service`, root to start) that
+runs `/usr/local/bin/omniroute` as the user; without sudo, `nohup /usr/local/bin/omniroute serve &` starts the
+same server (ready when port 20128 answers, about 10 s). A text-only model there (the GLM Flash ones) refuses
+images with a 400; the `Agent` then resends without them and remembers the model as blind.
 
 ## Layout
 
 - `core/` — no Qt Widgets, no syscalls: `Result.h`, `Logging`, `config/`, `net/` (HttpClient, SseParser),
   `ai/` (OpenAiProvider, AnthropicProvider, GeminiProvider — each maps ChatRequest to its own wire format and
   decodes its own events; SseChatStream is the stream all three share; ToolCallAccumulator; the registry),
-  `agent/` (Agent loop, Conversation), `tools/` (ToolSpec, ITool, FunctionTool, ToolRegistry, ToolExecutor =
+  `agent/` (Agent loop, Conversation, AppContext = the app Nexa opened last for the user — its kind from the desktop
+  entry, a sentence for the model, and the fast path's `run <cmd>` typed into a terminal in front), `tools/` (ToolSpec, ITool, FunctionTool, ToolRegistry, ToolExecutor =
   policy → confirm → invoke → audit, TextToolParser for models without native tools), `intent/` (IntentRouter +
   PC and phone fast-path handlers), `policy/` (PolicyEngine, PanicController), `audit/` (AuditLog), `mcp/`
   (MCP connectors — Model Context Protocol: `McpClient` speaks JSON-RPC 2.0 over an `IMcpTransport`, a server
@@ -84,7 +89,9 @@ models over its slow `auto/*` combos).
 - `system/` — touches the PC: `commands/` (LocalCommandRunner, process groups), `apps/` (DesktopEntry,
   DesktopEntryIndex = IAppCatalog, AppLauncher), `audio/` (wpctl), `media/` (MPRIS), `screen/` (portal
   screenshots), `files/` (FileAccess, confined to home and /tmp), `info/` (SystemInfo); `SystemTools.cc`
-  defines every PC tool the model sees.
+  defines every PC tool the model sees; `office/` (`OdfWriter` builds flat OpenDocument XML — Writer from Markdown,
+  Impress from slides, Calc from rows with A1 formulas; `OfficeTools` = `create_document`, which writes the file under
+  `~/Documents` and opens it in LibreOffice, or has LibreOffice headless convert it to docx/pptx/xlsx/pdf).
 - `ui/` — the look, shared by the desktop and the phone app, so it depends on Qt Widgets alone (nothing of
   `core/`): `NexaCoreSpec` (pure, tested: the nine states — Idle, Wake word, Listening, Transcribing, Thinking,
   Acting, Speaking, Fast path, Offline — their names, wire keys and colour tokens, the timing table, how the
@@ -203,6 +210,13 @@ models over its slow `auto/*` combos).
 - QObjects handed out as `shared_ptr` (e.g. `ChatStream`) use a `deleteLater()` deleter, so they can be released from their own signals.
 - Never log or display API keys/tokens.
 - Every action goes through `ToolExecutor::execute` (fast path and agent alike) — never call a tool directly.
+- The app the user is in is **what Nexa opened last** (`AppContext`), never read from the desktop: GNOME's
+  `org.gnome.Shell.Introspect` is denied to anything but the portals, and the helper is write-only. A command typed
+  into that terminal must always be guarded as `AppContext::redirect` does (Nexa's window not focused, typing
+  available and not asked about first — a confirmation dialog gives Nexa the keyboard —, not from a phone, not
+  destructive, not background, US-keyboard characters only) and shown in the chat as "Into <app>: `cmd`".
+  Documents for LibreOffice are made as files with `create_document`, never typed in; a converted file is made
+  in a scratch folder and renamed into place, so nothing of the user's is ever written over.
 - The model sees the PC screen **only while Share screen is on**: `AppController` withholds `take_screenshot`
   (`ToolRegistry::withhold`) otherwise, so it is in no request and a call to it is refused with the reason; the
   switch is off at every start. The user's own "what's on my screen?" is the one exception (they asked for that

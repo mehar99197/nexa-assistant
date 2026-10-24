@@ -48,7 +48,9 @@ QString commandOf(const QJsonObject &arguments) {
 
 PolicyDecision PolicyEngine::evaluate(const ToolSpec &spec, const QJsonObject &arguments) const {
     PolicyDecision decision;
-    decision.reason = destructiveReason(commandOf(arguments));
+    // Text typed into a terminal is a command once Enter follows it: judged like one.
+    decision.reason = destructiveReason(spec.name == u"type_text"_s ? arguments.value(u"text"_s).toString()
+                                                                     : commandOf(arguments));
     decision.destructive = !decision.reason.isEmpty();
     if (spec.privileged && decision.reason.isEmpty()) decision.reason = spec.risk.isEmpty() ? u"runs as root"_s : spec.risk;
 

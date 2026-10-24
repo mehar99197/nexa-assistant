@@ -27,6 +27,8 @@ add_library(nexa_system STATIC
     input/XTestInputBackend.h input/XTestInputBackend.cc
     info/SystemInfo.h info/SystemInfo.cc
     media/MprisController.h media/MprisController.cc
+    office/OdfWriter.h office/OdfWriter.cc
+    office/OfficeTools.h office/OfficeTools.cc
     screen/ScreenCapture.h screen/ScreenCapture.cc
 )
 

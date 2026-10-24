@@ -191,6 +191,9 @@ void ChatView::closeSegment() {
 }
 
 void ChatView::addNotice(const QString &text) {
+    // In the middle of a reply (the model cannot see the screenshot, say) the streamed segment is
+    // closed first: the next render rewrites everything after its start, note included.
+    if (inReply_) closeSegment();
     insertNote(text, meta_);
 }
 

@@ -16,6 +16,7 @@ add_library(nexa_core STATIC
     ai/ProviderRegistry.h ai/ProviderRegistry.cc
     ai/SseChatStream.h ai/SseChatStream.cc
     agent/Agent.h agent/Agent.cc
+    agent/AppContext.h agent/AppContext.cc
     agent/Conversation.h agent/Conversation.cc
     audit/AuditLog.h audit/AuditLog.cc
     intent/IIntentHandler.h

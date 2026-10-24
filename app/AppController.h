@@ -1,6 +1,7 @@
 #pragma once
 
 #include "core/Result.h"
+#include "core/agent/AppContext.h"
 #include "core/agent/Conversation.h"
 #include "core/ai/ChatStream.h"
 #include "core/config/Config.h"
@@ -10,6 +11,7 @@
 
 #include <QObject>
 #include <QStringList>
+#include <QTimer>
 
 #include <memory>
 
@@ -38,6 +40,9 @@ struct AppServices {
     PolicyEngine *policy{nullptr};
     VoicePipeline *voice{nullptr};
     HttpClient *http{nullptr};          // for the cloud voice backends
+    AppContext *context{nullptr};       // the app the user is in (filled by open_app, close_app)
+    std::function<bool()> windowActive; // Nexa's own window has the keyboard focus
+    std::function<bool()> canType;      // an input backend can type (the helper, or the portal)
 };
 
 // Mediator between the GUI, voice and core. Each request takes the fast path when the
@@ -74,6 +79,9 @@ public:
     // own "what's on my screen?" takes one picture either way — you asked for it.
     bool isScreenShared() const { return screenShared_; }
     void setScreenShared(bool shared);
+    // The app Nexa opened last for the user, if it still counts as in front (AppContext).
+    QString appContextName() const;
+    QString appContextHint() const;
     void cancel();                                  // the current reply and its speech
     void cancelReply();                             // the current reply only
     void panic();                                   // everything: replies, tools, child processes, voice
@@ -101,6 +109,7 @@ signals:
     void replyStarted(const QString &source);       // "gui", "voice", …
     void replyRoute(const QString &route);          // "fast" (no model) or "agent"; may change mid-reply
     void replyDelta(const QString &delta);
+    void replyNotice(const QString &message);       // a note inside the reply, not its end
     void replyStep(const QString &description, bool ok);    // a tool ran (fast path or agent), as one line
     void replyAction(const QString &tool, bool ok, const QString &summary, qint64 elapsedMs);   // the same, in parts
     void replyFinished(nexa::FinishReason reason, bool empty);
@@ -111,11 +120,15 @@ signals:
     void coreModeChanged(nexa::CoreMode mode);
     void litNodesChanged(unsigned nodes);           // CoreNodes: the satellites the running action lights
     void screenSharingChanged(bool shared);
+    // The app the user is in changed: its name and a one-line hint, both empty when there is none.
+    void appContextChanged(const QString &name, const QString &hint);
 
 private:
     void runFastPath(const QString &prompt, const IntentMatch &match, const QString &source);
     void answerDirectly(const QString &prompt, const QString &reply, const QString &source);
     void applyScreenSharing();
+    AppContext::Situation situation(const QString &source = QString()) const;
+    void refreshAppContext();           // tells the window when the app in front changed
     void askAboutPicture(const QString &tool, const QString &question, const QString &fallback);
     void runAgent(const QString &source);
     bool canUseModel(bool report);
@@ -130,7 +143,7 @@ private:
     void noteProviderError(const Error &error);
     void setOffline(bool offline, const QString &reason = {});
     ProviderConfig *activeProviderConfig();
-    QString systemPrompt() const;
+    QString systemPrompt(const QString &source = QString()) const;   // the request's source shapes it
     QString describe(const Error &error) const;
 
     AppServices services_;
@@ -148,6 +161,9 @@ private:
     int runningActions_{0};
     QString offlineReason_;
     bool screenShared_{false};
+    QString announcedApp_;              // the app id the window was last told about
+    QString announcedHint_;             // and the hint, which the policy and the input backend shape
+    QTimer contextExpiry_;              // the window hears when the app in front is forgotten
 };
 
 } // namespace nexa

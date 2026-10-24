@@ -13,10 +13,18 @@ Not to be confused with Nexa Download Manager: this is a separate program, named
 - **Acts on the PC** — opens and closes apps, runs shell commands (and, with the helper, root
   commands), sets the volume, controls media players, reads and writes files (home and /tmp only),
   reports system info, and looks at the screen — but only while you let it.
+- **Knows where you are** — say "open terminal" and the commands you ask for next are typed into that
+  terminal, where you see them run (unless Nexa's own window has the keyboard, the policy would ask
+  first, you asked from your phone, or the command is destructive — then it runs through the usual
+  policy, as before). Say "open libreoffice" and "make a presentation
+  about solar energy" becomes an Impress file with real slides, "a budget spreadsheet" a Calc sheet with
+  working formulas, "a letter to…" a Writer document — created as files and opened, not typed. The status
+  bar shows which app Nexa thinks you are in; opening another, closing it, or half an hour of silence moves on.
 - **Looks only when you share** — the Share screen button beside the input box (Ctrl+Shift+S, or say
   "share my screen") is off at every start; until you switch it on, the model is not even offered the
   screenshot tool and works through commands and tools alone. Asking "what's on my screen?" yourself
-  takes one picture either way.
+  takes one picture either way. A model that cannot see images gets the words without the picture and
+  Nexa says so, instead of every later request failing.
 - **Fast path** — common requests ("open firefox", "volume 30", "pause music", "run df -h", "what's on
   my screen?", "on my phone open youtube") run directly in milliseconds, without waiting for a model.
 - **Agent** — anything else goes to the model, which calls the same tools step by step.

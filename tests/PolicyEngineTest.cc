@@ -30,6 +30,19 @@ TEST_CASE("PolicyEngine flags destructive commands") {
     }
 }
 
+TEST_CASE("PolicyEngine judges typed text like the command it becomes") {
+    ToolSpec typing{u"type_text"_s, u"Type"_s, {}};
+    typing.privileged = true;
+    typing.risk = u"types on your keyboard"_s;
+    const PolicyEngine autonomous(PolicyMode::Autonomous);
+    const PolicyDecision wipe = autonomous.evaluate(typing, {{u"text"_s, u"rm -rf ~/work\n"_s}});
+    CHECK(wipe.destructive);
+    CHECK_FALSE(wipe.reason.isEmpty());
+    const PolicyDecision list = autonomous.evaluate(typing, {{u"text"_s, u"ls -la\n"_s}});
+    CHECK_FALSE(list.destructive);
+    CHECK(list.reason == u"types on your keyboard"_s);
+}
+
 TEST_CASE("PolicyEngine leaves ordinary commands alone") {
     for (const QString &line : {u"rm notes.txt"_s, u"ls -la"_s, u"rmdir empty"_s, u"grep -r TODO ."_s,
                                 u"git status"_s, u"apt install vim"_s, u"kill 1234"_s, u"df -h"_s,

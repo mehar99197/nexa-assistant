@@ -9,6 +9,7 @@
 
 #include <QJsonDocument>
 #include <QJsonParseError>
+#include <QRegularExpression>
 
 #include <utility>
 
@@ -29,6 +30,7 @@ void Agent::run(IAiProvider *provider, Conversation *conversation, const QString
     pendingCalls_.clear();
     currentCall_.reset();
     pendingImages_.clear();
+    pendingBlind_.clear();
     ++generation_;
     running_ = true;
     requestStep();
@@ -56,6 +58,10 @@ void Agent::requestStep() {
         return;
     }
     ++step_;
+    sendStep();
+}
+
+void Agent::sendStep() {
     const QList<ToolSpec> tools = registry_->specs();
     textTools_ = !provider_->capabilities().nativeTools;
     ChatRequest request;
@@ -71,19 +77,87 @@ void Agent::requestStep() {
     } else {
         request = conversation_->buildRequest(model_, tools);
     }
+    // A model known to refuse images gets the words alone, and a note where each image was.
+    stepHadImages_ = hasImages(request);
+    if (stepHadImages_ && (blindModels_.contains(model_) || pendingBlind_ == model_)) {
+        stripImages(request);
+        stepHadImages_ = false;
+    }
     stream_ = provider_->chat(request);
     ChatStream *stream = stream_.get();
     if (!textTools_) connect(stream, &ChatStream::textDelta, this, &Agent::textDelta);
     connect(stream, &ChatStream::finished, this, [this, stream](FinishReason reason) { onStepFinished(stream, reason); });
     connect(stream, &ChatStream::failed, this, [this, stream](const Error &error) {
         if (stream != stream_.get()) return;
+        // The model refused the images (a text-only model): the same step once more without
+        // them, and the user told — otherwise every request after the screenshot would fail. The
+        // model is remembered as blind only once the retry gets through: a retry that fails too
+        // has taught nothing about images.
+        if (stepHadImages_ && pendingBlind_.isEmpty() && refusesImages(error)) {
+            pendingBlind_ = model_;
+            qCInfo(lcAi) << model_ << "cannot see images:" << error.message;
+            emit notice(u"%1 cannot see images, so the screenshot was left out of the request. A vision-capable "
+                        "model is needed to look at the screen."_s.arg(model_));
+            stream_.reset();
+            stepHadImages_ = false;
+            sendStep();
+            return;
+        }
+        pendingBlind_.clear();
         if (!stream->text().isEmpty()) conversation_->addAssistant(stream->text());
         stop(error, FinishReason::Other);
     });
 }
 
+bool Agent::refusesImages(const Error &error) const {
+    if (error.code != ErrorCode::Http) return false;
+    // A rejected request body is a 400-class answer ("HTTP 400: …", or OmniRoute's "[400]: …"
+    // inside the stream); a rate limit or an outage that happens to mention images is not.
+    static const QRegularExpression status(u"^\\[?(?:HTTP )?(\\d{3})\\]?"_s);
+    if (const QRegularExpressionMatch m = status.match(error.message); m.hasMatch()) {
+        const int code = m.captured(1).toInt();
+        if (code != 400 && code != 415 && code != 422) return false;
+    }
+    // The model's own name may say "vision"; it is not the complaint. Whole names only: the
+    // letters of a short id must not be cut out of other words.
+    QString text = error.message;
+    if (!model_.isEmpty()) {
+        text.remove(QRegularExpression(u"(?<![A-Za-z0-9])%1(?![A-Za-z0-9])"_s.arg(QRegularExpression::escape(model_)),
+                                       QRegularExpression::CaseInsensitiveOption));
+    }
+    // "content[1].type has unsupported value \"image_url\"", "does not support image input",
+    // "Image input modality is not enabled": a refusal, and the word, within one clause.
+    static const QRegularExpression about(
+        u"(unsupported|not support|does not accept|not enabled|not allowed|not available|invalid|cannot|can't|only)"
+        "[^.;]{0,60}(image|vision|visual|multimodal|modality)"
+        "|(image|vision|visual|multimodal|modality)[^.;]{0,60}(unsupported|not support|not enabled|not allowed|not available|invalid)"_s,
+        QRegularExpression::CaseInsensitiveOption);
+    return about.match(text).hasMatch();
+}
+
+bool Agent::hasImages(const ChatRequest &request) {
+    for (const ChatMessage &message : request.messages) {
+        if (!message.images.isEmpty()) return true;
+    }
+    return false;
+}
+
+void Agent::stripImages(ChatRequest &request) {
+    for (ChatMessage &message : request.messages) {
+        if (message.images.isEmpty()) continue;
+        message.images.clear();
+        message.text += u"\n[An image was attached here — a screenshot — but this model cannot see images, so it was "
+                        "left out. If the user asked about it, say that a vision-capable model is needed to look at "
+                        "the screen.]"_s;
+    }
+}
+
 void Agent::onStepFinished(ChatStream *stream, FinishReason reason) {
     if (stream != stream_.get()) return;
+    if (!pendingBlind_.isEmpty()) {
+        blindModels_.insert(pendingBlind_);     // the retry without images got through: it was the images
+        pendingBlind_.clear();
+    }
     QString text = stream->text();
     QList<ToolCall> calls = stream->toolCalls();
     stream_.reset();

@@ -91,6 +91,7 @@ private:
     void showRemote();
     void showScreenSharing(bool shared);
     void showPhonePanel(bool connected);
+    void showAppContext(const QString &name, const QString &hint);
     void setBusy(bool busy);
 
     AppController *controller_;
@@ -124,6 +125,8 @@ private:
     QAction *shareScreenAction_{nullptr};
     QLabel *statusLabel_{nullptr};
     QLabel *screenLabel_{nullptr};
+    QLabel *appLabel_{nullptr};     // "In: GNOME Terminal" while Nexa knows where the user is
+    QString appHint_;
     QLabel *helperLabel_{nullptr};
     QLabel *sttLabel_{nullptr};
     QLabel *ttsLabel_{nullptr};

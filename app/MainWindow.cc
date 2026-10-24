@@ -454,6 +454,10 @@ void MainWindow::buildStatusBar() {
     statusLabel_->installEventFilter(this);
     statusBar()->addWidget(statusLabel_, 1);
 
+    appLabel_ = new QLabel(this);
+    statusBar()->addPermanentWidget(appLabel_);
+    showAppContext(controller_->appContextName(), controller_->appContextHint());
+
     screenLabel_ = new QLabel(this);
     statusBar()->addPermanentWidget(screenLabel_);
     showScreenSharing(controller_->isScreenShared());
@@ -531,6 +535,7 @@ void MainWindow::connectController() {
     connect(controller_, &AppController::replyStarted, this, [this] { chatView_->beginAssistantMessage(); });
     connect(controller_, &AppController::replyRoute, chatView_, &ChatView::setReplyRoute);
     connect(controller_, &AppController::replyDelta, chatView_, &ChatView::appendAssistantDelta);
+    connect(controller_, &AppController::replyNotice, chatView_, &ChatView::addNotice);
     connect(controller_, &AppController::replyAction, chatView_, &ChatView::addAction);
     connect(controller_, &AppController::replyFinished, this, [this](FinishReason reason, bool empty) {
         chatView_->endAssistantMessage();
@@ -554,6 +559,7 @@ void MainWindow::connectController() {
     connect(controller_, &AppController::coreModeChanged, this, &MainWindow::showCoreMode);
     connect(controller_, &AppController::litNodesChanged, this, [this](unsigned nodes) { presence_->setLitNodes(nodes); });
     connect(controller_, &AppController::screenSharingChanged, this, &MainWindow::showScreenSharing);
+    connect(controller_, &AppController::appContextChanged, this, &MainWindow::showAppContext);
     connect(phonePanel_, &PhonePanel::phoneChanged, this, &MainWindow::showPhonePanel);
     connect(controller_, &AppController::themeChanged, this,
             [this](const QString &theme) { applyPack(NexaThemes::resolve(theme)); });
@@ -643,6 +649,7 @@ QString MainWindow::hintFor(CoreMode mode) const {
     const bool canListen = voice && voice->canListen();
     switch (mode) {
     case CoreMode::Idle:
+        if (!appHint_.isEmpty()) return appHint_ + (controller_->isScreenShared() ? tr(" Your screen is shared.") : QString());
         return (canListen ? tr("Type a request, or hold Talk and speak.") : tr("Type a request."))
                + (controller_->isScreenShared() ? tr(" Your screen is shared.") : QString());
     case CoreMode::WakeWord:
@@ -872,6 +879,16 @@ void MainWindow::showPhonePanel(bool connected) {
     } else {
         resizeDocks({phonePanel_}, {280}, Qt::Horizontal);
     }
+}
+
+// Where the user is, as far as Nexa knows: the app it opened last for them.
+void MainWindow::showAppContext(const QString &name, const QString &hint) {
+    appHint_ = hint;
+    appLabel_->setVisible(!name.isEmpty());
+    appLabel_->setText(tr("In: %1").arg(name));
+    appLabel_->setToolTip(hint.isEmpty() ? QString()
+                                         : hint + u'\n' + tr("Opening another app, or closing this one, moves on."));
+    showCoreMode(controller_->coreMode());
 }
 
 void MainWindow::showScreenSharing(bool shared) {
