@@ -123,3 +123,32 @@ TEST_CASE("History for a model without tools carries calls and results as text")
     CHECK(text[3].text == u"<tool_result name=\"open_app\">\nOpened Firefox\n</tool_result>\n\n"
                           "<tool_result name=\"mute\">\nMuted\n</tool_result>"_s);
 }
+
+TEST_CASE("StreamFilter passes prose through as it arrives") {
+    TextToolParser::StreamFilter filter;
+    CHECK(filter.feed(u"Hello "_s) == u"Hello"_s);      // the space waits for what follows it
+    CHECK(filter.feed(u"world"_s) == u" world"_s);
+    CHECK(filter.shown() == u"Hello world"_s);
+}
+
+TEST_CASE("StreamFilter holds back a call and the partial tag before it") {
+    TextToolParser::StreamFilter filter;
+    CHECK(filter.feed(u"Opening it.<to"_s) == u"Opening it."_s);
+    CHECK(filter.feed(u"ol_call>{\"name\": \"open_app\"}"_s).isEmpty());
+    CHECK(filter.feed(u"</tool_call> and more"_s).isEmpty());
+    CHECK(filter.shown() == u"Opening it."_s);
+}
+
+TEST_CASE("StreamFilter lets a '<' through once it is clearly not a tag") {
+    TextToolParser::StreamFilter filter;
+    CHECK(filter.feed(u"x <"_s) == u"x"_s);
+    CHECK(filter.feed(u"= y"_s) == u" <= y"_s);
+}
+
+TEST_CASE("StreamFilter holds a reply that starts like a bare call") {
+    TextToolParser::StreamFilter filter;
+    CHECK(filter.feed(u"  {\"name\": \"open_app\""_s).isEmpty());
+    CHECK(filter.feed(u", \"arguments\": {}}"_s).isEmpty());
+    TextToolParser::StreamFilter fenced;
+    CHECK(fenced.feed(u"```json\n{}"_s).isEmpty());
+}

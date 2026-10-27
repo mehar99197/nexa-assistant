@@ -34,6 +34,22 @@ public:
     // History for a model without tools: its calls written back out as text, and the results as
     // user messages, since a server without tool support refuses "tool" messages.
     static QList<ChatMessage> asText(const QList<ChatMessage> &messages);
+
+    // Lets a reply stream to the screen while it arrives without ever showing call markup: text goes
+    // out up to the first "<tool_call" (a tail that may be the start of one waits for the next
+    // piece), and nothing after it. A reply that opens like a bare call — "{", "[" or a ``` fence —
+    // is held whole. Leading whitespace is never shown and trailing whitespace waits for what follows,
+    // so a reply that stops before a call leaves no dangling line. parse() still reads the whole reply.
+    class StreamFilter {
+    public:
+        QString feed(const QString &delta);     // what may be shown now
+        const QString &shown() const { return shown_; }
+
+    private:
+        QString pending_;
+        QString shown_;
+        bool holding_{false};
+    };
 };
 
 } // namespace nexa

@@ -85,7 +85,14 @@ void Agent::sendStep() {
     }
     stream_ = provider_->chat(request);
     ChatStream *stream = stream_.get();
-    if (!textTools_) connect(stream, &ChatStream::textDelta, this, &Agent::textDelta);
+    filter_ = {};
+    if (textTools_) {
+        connect(stream, &ChatStream::textDelta, this, [this](const QString &delta) {
+            if (const QString shown = filter_.feed(delta); !shown.isEmpty()) emit textDelta(shown);
+        });
+    } else {
+        connect(stream, &ChatStream::textDelta, this, &Agent::textDelta);
+    }
     connect(stream, &ChatStream::finished, this, [this, stream](FinishReason reason) { onStepFinished(stream, reason); });
     connect(stream, &ChatStream::failed, this, [this, stream](const Error &error) {
         if (stream != stream_.get()) return;
@@ -174,7 +181,17 @@ void Agent::onStepFinished(ChatStream *stream, FinishReason reason) {
             calls = parsed.calls;
         }
     }
-    if (textTools_ && !text.isEmpty()) emit textDelta(text);
+    // What the filter held back while the reply streamed: everything after the words already shown.
+    if (textTools_) {
+        const QString shown = filter_.shown();
+        qsizetype start = 0;    // the filter never shows leading whitespace
+        while (start < text.size() && text.at(start).isSpace()) ++start;
+        qsizetype common = 0;
+        while (common < shown.size() && start + common < text.size() && shown.at(common) == text.at(start + common)) {
+            ++common;
+        }
+        if (const QString rest = text.mid(start + common); !rest.trimmed().isEmpty()) emit textDelta(rest);
+    }
 
     if (calls.isEmpty()) {
         if (!text.isEmpty()) conversation_->addAssistant(text);

@@ -6,6 +6,7 @@
 #include <QJsonParseError>
 #include <QRegularExpression>
 
+#include <algorithm>
 #include <optional>
 
 using namespace Qt::StringLiterals;
@@ -167,6 +168,42 @@ QList<ChatMessage> TextToolParser::asText(const QList<ChatMessage> &messages) {
         converted.append(plain);
     }
     return converted;
+}
+
+QString TextToolParser::StreamFilter::feed(const QString &delta) {
+    if (holding_) return {};
+    pending_ += delta;
+    if (shown_.isEmpty()) {
+        qsizetype first = 0;
+        while (first < pending_.size() && pending_.at(first).isSpace()) ++first;
+        if (first == pending_.size()) return {};
+        const QChar opening = pending_.at(first);
+        if (opening == u'{' || opening == u'[' || opening == u'`') {
+            holding_ = true;
+            return {};
+        }
+        pending_.remove(0, first);
+    }
+
+    static const QString tag = u"<tool_call"_s;
+    qsizetype safe = pending_.size();
+    if (const qsizetype start = pending_.indexOf(tag); start >= 0) {
+        safe = start;
+        holding_ = true;
+    } else {
+        for (qsizetype n = std::min(tag.size() - 1, pending_.size()); n > 0; --n) {
+            if (tag.startsWith(pending_.right(n))) {
+                safe = pending_.size() - n;
+                break;
+            }
+        }
+    }
+    qsizetype end = safe;
+    while (end > 0 && pending_.at(end - 1).isSpace()) --end;
+    const QString out = pending_.left(end);
+    pending_.remove(0, end);
+    shown_ += out;
+    return out;
 }
 
 } // namespace nexa

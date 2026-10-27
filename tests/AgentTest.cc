@@ -28,8 +28,10 @@ constexpr int kWaitMs = 5'000;
 
 class ScriptedStream : public ChatStream {
 public:
-    void play(const QString &text, const QList<ToolCall> &calls, std::optional<Error> error) {
-        QTimer::singleShot(0, this, [this, text, calls, error] {
+    void play(const QString &text, const QList<ToolCall> &calls, std::optional<Error> error,
+              const QStringList &chunks = {}) {
+        QTimer::singleShot(0, this, [this, text, calls, error, chunks] {
+            for (const QString &chunk : chunks) emitText(chunk);
             emitText(text);
             if (error) {
                 fail(*error);
@@ -51,6 +53,7 @@ public:
         QString text;
         QList<ToolCall> calls;
         std::optional<Error> error;
+        QStringList chunks;     // streamed one by one before `text`
     };
 
     QString id() const override { return u"scripted"_s; }
@@ -64,7 +67,7 @@ public:
         lastStream = stream.get();
         if (!script.isEmpty()) {
             const Reply reply = script.takeFirst();
-            stream->play(reply.text, reply.calls, reply.error);
+            stream->play(reply.text, reply.calls, reply.error, reply.chunks);
         } else if (repeat) {
             stream->play(repeat->text, repeat->calls, repeat->error);
         }
@@ -431,7 +434,7 @@ TEST_CASE("A model that cannot call tools is taught the convention, and its call
     }
     CHECK(resultAsText);
 
-    // The person sees the words, never the call markup — the reply is shown once it is complete.
+    // The person sees the words, never the call markup.
     CHECK(shown == QStringList{u"Let me echo that."_s, u"It said: echoed x"_s});
 }
 
@@ -451,4 +454,51 @@ TEST_CASE("A call a native model writes as text is still made") {
     REQUIRE(messages[1].toolCalls.size() == 1);
     CHECK(messages[1].toolCalls[0].id == u"text_1_1"_s);
     CHECK(messages[2].text == u"echoed y"_s);
+}
+
+TEST_CASE("A text-tools reply streams its prose and never shows the call markup") {
+    Fixture f;
+    f.provider.nativeTools = false;
+    f.provider.script = {
+        {{}, {}, {}, {u"Opening the calculator.\n<tool"_s,
+                      u"_call>{\"name\": \"echo\", \"arguments\": {\"msg\": \"x\"}}</tool_call>"_s}},
+        {{}, {}, {}, {u"Do"_s, u"ne."_s}},
+    };
+    QStringList shown;
+    int deltasBeforeTool = -1;
+    QObject::connect(&f.agent, &Agent::textDelta, [&shown](const QString &delta) { shown.append(delta); });
+    QObject::connect(&f.agent, &Agent::toolStarted, [&](const QString &, const QJsonObject &) {
+        if (deltasBeforeTool < 0) deltasBeforeTool = int(shown.size());
+    });
+    f.agent.run(&f.provider, &f.conversation, u"m"_s, u"gui"_s);
+    REQUIRE(f.waitDone());
+    CHECK(f.toolRuns == QStringList{u"echo:ok"_s});
+    const QString all = shown.join(QString());
+    CHECK(all.contains(u"Opening the calculator."_s));
+    CHECK(all.contains(u"Done."_s));
+    CHECK_FALSE(all.contains(u"<tool"_s));
+    CHECK(deltasBeforeTool == 1);       // the prose was on screen before the tool ran
+    CHECK(shown.size() >= 3);           // "Done." arrived in pieces, as streamed
+}
+
+TEST_CASE("A reply that is JSON but not a call is shown in full at the end") {
+    Fixture f;
+    f.provider.nativeTools = false;
+    f.provider.script = {{{}, {}, {}, {u"{\"answer\": "_s, u"42}"_s}}};
+    QStringList shown;
+    QObject::connect(&f.agent, &Agent::textDelta, [&shown](const QString &delta) { shown.append(delta); });
+    f.agent.run(&f.provider, &f.conversation, u"m"_s, u"gui"_s);
+    REQUIRE(f.waitDone());
+    CHECK(shown.join(QString()) == u"{\"answer\": 42}"_s);
+}
+
+TEST_CASE("A text-tools reply that starts with spaces is not shown twice") {
+    Fixture f;
+    f.provider.nativeTools = false;
+    f.provider.script = {{{}, {}, {}, {u"\n  Hel"_s, u"lo there"_s}}};
+    QStringList shown;
+    QObject::connect(&f.agent, &Agent::textDelta, [&shown](const QString &delta) { shown.append(delta); });
+    f.agent.run(&f.provider, &f.conversation, u"m"_s, u"gui"_s);
+    REQUIRE(f.waitDone());
+    CHECK(shown.join(QString()) == u"Hello there"_s);
 }

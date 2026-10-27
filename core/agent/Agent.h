@@ -3,6 +3,7 @@
 #include "core/Result.h"
 #include "core/ai/ChatRequest.h"
 #include "core/ai/ChatStream.h"
+#include "core/tools/TextToolParser.h"
 
 #include <QElapsedTimer>
 #include <QJsonObject>
@@ -76,8 +77,9 @@ private:
     quint64 generation_{0};
     bool running_{false};
     // The provider cannot call tools natively: they are described in the prompt and read back out
-    // of the reply, which is therefore shown once complete rather than as it streams.
+    // of the reply, which streams through filter_ so the call markup never reaches the screen.
     bool textTools_{false};
+    TextToolParser::StreamFilter filter_;
     QSet<QString> blindModels_;
     QString pendingBlind_;          // the model whose image-free retry is on its way
     bool stepHadImages_{false};     // the request on its way carries images
