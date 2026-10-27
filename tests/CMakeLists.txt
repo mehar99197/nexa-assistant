@@ -9,6 +9,7 @@ add_executable(nexa_tests
     FakeHttpServer.h
     QtStringMakers.h
     AgentTest.cc
+    AgyEventsTest.cc
     AppContextTest.cc
     BrowserServiceTest.cc
     ChromeProfilesTest.cc
