@@ -7,6 +7,8 @@ add_library(nexa_core STATIC
     net/MultipartForm.h net/MultipartForm.cc
     net/SseParser.h net/SseParser.cc
     ai/AgyEvents.h ai/AgyEvents.cc
+    ai/AgyProvider.h ai/AgyProvider.cc
+    ai/AgySession.h ai/AgySession.cc
     ai/AnthropicProvider.h ai/AnthropicProvider.cc
     ai/ChatRequest.h ai/ChatRequest.cc
     ai/ChatStream.h ai/ChatStream.cc

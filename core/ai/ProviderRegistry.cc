@@ -1,5 +1,6 @@
 #include "core/ai/ProviderRegistry.h"
 
+#include "core/ai/AgyProvider.h"
 #include "core/ai/AnthropicProvider.h"
 #include "core/ai/GeminiProvider.h"
 #include "core/ai/OpenAiProvider.h"
@@ -17,6 +18,9 @@ ProviderRegistry::ProviderRegistry(HttpClient *http) : http_(http) {
     });
     registerKind(kKindGemini, [](const ProviderConfig &config, HttpClient *client) {
         return std::make_unique<GeminiProvider>(config, client);
+    });
+    registerKind(kKindAgy, [](const ProviderConfig &config, HttpClient *) {
+        return std::make_unique<AgyProvider>(config);
     });
 }
 

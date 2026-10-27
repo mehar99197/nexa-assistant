@@ -10,6 +10,7 @@ add_executable(nexa_tests
     QtStringMakers.h
     AgentTest.cc
     AgyEventsTest.cc
+    AgyProviderTest.cc
     AppContextTest.cc
     BrowserServiceTest.cc
     ChromeProfilesTest.cc

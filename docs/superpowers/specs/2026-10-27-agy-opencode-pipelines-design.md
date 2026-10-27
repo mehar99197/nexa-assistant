@@ -37,6 +37,12 @@ act; keys and passwords are never logged or shown; nothing blocks the GUI thread
 - In print mode agy **refuses its own acting tools**: asked to run a command, `run_command` failed with "permission
   check failed", `result.denied_actions` named it, nothing was written — and `response` was **empty**.
 - agy has no system-prompt flag and no HTTP API of its own (`remote-control` is for its own remote UI).
+- Measured during implementation: print mode **does run agy's read-only tools unasked** — `read_file` read a file
+  outside its workspace; `--sandbox` and a workspace `.agents/settings.json` do not stop it. A `permissions.deny`
+  list in agy's own `settings.json` does (`"read_file(*)"` matches; `"(**)"` does not), and agy honours one under
+  another `HOME`, staying signed in (the sign-in is in the system keyring). `read_url` is then gone from its tools;
+  `search_web` (a Google search, no access to the PC) still runs. Stream input takes **text blocks only**
+  ("content block type "image" is not supported").
 
 **opencode 1.19.3** (`/usr/local/bin/opencode`)
 - Nine credentials (two OAuth: GitHub Copilot, Google with the Antigravity plugin); `/config/providers` lists seven
@@ -131,8 +137,9 @@ a fallback answered, and the status bar says why (`AI: agy — opencode unavaila
 
 **agy turn.** `TurnLedger` decides.
 - Fresh: start `agy --input-format stream-json --output-format stream-json --disable-slash-commands --print=` plus
-  `--model <id>` when a model is chosen (agy's own default otherwise), in a private empty working folder
-  (`~/.cache/nexa/agy`, 0700), stdin a pipe, its own process group (`CreateNewSession`), killed with the group.
+  `--model <id>` when a model is chosen (agy's own default otherwise), with `HOME` set to Nexa's own agy home and
+  the empty workspace as its folder (see §8), stdin a pipe, its own process group (`CreateNewSession`), killed with
+  the group.
 - Write the turn line; `text_delta` of `agent_response` steps go out as `textDelta`; `result` `SUCCESS` finishes;
   `ERROR` fails with its `error`.
 - An empty `response` with `denied_actions`: agy's model reached for its own tool. Nexa sends one more turn — "Use only
@@ -140,8 +147,8 @@ a fallback answered, and the status bar says why (`AI: agy — opencode unavaila
   "agy tried to use its own <tool> tool, which Nexa does not allow".
 - Cancel kills the process (the next request is fresh). Ten idle minutes stop it. A process that exits before its
   first event fails the turn with what it printed (e.g. not signed in: "run `agy` once in a terminal to sign in").
-- Images: an `image` content block will be tried during implementation. If agy does not take one, the provider
-  reports `vision = false` and the `Agent` sends the words with a note, as it does for other text-only models.
+- Images: agy's stream input takes text blocks only, so the provider reports `vision = false` and the `Agent` sends
+  the words with a note, as it does for other text-only models.
 
 **opencode turn.**
 - Server: started at Nexa's start when opencode is the first choice (so the ~11 s is not paid by the first question),
@@ -224,9 +231,11 @@ whisper.cpp (`ggml-base.en.bin` is installed) and speech is Piper or speech-disp
   audit).
 - Both run in empty private folders and their own process groups, killed with Nexa (`QCoreApplication::aboutToQuit`
   and `SIGTERM` handling as for commands).
-- To verify during implementation: whether agy's **read** tools (`view_file`, `list_dir`, `read_url_content`,
-  `search_web`) run without asking in print mode. If they do, a model could read files outside the audit; the plan
-  then adds `--sandbox` or an agy agent without tools, and the spec's risk note is updated.
+- agy runs with a home folder of Nexa's own (`~/.cache/nexa/agy/home`, 0700) whose `settings.json` denies
+  `read_file(*)`, `write_file(*)`, `command(*)`, `read_url(*)`, `execute_url(*)`, `mcp(*)`, `unsandboxed(*)`
+  (anything agy wrote there itself is kept; `allow` and `ask` lists are removed); its workspace is
+  `~/.cache/nexa/agy/work`. Print mode had read files unasked without it. The user's own agy and its settings are
+  untouched. `search_web` remains: a Google search, to the same Google that serves the model, with no access to the PC.
 - The Google sign-in inside opencode comes from a third-party plugin (`opencode-antigravity-auth`); Nexa only drives
   opencode and adds no access of its own. agy is Google's own client.
 

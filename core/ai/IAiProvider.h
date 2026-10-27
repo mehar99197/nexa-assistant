@@ -13,7 +13,8 @@ namespace nexa {
 
 class ChatStream;
 
-// Strategy interface, implemented once per API family (OpenAI-compatible, Anthropic, Gemini).
+// Strategy interface, implemented once per API family (OpenAI-compatible, Anthropic, Gemini) and per
+// program Nexa drives (agy, opencode).
 class IAiProvider : public QObject {
     Q_OBJECT
 public:
@@ -36,6 +37,8 @@ public:
     // The stream is released with deleteLater(), so it is safe to drop the last reference from
     // inside one of its own signals.
     virtual std::shared_ptr<ChatStream> chat(const ChatRequest &request) = 0;
+    // Start whatever makes the first answer slow (a program, a server); the default has nothing to start.
+    virtual void warmUp() {}
 };
 
 } // namespace nexa
