@@ -1,8 +1,14 @@
 #include "core/agent/Conversation.h"
 
+#include <QRegularExpression>
+
 namespace nexa {
 
 namespace {
+
+QString imageNote(qsizetype count) {
+    return QStringLiteral("\n[%1 earlier image(s) omitted]").arg(count);
+}
 
 // Rough size estimate; images count as a fixed cost because they are sent downscaled.
 constexpr qsizetype kImageCost = 4'000;
@@ -38,10 +44,16 @@ ChatRequest Conversation::buildRequest(const QString &model, const QList<ToolSpe
     for (qsizetype i = 0; i < history.size(); ++i) {
         ChatMessage &message = history[i];
         if (i == newestWithImages || message.images.isEmpty()) continue;
-        message.text += QStringLiteral("\n[%1 earlier image(s) omitted]").arg(message.images.size());
+        message.text += imageNote(message.images.size());
         message.images.clear();
     }
     return ChatRequestBuilder().model(model).system(systemPrompt_).messages(history).tools(tools).build();
+}
+
+QString Conversation::withoutImageNotes(const QString &text) {
+    static const QRegularExpression note(QStringLiteral("\\n\\[\\d+ earlier image\\(s\\) omitted\\]"));
+    QString plain = text;
+    return plain.remove(note);
 }
 
 qsizetype Conversation::firstMessageInBudget() const {

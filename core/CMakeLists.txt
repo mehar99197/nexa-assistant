@@ -12,6 +12,8 @@ add_library(nexa_core STATIC
     ai/GeminiProvider.h ai/GeminiProvider.cc
     ai/IAiProvider.h
     ai/ToolCallAccumulator.h ai/ToolCallAccumulator.cc
+    ai/TranscriptWriter.h ai/TranscriptWriter.cc
+    ai/TurnLedger.h ai/TurnLedger.cc
     ai/OpenAiProvider.h ai/OpenAiProvider.cc
     ai/ProgramLookup.h ai/ProgramLookup.cc
     ai/ProviderRegistry.h ai/ProviderRegistry.cc
