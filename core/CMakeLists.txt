@@ -18,6 +18,7 @@ add_library(nexa_core STATIC
     ai/TranscriptWriter.h ai/TranscriptWriter.cc
     ai/TurnLedger.h ai/TurnLedger.cc
     ai/OpenAiProvider.h ai/OpenAiProvider.cc
+    ai/OpenCodeWire.h ai/OpenCodeWire.cc
     ai/ProgramLookup.h ai/ProgramLookup.cc
     ai/ProviderRegistry.h ai/ProviderRegistry.cc
     ai/SseChatStream.h ai/SseChatStream.cc

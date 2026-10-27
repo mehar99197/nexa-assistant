@@ -33,6 +33,8 @@ public:
     // Streaming POST: the caller owns the reply and reads it on readyRead(). The transfer is
     // aborted only after `idleTimeoutMs` without receiving any bytes.
     QNetworkReply *postStreaming(const QNetworkRequest &request, const QByteArray &body, int idleTimeoutMs);
+    // Streaming GET, the same way: an event stream the caller reads (and aborts) itself.
+    QNetworkReply *getStreaming(const QNetworkRequest &request, int idleTimeoutMs);
 
     static int httpStatus(const QNetworkReply *reply);
     // Error for a failed reply: HTTP status plus the server's own message, or the transport error.

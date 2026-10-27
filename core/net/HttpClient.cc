@@ -46,6 +46,13 @@ QNetworkReply *HttpClient::postStreaming(const QNetworkRequest &request, const Q
     return manager_.post(streaming, body);
 }
 
+QNetworkReply *HttpClient::getStreaming(const QNetworkRequest &request, int idleTimeoutMs) {
+    QNetworkRequest streaming(request);
+    streaming.setRawHeader("Accept", "text/event-stream");
+    streaming.setTransferTimeout(std::chrono::milliseconds(idleTimeoutMs));
+    return manager_.get(streaming);
+}
+
 QNetworkReply *HttpClient::deliver(QNetworkReply *reply, QObject *context, BodyCallback done) {
     const QPointer<QObject> guard(context);
     const bool guarded = context != nullptr;
