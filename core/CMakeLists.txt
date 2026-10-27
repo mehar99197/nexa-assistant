@@ -13,6 +13,7 @@ add_library(nexa_core STATIC
     ai/IAiProvider.h
     ai/ToolCallAccumulator.h ai/ToolCallAccumulator.cc
     ai/OpenAiProvider.h ai/OpenAiProvider.cc
+    ai/ProgramLookup.h ai/ProgramLookup.cc
     ai/ProviderRegistry.h ai/ProviderRegistry.cc
     ai/SseChatStream.h ai/SseChatStream.cc
     agent/Agent.h agent/Agent.cc

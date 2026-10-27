@@ -10,6 +10,7 @@
 #include "core/agent/Agent.h"
 #include "core/agent/AppContext.h"
 #include "core/Logging.h"
+#include "core/ai/ProgramLookup.h"
 #include "core/ai/ProviderRegistry.h"
 #include "core/audit/AuditLog.h"
 #include "core/config/ConfigStore.h"
@@ -92,12 +93,15 @@ Config loadConfig(const ConfigStore &store, QString &warning) {
                               "settings will overwrite it.")
                       .arg(loaded.error().message);
     }
-    if (config.providers.isEmpty()) {
-        config.providers.append(ProviderRegistry::defaultProvider());
-        config.activeProvider = config.providers.first().id;
+    // The programs installed for this user are what a first start offers (and what an upgrade puts
+    // into a list an older Nexa left empty). A list the user empties stays empty.
+    const auto installed = [](const QString &program) { return !findProgram(program).isEmpty(); };
+    if (!QFile::exists(store.path()) && warning.isEmpty()) {
+        config.providers = ProviderRegistry::defaultProviders(installed);
+        if (!config.providers.isEmpty()) config.activeProvider = config.providers.first().id;
     }
     if (config.version < Config::kVersion && warning.isEmpty()) {
-        ProviderRegistry::upgrade(config);
+        ProviderRegistry::upgrade(config, installed);
         if (const Result<void> saved = store.save(config); !saved) qCWarning(lcConfig) << saved.error().message;
     }
     return config;

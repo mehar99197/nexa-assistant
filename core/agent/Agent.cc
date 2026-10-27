@@ -111,7 +111,7 @@ void Agent::sendStep() {
 
 bool Agent::refusesImages(const Error &error) const {
     if (error.code != ErrorCode::Http) return false;
-    // A rejected request body is a 400-class answer ("HTTP 400: …", or OmniRoute's "[400]: …"
+    // A rejected request body is a 400-class answer ("HTTP 400: …", or a gateway's "[400]: …"
     // inside the stream); a rate limit or an outage that happens to mention images is not.
     static const QRegularExpression status(u"^\\[?(?:HTTP )?(\\d{3})\\]?"_s);
     if (const QRegularExpressionMatch m = status.match(error.message); m.hasMatch()) {

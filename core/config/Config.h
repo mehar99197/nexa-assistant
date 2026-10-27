@@ -11,13 +11,16 @@ namespace nexa {
 inline constexpr QLatin1StringView kKindOpenAiCompatible{"openai-compatible"};
 inline constexpr QLatin1StringView kKindAnthropic{"anthropic"};
 inline constexpr QLatin1StringView kKindGemini{"gemini"};
+// Programs Nexa runs rather than APIs it posts to: they answer with their own sign-in and quota.
+inline constexpr QLatin1StringView kKindAgy{"agy"};
+inline constexpr QLatin1StringView kKindOpenCode{"opencode"};
 
 // One configured AI endpoint; `kind` selects the IAiProvider implementation.
 struct ProviderConfig {
-    QString id;                 // stable key, e.g. "omniroute"
+    QString id;                 // stable key, e.g. "opencode"
     QString kind;
     QString name;               // shown in the UI
-    QString baseUrl;
+    QString baseUrl;            // agy: the program (empty: found); opencode: a server to use (empty: Nexa's own)
     QString apiKey;
     QString defaultModel;       // the model chosen in the toolbar
     bool requiresKey{true};
@@ -25,6 +28,8 @@ struct ProviderConfig {
     QString ttsModel;           // speech output (empty: no cloud voice)
     QString ttsVoice;           // voice name; a language code for gtts/*
     bool textTools{false};      // the model cannot call tools: describe them in the prompt instead
+    bool fallback{true};        // may answer when the providers before it in the list cannot
+    QString modelsUrl;          // where the model list is, when not {baseUrl}/models
 
     QJsonObject toJson() const;
     static ProviderConfig fromJson(const QJsonObject &json);
@@ -169,7 +174,8 @@ struct SkillsConfig {
 // are written back unchanged, so no build drops settings it does not understand.
 struct Config {
     // 2: providers carry speech models (sttModel, ttsModel, ttsVoice).
-    static constexpr int kVersion = 2;
+    // 3: providers carry fallback and modelsUrl; an empty list gets the installed agy and opencode once.
+    static constexpr int kVersion = 3;
 
     int version{kVersion};
     QList<ProviderConfig> providers;

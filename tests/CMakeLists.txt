@@ -41,6 +41,7 @@ add_executable(nexa_tests
     # The window's Phone panel, built from app/ like the helper's record below.
     PhonePanelTest.cc ../app/PhonePanel.cc
     PolicyEngineTest.cc
+    ProviderRegistryTest.cc
     SkillCatalogTest.cc
     SkillParserTest.cc
     PortalInputBackendTest.cc

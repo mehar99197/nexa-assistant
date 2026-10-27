@@ -13,13 +13,13 @@ namespace nexa {
 
 class HttpClient;
 
-// Cloud voice through an OpenAI-compatible /audio/speech endpoint, e.g. OmniRoute (Strategy).
-// Asks for WAV; MP3 and other formats (OmniRoute's gtts/default answers with MP3) are decoded.
+// Cloud voice through an OpenAI-compatible /audio/speech endpoint, e.g. OpenAI (Strategy).
+// Asks for WAV; MP3 and other formats (a gateway's gtts/default answers with MP3) are decoded.
 class CloudSynthesizer : public ISpeechSynthesizer {
     Q_OBJECT
 public:
     struct Settings {
-        QString providerName;   // shown in the UI: "OmniRoute"
+        QString providerName;   // shown in the UI: "OpenAI"
         QString baseUrl;        // …/v1
         QString apiKey;
         QString model;          // e.g. gtts/default, tts-1

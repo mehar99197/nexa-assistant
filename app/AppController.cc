@@ -30,7 +30,7 @@ constexpr qsizetype kMaxShownOutput = 6'000;
 const QLatin1StringView kScreenshotTool{"take_screenshot"};
 const QLatin1StringView kBrowserScreenshotTool{"browser_take_screenshot"};
 
-// OmniRoute's auto/* routing combos are slow, so never pick one as the default.
+// A gateway's auto/* routing combos are slow, so never pick one as the default.
 QString pickDefaultModel(const QStringList &models) {
     for (const QString &model : models) {
         if (!model.startsWith(u"auto"_s, Qt::CaseInsensitive)) return model;

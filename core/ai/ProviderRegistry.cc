@@ -29,7 +29,7 @@ Result<std::unique_ptr<IAiProvider>> ProviderRegistry::create(const ProviderConf
     if (factory == factories_.constEnd()) {
         return Error{ErrorCode::NotSupported, u"Provider type \"%1\" is not supported yet"_s.arg(config.kind)};
     }
-    if (config.baseUrl.trimmed().isEmpty()) {
+    if (isHttpKind(config.kind) && config.baseUrl.trimmed().isEmpty()) {
         return Error{ErrorCode::InvalidArgument, u"%1 has no base URL"_s.arg(config.name)};
     }
     return (*factory)(config, http_);
@@ -37,12 +37,24 @@ Result<std::unique_ptr<IAiProvider>> ProviderRegistry::create(const ProviderConf
 
 QList<ProviderPreset> ProviderRegistry::presets() {
     const QString openAi = kKindOpenAiCompatible;
+    const QString anthropic = kKindAnthropic;
+    const QString console = u"https://opencode.ai/inference"_s;
+    const QString go = console + u"/go"_s;
     return {
-        // OmniRoute's auto/* routing combos are slow; start on a fast concrete model. Speech: a Gemini
-        // chat model writes down the recording (its whisper routes need paid credits); gtts/default
-        // needs no account and takes the language as its voice.
-        {u"omniroute"_s, openAi, u"OmniRoute"_s, u"http://localhost:20128/v1"_s, true, u"agy/claude-sonnet-4-6"_s,
-         u"anyapi/google/gemini-2.5-flash-lite"_s, u"gtts/default"_s, u"en"_s},
+        // The owner's own programs, signed in and paid for there: no key, Nexa runs them. An empty
+        // model is the program's own default.
+        {u"opencode"_s, kKindOpenCode, u"opencode"_s, {}, false},
+        {u"agy"_s, kKindAgy, u"agy"_s, {}, false},
+        // OpenCode's hosted API with a key from its console. The model lists live beside the
+        // endpoints, not under them; GPT models there speak only the Responses API, which Nexa does
+        // not, and Claude models are served in Anthropic's format.
+        {u"opencode-console"_s, openAi, u"OpenCode Console"_s, console + u"/openai/v1"_s, true, {}, {}, {}, {},
+         console + u"/v1/models"_s},
+        {u"opencode-console-claude"_s, anthropic, u"OpenCode Console (Claude)"_s, console + u"/anthropic/v1"_s, true,
+         {}, {}, {}, {}, console + u"/v1/models"_s},
+        {u"opencode-go"_s, openAi, u"OpenCode Go"_s, go + u"/openai/v1"_s, true, {}, {}, {}, {}, go + u"/v1/models"_s},
+        {u"opencode-go-claude"_s, anthropic, u"OpenCode Go (Claude)"_s, go + u"/anthropic/v1"_s, true, {}, {}, {}, {},
+         go + u"/v1/models"_s},
         {u"openai"_s, openAi, u"OpenAI"_s, u"https://api.openai.com/v1"_s, true, {}, u"whisper-1"_s, u"tts-1"_s,
          u"alloy"_s},
         {u"ollama"_s, openAi, u"Ollama (local)"_s, u"http://localhost:11434/v1"_s, false},
@@ -54,7 +66,7 @@ QList<ProviderPreset> ProviderRegistry::presets() {
         {u"xai"_s, openAi, u"xAI"_s, u"https://api.x.ai/v1"_s, true},
         {u"together"_s, openAi, u"Together AI"_s, u"https://api.together.xyz/v1"_s, true},
         {u"custom"_s, openAi, u"Custom (OpenAI-compatible)"_s, u"http://localhost:8080/v1"_s, false},
-        {u"anthropic"_s, kKindAnthropic, u"Anthropic"_s, u"https://api.anthropic.com/v1"_s, true},
+        {u"anthropic"_s, anthropic, u"Anthropic"_s, u"https://api.anthropic.com/v1"_s, true},
         {u"gemini"_s, kKindGemini, u"Google Gemini"_s, u"https://generativelanguage.googleapis.com/v1beta"_s, true,
          u"gemini-2.5-flash"_s},
     };
@@ -79,14 +91,24 @@ ProviderConfig ProviderRegistry::fromPreset(const ProviderPreset &preset) {
         .sttModel = preset.sttModel,
         .ttsModel = preset.ttsModel,
         .ttsVoice = preset.ttsVoice,
+        .modelsUrl = preset.modelsUrl,
     };
 }
 
-ProviderConfig ProviderRegistry::defaultProvider() {
-    return fromPreset(presets().first());
+QList<ProviderConfig> ProviderRegistry::defaultProviders(const std::function<bool(const QString &program)> &installed) {
+    QList<ProviderConfig> providers;
+    for (const ProviderPreset &preset : presets()) {
+        if (preset.kind != kKindOpenCode && preset.kind != kKindAgy) continue;
+        if (installed(preset.kind)) providers.append(fromPreset(preset));
+    }
+    return providers;
 }
 
-void ProviderRegistry::upgrade(Config &config) {
+bool ProviderRegistry::isHttpKind(const QString &kind) {
+    return kind == kKindOpenAiCompatible || kind == kKindAnthropic || kind == kKindGemini;
+}
+
+void ProviderRegistry::upgrade(Config &config, const std::function<bool(const QString &program)> &installed) {
     if (config.version < 2) {
         for (ProviderConfig &provider : config.providers) {
             for (const ProviderPreset &preset : presets()) {
@@ -96,6 +118,10 @@ void ProviderRegistry::upgrade(Config &config) {
                 provider.ttsVoice = preset.ttsVoice;
             }
         }
+    }
+    if (config.version < 3 && config.providers.isEmpty()) {
+        config.providers = defaultProviders(installed);
+        if (!config.providers.isEmpty()) config.activeProvider = config.providers.first().id;
     }
     config.version = Config::kVersion;
 }

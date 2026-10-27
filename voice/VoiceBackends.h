@@ -17,7 +17,7 @@ class ISpeechSynthesizer;
 class ITextToSpeech;
 
 // Factory for the voice backends chosen in Settings → Voice. "auto" means the active provider's
-// cloud model when it has one (OmniRoute by default) with the local engine behind it as the
+// cloud model when it has one with the local engine behind it as the
 // fallback. Also knows where the downloaded engines and models live (~/.local/share/nexa).
 class VoiceBackends {
 public:

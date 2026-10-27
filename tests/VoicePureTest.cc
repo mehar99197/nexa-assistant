@@ -358,22 +358,28 @@ TEST_CASE("CloudSynthesizer asks for WAV with the configured voice and speed") {
 TEST_CASE("ProviderRegistry::upgrade gives v1 providers the preset speech models") {
     Config config;
     config.version = 1;
-    ProviderConfig omniroute = ProviderRegistry::defaultProvider();
-    omniroute.sttModel.clear();
-    omniroute.ttsModel.clear();
-    omniroute.ttsVoice.clear();
-    omniroute.apiKey = u"sk-kept"_s;
-    config.providers = {omniroute, ProviderConfig{.id = u"mine"_s, .baseUrl = u"http://localhost:1/v1"_s}};
+    ProviderPreset openAiPreset;
+    for (const ProviderPreset &preset : ProviderRegistry::presets()) {
+        if (preset.id == u"openai"_s) openAiPreset = preset;
+    }
+    REQUIRE(openAiPreset.id == u"openai"_s);
+    ProviderConfig openai = ProviderRegistry::fromPreset(openAiPreset);
+    openai.sttModel.clear();
+    openai.ttsModel.clear();
+    openai.ttsVoice.clear();
+    openai.apiKey = u"sk-kept"_s;
+    config.providers = {openai, ProviderConfig{.id = u"mine"_s, .baseUrl = u"http://localhost:1/v1"_s}};
+    const auto nothingInstalled = [](const QString &) { return false; };
 
-    ProviderRegistry::upgrade(config);
+    ProviderRegistry::upgrade(config, nothingInstalled);
     CHECK(config.version == Config::kVersion);
-    CHECK(config.providers[0].sttModel == u"anyapi/google/gemini-2.5-flash-lite"_s);
-    CHECK(config.providers[0].ttsModel == u"gtts/default"_s);
-    CHECK(config.providers[0].ttsVoice == u"en"_s);
+    CHECK(config.providers[0].sttModel == u"whisper-1"_s);
+    CHECK(config.providers[0].ttsModel == u"tts-1"_s);
+    CHECK(config.providers[0].ttsVoice == u"alloy"_s);
     CHECK(config.providers[0].apiKey == u"sk-kept"_s);
     CHECK(config.providers[1].sttModel.isEmpty());
 
     config.providers[0].ttsModel.clear();     // a v2 choice to have no cloud voice stays
-    ProviderRegistry::upgrade(config);
+    ProviderRegistry::upgrade(config, nothingInstalled);
     CHECK(config.providers[0].ttsModel.isEmpty());
 }

@@ -21,10 +21,10 @@ constexpr QFileDevice::Permissions kGroupOrOther = QFileDevice::ReadGroup | QFil
 Config sampleConfig() {
     Config config;
     config.providers.append(ProviderConfig{
-        .id = u"omniroute"_s,
+        .id = u"gateway"_s,
         .kind = u"openai-compatible"_s,
-        .name = u"OmniRoute"_s,
-        .baseUrl = u"http://localhost:20128/v1"_s,
+        .name = u"Gateway"_s,
+        .baseUrl = u"https://gateway.example/v1"_s,
         .apiKey = u"sk-test"_s,
         .defaultModel = u"gpt-4o-mini"_s,
     });
@@ -100,6 +100,23 @@ TEST_CASE("ConfigStore round-trips providers, prompt and unknown sections") {
     }
 }
 
+TEST_CASE("ConfigStore round-trips fallback and modelsUrl") {
+    QTemporaryDir dir;
+    REQUIRE(dir.isValid());
+    const ConfigStore store(dir.filePath(u"nexa/config.json"_s));
+    Config config = sampleConfig();
+    config.providers[0].fallback = false;
+    config.providers[0].modelsUrl = u"https://x/models"_s;
+    REQUIRE(store.save(config).isOk());
+
+    const Result<Config> loaded = store.load();
+    REQUIRE(loaded.isOk());
+    CHECK_FALSE(loaded.value().providers.at(0).fallback);
+    CHECK(loaded.value().providers.at(0).modelsUrl == u"https://x/models"_s);
+    // A provider written before the keys existed may answer for the others.
+    CHECK(ProviderConfig::fromJson(QJsonObject{{u"id"_s, u"old"_s}}).fallback);
+}
+
 TEST_CASE("The browser, memory and skills sections default when missing and refuse what they cannot use") {
     const Config defaults = Config::fromJson(QJsonObject{});
     CHECK(defaults.browser.enabled);
@@ -173,5 +190,5 @@ TEST_CASE("Config falls back to the first provider when the active id is unknown
     Config config = sampleConfig();
     config.activeProvider = u"missing"_s;
     REQUIRE(config.active() != nullptr);
-    CHECK(config.active()->id == u"omniroute"_s);
+    CHECK(config.active()->id == u"gateway"_s);
 }

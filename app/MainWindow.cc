@@ -64,7 +64,7 @@ void repolish(QWidget *widget) {
     widget->update();
 }
 
-// "OmniRoute anyapi/google/gemini-2.5-flash-lite → whisper.cpp (base.en)" becomes
+// "OpenRouter anyapi/google/gemini-2.5-flash-lite → whisper.cpp (base.en)" becomes
 // "gemini-2.5-flash-lite, then whisper.cpp base.en": the status bar has one line for all of it.
 QString shortEngineNames(const QString &chain, const QString &provider) {
     QStringList links;

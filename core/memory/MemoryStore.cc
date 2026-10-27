@@ -342,7 +342,9 @@ QString MemoryStore::promptSection(int budget) const {
     if (entries_.isEmpty()) {
         lines.append(u"(Nothing saved yet.)"_s);
     } else {
-        QList<MemoryEntry> newest = entries_;
+        // Saved in the same millisecond, the later fact still comes first: the list is in the order
+        // the facts were saved, so it is walked from its end before the stable sort.
+        QList<MemoryEntry> newest(entries_.crbegin(), entries_.crend());
         std::stable_sort(newest.begin(), newest.end(),
                          [](const MemoryEntry &a, const MemoryEntry &b) { return a.updated > b.updated; });
         int used = 0;

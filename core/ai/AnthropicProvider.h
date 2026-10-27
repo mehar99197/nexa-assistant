@@ -40,6 +40,7 @@ public:
 
 private:
     QNetworkRequest request(const QString &path) const;
+    QNetworkRequest requestFor(const QUrl &url) const;
 
     ProviderConfig config_;
     HttpClient *http_;

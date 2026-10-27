@@ -191,7 +191,7 @@ QWidget *SettingsDialog::buildProvidersTab() {
     kindLabel_ = new QLabel(providerForm_);
     nameEdit_ = new QLineEdit(providerForm_);
     baseUrlEdit_ = new QLineEdit(providerForm_);
-    baseUrlEdit_->setPlaceholderText(u"http://localhost:20128/v1"_s);
+    baseUrlEdit_->setPlaceholderText(u"https://api.example.com/v1"_s);
     apiKeyEdit_ = new QLineEdit(providerForm_);
     apiKeyEdit_->setEchoMode(QLineEdit::Password);
     apiKeyEdit_->setPlaceholderText(tr("not set"));

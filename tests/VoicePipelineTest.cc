@@ -300,10 +300,10 @@ TEST_CASE("Failures are reported and leave the pipeline idle") {
     rig.pipeline.startListening(true);
     rig.microphone.play(testaudio::speech(500) + testaudio::quiet(200));
     rig.pipeline.stopListening();
-    rig.recognizer->answer(Error{ErrorCode::Network, u"OmniRoute is down"_s});
+    rig.recognizer->answer(Error{ErrorCode::Network, u"the provider is down"_s});
     CHECK(rig.pipeline.state() == VoiceState::Idle);
     REQUIRE(notices.size() == 1);
-    CHECK(notices.at(0).at(0).toString().contains(u"OmniRoute is down"_s));
+    CHECK(notices.at(0).at(0).toString().contains(u"the provider is down"_s));
     CHECK(notices.at(0).at(1).toBool());
 
     rig.microphone.broken = true;
