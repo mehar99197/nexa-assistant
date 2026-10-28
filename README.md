@@ -1,7 +1,8 @@
 # Nexa
 
 A Linux desktop AI assistant written in C++20 with a Qt 6 Widgets interface. It talks to any AI
-provider — OmniRoute by default, or OpenAI-compatible APIs, Anthropic and Google Gemini natively —
+provider — your own opencode and agy (Google's Antigravity CLI) on their own sign-ins by default, or OpenAI-compatible
+APIs, Anthropic and Google Gemini natively —
 acts on the PC through tools, listens and talks back, and works with your Android phone in both
 directions. See [ARCHITECTURE.md](ARCHITECTURE.md) for the design and the milestone status.
 
@@ -49,10 +50,16 @@ Not to be confused with Nexa Download Manager: this is a separate program, named
 - **Stays out of the way** — one copy per user (starting it again brings the window forward), an icon
   in the top bar, and closing the window keeps the hotkeys and web remote running.
 
-Providers: OmniRoute (default), OpenAI, Anthropic, Google Gemini, Ollama, LM Studio, Groq, OpenRouter,
-DeepSeek, Mistral, xAI, Together, or any OpenAI-compatible endpoint. For a model that cannot call tools
-(many small local ones), tick "This model cannot call tools" in Settings → Providers and Nexa describes
-the tools in the prompt instead.
+Providers: **opencode** and **agy** (Google's Antigravity CLI) — the models you already have there, on their own
+sign-ins and quotas, with no key in Nexa: Nexa runs its own `opencode serve` and a warm `agy` process, and every
+action still goes through Nexa's own tools (theirs stay switched off). Sign in once with `opencode auth login` and by
+running `agy` in a terminal. Also OpenCode's hosted API (Console and Go, with a key), OpenAI, Anthropic, Google
+Gemini, Ollama, LM Studio, Groq, OpenRouter, DeepSeek, Mistral, xAI, Together, or any OpenAI-compatible endpoint.
+
+Settings → Providers sets the **first choice** and the order of the rest (▲ ▼): when the first choice cannot answer —
+not running, not signed in, out of quota — the next one that allows it answers, with its own model, and the reply
+says `via agy`. For a model that cannot call tools (many small local ones), tick "This model cannot call tools" and
+Nexa describes the tools in the prompt instead.
 
 ## Build
 
@@ -78,7 +85,7 @@ scripts/download-whisper-model.sh base.en    # offline speech recognition (148 M
 scripts/download-piper.sh                    # offline voice (26 MB + a 63 MB voice), optional
 ```
 
-On first start Nexa asks for the OmniRoute API key, and installs Playwright — the browser automation that is
+On first start Nexa offers opencode and agy if they are installed, and installs Playwright — the browser automation that is
 part of it — into `~/.local/share/nexa/playwright` by itself (it needs Node.js 18 or newer and npm:
 `sudo apt install nodejs npm` if they are missing). Then:
 

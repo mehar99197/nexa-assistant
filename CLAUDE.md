@@ -54,7 +54,7 @@ To inspect the GUI from a script, run it on XWayland (`QT_QPA_PLATFORM=xcb`) and
 
 Voice engines (optional, no sudo): `scripts/download-whisper-model.sh base.en` for offline recognition and
 `scripts/download-piper.sh` for the offline voice, both into `~/.local/share/nexa`. Without them Nexa uses the
-provider's speech models (OmniRoute by default). Local recognition is compiled in only with
+first-choice provider's speech models when it has any (agy and opencode have none). Local recognition is compiled in only with
 `-DNEXA_BUILD_WHISPER=ON` (on in the release and debug presets; whisper.cpp is fetched at configure time).
 
 Root helper (needs sudo — **the user runs it**, as `! sudo ./packaging/install-helper.sh`): installs
@@ -69,18 +69,30 @@ being remembered — check `/run/nexa-helper/grants.json` and `journalctl -u pol
 Build dependencies (one-time, needs sudo — the user runs it):
 `sudo apt install -y cmake ninja-build qt6-base-dev qt6-base-dev-tools qt6-multimedia-dev qt6-speech-dev qt6-tools-dev qt6-websockets-dev qt6-httpserver-dev libpolkit-qt6-1-dev libxkbcommon-dev libqrencode-dev adb catch2`
 
-Runtime: settings in `~/.config/nexa/config.json` (0600, holds API keys). The default provider is
-OmniRoute at `http://localhost:20128/v1` (OpenAI-compatible, needs its API key; prefer concrete
-models over its slow `auto/*` combos). OmniRoute is a system unit (`omniroute.service`, root to start) that
-runs `/usr/local/bin/omniroute` as the user; without sudo, `nohup /usr/local/bin/omniroute serve &` starts the
-same server (ready when port 20128 answers, about 10 s). A text-only model there (the GLM Flash ones) refuses
-images with a 400; the `Agent` then resends without them and remembers the model as blind.
+Runtime: settings in `~/.config/nexa/config.json` (0600, holds API keys). The providers are tried in order as a
+`ProviderChain`: the **first choice** (Settings → Providers), then every provider ticked "Use when the providers above cannot
+answer", each with its own model; the chain moves on only when one cannot answer (not running, not installed, not
+signed in, out of quota) and nothing has streamed, and the reply's header then says `via <provider>`. The defaults
+are the owner's own programs, on their own sign-in and quota, no key in Nexa: **opencode** — Nexa starts its own
+`opencode serve` on loopback (password made per start, in the child's environment only; folder
+`~/.cache/nexa/opencode`; about 10 s to be ready; sign in with `opencode auth login`) — and **agy** (Google's
+Antigravity CLI, `~/.local/bin/agy`): one warm `agy --input-format stream-json` process per conversation, run with a
+home folder of Nexa's own (`~/.cache/nexa/agy/home`, whose `settings.json` denies agy's own tools — print mode would
+otherwise read files unasked) and an empty workspace (`~/.cache/nexa/agy/work`); sign in by running `agy` once;
+`agy models` takes about 16 s. Both take Nexa's tools as text (`<tool_call>`), and an empty model is their own
+default. OpenCode's hosted API (Console, Go) is a preset with a key. A test copy on private `XDG_CONFIG_HOME` /
+`XDG_DATA_HOME` must link `~/.config/opencode` and `~/.local/share/opencode` into them, or opencode sees none of the
+user's providers, and needs the wake word off (`voice.wakeWord`), or `--ask` waits for an idle voice forever. A
+text-only model refuses images with a 400; the `Agent` then resends without them and remembers the model as blind.
 
 ## Layout
 
 - `core/` — no Qt Widgets, no syscalls: `Result.h`, `Logging`, `config/`, `net/` (HttpClient, SseParser),
   `ai/` (OpenAiProvider, AnthropicProvider, GeminiProvider — each maps ChatRequest to its own wire format and
-  decodes its own events; SseChatStream is the stream all three share; ToolCallAccumulator; the registry),
+  decodes its own events; SseChatStream is the stream all three share; ToolCallAccumulator; the registry, whose
+  `createChain` builds the `ProviderChain`; the programs: `AgyProvider` + `AgySession` + `AgyEvents` (agy's
+  stream-json), `OpenCodeProvider` + `OpenCodeServer` + `OpenCodeWire` (opencode's server API), with `TurnLedger`
+  deciding what a warm session still needs and `TranscriptWriter` the text of a turn; `ProgramLookup`),
   `agent/` (Agent loop, Conversation, AppContext = the app Nexa opened last for the user — its kind from the desktop
   entry, a sentence for the model, and the fast path's `run <cmd>` typed into a terminal in front), `tools/` (ToolSpec, ITool, FunctionTool, ToolRegistry, ToolExecutor =
   policy → confirm → invoke → audit, TextToolParser for models without native tools), `intent/` (IntentRouter +
