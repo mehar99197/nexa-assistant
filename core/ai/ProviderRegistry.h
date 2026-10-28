@@ -40,6 +40,9 @@ public:
     void registerKind(const QString &kind, Factory factory);
     bool supports(const QString &kind) const { return factories_.contains(kind); }
     Result<std::unique_ptr<IAiProvider>> create(const ProviderConfig &config) const;
+    // The ProviderChain Nexa asks: the first choice (config.active()), then every other provider with
+    // `fallback`, in list order. One that cannot be created is left out; none at all is an error.
+    Result<std::unique_ptr<IAiProvider>> createChain(const Config &config) const;
 
     static QList<ProviderPreset> presets();         // the owner's programs first: opencode, agy
     QList<ProviderPreset> availablePresets() const; // presets whose kind is registered

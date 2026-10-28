@@ -64,19 +64,8 @@ void Agent::requestStep() {
 void Agent::sendStep() {
     const QList<ToolSpec> tools = registry_->specs();
     textTools_ = !provider_->capabilities().nativeTools;
-    ChatRequest request;
-    if (textTools_) {
-        request = conversation_->buildRequest(model_);
-        request.messages = TextToolParser::asText(request.messages);
-        const QString convention = TextToolParser::instructions(tools);
-        if (!request.messages.isEmpty() && request.messages.first().role == Role::System) {
-            request.messages.first().text += u"\n\n"_s + convention;
-        } else {
-            request.messages.prepend(ChatMessage{.role = Role::System, .text = convention});
-        }
-    } else {
-        request = conversation_->buildRequest(model_, tools);
-    }
+    ChatRequest request = conversation_->buildRequest(model_, tools);
+    if (textTools_) request = TextToolParser::asTextRequest(request);
     // A model known to refuse images gets the words alone, and a note where each image was.
     stepHadImages_ = hasImages(request);
     if (stepHadImages_ && (blindModels_.contains(model_) || pendingBlind_ == model_)) {

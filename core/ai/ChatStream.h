@@ -23,15 +23,21 @@ public:
     bool isDone() const { return done_; }
     const QString &text() const { return text_; }
     const QList<ToolCall> &toolCalls() const { return toolCalls_; }    // complete once finished
+    // Who answered, when it was not the first choice ("agy · claude-sonnet-4-6"); empty otherwise.
+    const QString &route() const { return route_; }
 
 signals:
     void textDelta(const QString &delta);
     void toolCallDelta(int index, const QString &name, const QString &argumentsDelta);
     void finished(nexa::FinishReason reason);
     void failed(const nexa::Error &error);
+    // The first choice could not answer (`reason`), so `route` does.
+    void rerouted(const QString &route, const QString &reason);
 
 protected:
     virtual void abortTransport() = 0;
+
+    void setRoute(const QString &route, const QString &reason);
 
     void emitText(const QString &delta);
     void emitToolCallDelta(int index, const QString &name, const QString &argumentsDelta);
@@ -41,6 +47,7 @@ protected:
 private:
     QString text_;
     QList<ToolCall> toolCalls_;
+    QString route_;
     bool done_{false};
 };
 

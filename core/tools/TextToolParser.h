@@ -34,6 +34,9 @@ public:
     // History for a model without tools: its calls written back out as text, and the results as
     // user messages, since a server without tool support refuses "tool" messages.
     static QList<ChatMessage> asText(const QList<ChatMessage> &messages);
+    // A whole request for such a model: the history asText, the convention for `request.tools` added to
+    // the system prompt, and no native tools.
+    static ChatRequest asTextRequest(const ChatRequest &request);
 
     // Lets a reply stream to the screen while it arrives without ever showing call markup: text goes
     // out up to the first "<tool_call" (a tail that may be the start of one waits for the next

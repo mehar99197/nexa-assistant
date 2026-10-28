@@ -22,6 +22,7 @@ add_library(nexa_core STATIC
     ai/OpenCodeServer.h ai/OpenCodeServer.cc
     ai/OpenCodeWire.h ai/OpenCodeWire.cc
     ai/ProgramLookup.h ai/ProgramLookup.cc
+    ai/ProviderChain.h ai/ProviderChain.cc
     ai/ProviderRegistry.h ai/ProviderRegistry.cc
     ai/SseChatStream.h ai/SseChatStream.cc
     agent/Agent.h agent/Agent.cc

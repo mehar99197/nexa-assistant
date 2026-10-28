@@ -170,6 +170,19 @@ QList<ChatMessage> TextToolParser::asText(const QList<ChatMessage> &messages) {
     return converted;
 }
 
+ChatRequest TextToolParser::asTextRequest(const ChatRequest &request) {
+    ChatRequest text = request;
+    text.messages = asText(request.messages);
+    const QString convention = instructions(request.tools);
+    if (!text.messages.isEmpty() && text.messages.first().role == Role::System) {
+        text.messages.first().text += u"\n\n"_s + convention;
+    } else {
+        text.messages.prepend(ChatMessage{.role = Role::System, .text = convention});
+    }
+    text.tools.clear();
+    return text;
+}
+
 QString TextToolParser::StreamFilter::feed(const QString &delta) {
     if (holding_) return {};
     pending_ += delta;

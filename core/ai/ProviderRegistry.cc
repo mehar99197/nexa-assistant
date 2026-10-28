@@ -1,5 +1,6 @@
 #include "core/ai/ProviderRegistry.h"
 
+#include "core/Logging.h"
 #include "core/ai/AgyProvider.h"
 #include "core/ai/AnthropicProvider.h"
 #include "core/ai/GeminiProvider.h"
@@ -7,6 +8,9 @@
 #include "core/ai/OpenCodeProvider.h"
 #include "core/ai/OpenCodeServer.h"
 #include "core/ai/ProgramLookup.h"
+#include "core/ai/ProviderChain.h"
+
+#include <optional>
 
 using namespace Qt::StringLiterals;
 
@@ -57,6 +61,28 @@ Result<std::unique_ptr<IAiProvider>> ProviderRegistry::create(const ProviderConf
         return Error{ErrorCode::InvalidArgument, u"%1 has no base URL"_s.arg(config.name)};
     }
     return (*factory)(config, http_);
+}
+
+Result<std::unique_ptr<IAiProvider>> ProviderRegistry::createChain(const Config &config) const {
+    const ProviderConfig *first = config.active();
+    if (!first) return Error{ErrorCode::NotFound, u"No AI provider is configured — open Settings."_s};
+    std::vector<ProviderChain::Link> links;
+    std::optional<Error> firstError;
+    const auto add = [&](const ProviderConfig &provider) {
+        Result<std::unique_ptr<IAiProvider>> created = create(provider);
+        if (!created) {
+            qCInfo(lcAi) << "left out of the chain:" << provider.name << "—" << created.error().message;
+            if (!firstError) firstError = created.error();
+            return;
+        }
+        links.push_back({std::move(created).value(), provider.defaultModel});
+    };
+    add(*first);
+    for (const ProviderConfig &provider : config.providers) {
+        if (provider.id != first->id && provider.fallback) add(provider);
+    }
+    if (links.empty()) return *firstError;
+    return std::unique_ptr<IAiProvider>(std::make_unique<ProviderChain>(std::move(links)));
 }
 
 QList<ProviderPreset> ProviderRegistry::presets() {
