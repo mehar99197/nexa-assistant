@@ -161,7 +161,9 @@ QWidget *SettingsDialog::buildProvidersTab() {
 
     activeCombo_ = new QComboBox(page);
     auto *activeRow = new QFormLayout;
-    activeRow->addRow(tr("Active provider:"), activeCombo_);
+    activeRow->addRow(tr("First choice:"), activeCombo_);
+    activeCombo_->setToolTip(tr("Nexa asks this provider first. When it cannot answer — not running, not signed in, "
+                                "out of quota — the others that allow it take over, in the order of the list."));
 
     providerList_ = new QListWidget(page);
     providerList_->setMinimumWidth(210);
@@ -177,10 +179,20 @@ QWidget *SettingsDialog::buildProvidersTab() {
     addButton->setMenu(presetMenu);
     auto *removeButton = new QPushButton(tr("&Remove"), page);
     connect(removeButton, &QPushButton::clicked, this, &SettingsDialog::removeProvider);
+    auto *upButton = new QToolButton(page);
+    upButton->setText(u"▲"_s);
+    upButton->setToolTip(tr("Ask this provider earlier when the first choice cannot answer"));
+    connect(upButton, &QToolButton::clicked, this, [this] { moveProvider(-1); });
+    auto *downButton = new QToolButton(page);
+    downButton->setText(u"▼"_s);
+    downButton->setToolTip(tr("Ask this provider later when the first choice cannot answer"));
+    connect(downButton, &QToolButton::clicked, this, [this] { moveProvider(1); });
 
     auto *listButtons = new QHBoxLayout;
     listButtons->addWidget(addButton);
     listButtons->addWidget(removeButton);
+    listButtons->addWidget(upButton);
+    listButtons->addWidget(downButton);
     listButtons->addStretch();
 
     auto *left = new QVBoxLayout;
@@ -200,6 +212,7 @@ QWidget *SettingsDialog::buildProvidersTab() {
         apiKeyEdit_->setEchoMode(show ? QLineEdit::Normal : QLineEdit::Password);
     });
     auto *keyRow = new QHBoxLayout;
+    keyRow_ = keyRow;
     keyRow->addWidget(apiKeyEdit_, 1);
     keyRow->addWidget(showKeyCheck_);
     modelEdit_ = new QLineEdit(providerForm_);
@@ -216,12 +229,16 @@ QWidget *SettingsDialog::buildProvidersTab() {
                                     providerForm_);
     textToolsCheck_->setToolTip(tr("For models without function calling, such as many small local ones: Nexa "
                                    "lists the tools in the system prompt and reads the calls out of the reply."));
+    fallbackCheck_ = new QCheckBox(tr("Use when the providers above cannot answer"), providerForm_);
+    fallbackCheck_->setToolTip(tr("When the first choice is not running, not signed in or out of quota, Nexa asks "
+                                  "the next provider in the list that allows it, with that provider's own model."));
     testButton_ = new QPushButton(tr("&Test connection"), providerForm_);
     connect(testButton_, &QPushButton::clicked, this, &SettingsDialog::testConnection);
     testResult_ = new QLabel(providerForm_);
     testResult_->setWordWrap(true);
 
     auto *form = new QFormLayout(providerForm_);
+    providerFormLayout_ = form;
     form->addRow(tr("Type:"), kindLabel_);
     form->addRow(tr("Name:"), nameEdit_);
     form->addRow(tr("Base URL:"), baseUrlEdit_);
@@ -231,6 +248,7 @@ QWidget *SettingsDialog::buildProvidersTab() {
     form->addRow(tr("Speech output:"), ttsModelEdit_);
     form->addRow(tr("Voice:"), ttsVoiceEdit_);
     form->addRow(QString(), textToolsCheck_);
+    form->addRow(QString(), fallbackCheck_);
     form->addRow(testButton_, testResult_);
 
     connect(nameEdit_, &QLineEdit::textEdited, this, [this](const QString &name) {
@@ -1131,7 +1149,9 @@ void SettingsDialog::showProvider(int row) {
     ttsModelEdit_->setText(provider.ttsModel);
     ttsVoiceEdit_->setText(provider.ttsVoice);
     textToolsCheck_->setChecked(provider.textTools);
+    fallbackCheck_->setChecked(provider.fallback);
     showKeyCheck_->setChecked(false);
+    showRowsFor(provider.kind);
 }
 
 void SettingsDialog::storeProvider() {
@@ -1146,6 +1166,46 @@ void SettingsDialog::storeProvider() {
     provider.ttsModel = ttsModelEdit_->text().trimmed();
     provider.ttsVoice = ttsVoiceEdit_->text().trimmed();
     provider.textTools = textToolsCheck_->isChecked();
+    provider.fallback = fallbackCheck_->isChecked();
+}
+
+void SettingsDialog::showRowsFor(const QString &kind) {
+    const bool http = ProviderRegistry::isHttpKind(kind) || kind.isEmpty();
+    const bool agy = kind == kKindAgy;
+    QFormLayout *form = providerFormLayout_;
+    if (auto *label = qobject_cast<QLabel *>(form->labelForField(baseUrlEdit_))) {
+        label->setText(http ? tr("Base URL:") : agy ? tr("Program:") : tr("Server:"));
+    }
+    baseUrlEdit_->setPlaceholderText(http  ? u"https://api.example.com/v1"_s
+                                     : agy ? tr("agy on PATH or in ~/.local/bin")
+                                           : tr("Nexa starts its own"));
+    // agy signs in by itself; a server of opencode's that the user runs has a password.
+    form->setRowVisible(keyRow_, !agy);
+    if (auto *label = qobject_cast<QLabel *>(form->labelForField(keyRow_))) {
+        label->setText(http ? tr("API key:") : tr("Server password:"));
+    }
+    apiKeyEdit_->setPlaceholderText(http ? tr("not set") : tr("only for a server you run yourself"));
+    // The programs speak no audio and take Nexa's tools as text whatever the box says.
+    for (QWidget *row : {static_cast<QWidget *>(sttModelEdit_), static_cast<QWidget *>(ttsModelEdit_),
+                         static_cast<QWidget *>(ttsVoiceEdit_), static_cast<QWidget *>(textToolsCheck_)}) {
+        form->setRowVisible(row, http);
+    }
+}
+
+void SettingsDialog::moveProvider(int by) {
+    const int row = providerList_->currentRow();
+    const int target = row + by;
+    if (row < 0 || target < 0 || target >= config_.providers.size()) return;
+    storeProvider();
+    config_.providers.move(row, target);
+    {
+        const QSignalBlocker blocker(providerList_);
+        QListWidgetItem *item = providerList_->takeItem(row);
+        providerList_->insertItem(target, item);
+        providerList_->setCurrentRow(target);
+    }
+    currentRow_ = target;
+    refreshActiveCombo();
 }
 
 void SettingsDialog::addProvider(const ProviderPreset &preset) {

@@ -29,6 +29,7 @@ public:
     void addUserMessage(const QString &text, const QString &source);
     void beginAssistantMessage();
     void setReplyRoute(const QString &route);       // "fast" (no model) or "agent"
+    void setReplyVia(const QString &via);           // a fallback provider answered the reply
     void appendAssistantDelta(const QString &delta);
     // A tool ran. On the fast path its summary is the answer; in an agent reply it is a step line.
     void addAction(const QString &tool, bool ok, const QString &summary, qint64 elapsedMs);
@@ -84,6 +85,7 @@ private:
     bool inReply_{false};
     int replyHeader_{-1};           // position of the reply's meta line, rewritten as the route becomes known
     QString route_;
+    QString via_;
     int actionCount_{0};
     qint64 fastMs_{-1};
     QColor userBubble_;

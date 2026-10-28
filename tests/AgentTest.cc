@@ -29,8 +29,9 @@ constexpr int kWaitMs = 5'000;
 class ScriptedStream : public ChatStream {
 public:
     void play(const QString &text, const QList<ToolCall> &calls, std::optional<Error> error,
-              const QStringList &chunks = {}) {
-        QTimer::singleShot(0, this, [this, text, calls, error, chunks] {
+              const QStringList &chunks = {}, const QString &route = {}) {
+        QTimer::singleShot(0, this, [this, text, calls, error, chunks, route] {
+            if (!route.isEmpty()) setRoute(route, u"One: down"_s);
             for (const QString &chunk : chunks) emitText(chunk);
             emitText(text);
             if (error) {
@@ -54,6 +55,7 @@ public:
         QList<ToolCall> calls;
         std::optional<Error> error;
         QStringList chunks;     // streamed one by one before `text`
+        QString route;          // a fallback answered: who
     };
 
     QString id() const override { return u"scripted"_s; }
@@ -67,7 +69,7 @@ public:
         lastStream = stream.get();
         if (!script.isEmpty()) {
             const Reply reply = script.takeFirst();
-            stream->play(reply.text, reply.calls, reply.error, reply.chunks);
+            stream->play(reply.text, reply.calls, reply.error, reply.chunks, reply.route);
         } else if (repeat) {
             stream->play(repeat->text, repeat->calls, repeat->error);
         }
@@ -501,4 +503,16 @@ TEST_CASE("A text-tools reply that starts with spaces is not shown twice") {
     f.agent.run(&f.provider, &f.conversation, u"m"_s, u"gui"_s);
     REQUIRE(f.waitDone());
     CHECK(shown.join(QString()) == u"Hello there"_s);
+}
+
+TEST_CASE("A fallback that answered is reported") {
+    Fixture f;
+    f.provider.script = {{u"hi"_s, {}, {}, {}, u"Two · m2"_s}};
+    QStringList reroutes;
+    QObject::connect(&f.agent, &Agent::rerouted, [&](const QString &route, const QString &reason) {
+        reroutes.append(route + u" | "_s + reason);
+    });
+    f.agent.run(&f.provider, &f.conversation, u"m"_s, u"gui"_s);
+    REQUIRE(f.waitDone());
+    CHECK(reroutes == QStringList{u"Two · m2 | One: down"_s});
 }

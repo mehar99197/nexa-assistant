@@ -547,6 +547,7 @@ void MainWindow::connectController() {
     });
     connect(controller_, &AppController::replyStarted, this, [this] { chatView_->beginAssistantMessage(); });
     connect(controller_, &AppController::replyRoute, chatView_, &ChatView::setReplyRoute);
+    connect(controller_, &AppController::replyVia, chatView_, &ChatView::setReplyVia);
     connect(controller_, &AppController::replyDelta, chatView_, &ChatView::appendAssistantDelta);
     connect(controller_, &AppController::replyNotice, chatView_, &ChatView::addNotice);
     connect(controller_, &AppController::replyAction, chatView_, &ChatView::addAction);

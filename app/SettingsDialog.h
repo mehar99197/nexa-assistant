@@ -9,6 +9,8 @@
 #include <memory>
 
 class QCheckBox;
+class QFormLayout;
+class QHBoxLayout;
 class QComboBox;
 class QLabel;
 class QLineEdit;
@@ -84,6 +86,8 @@ private:
     void storeProvider();
     void addProvider(const ProviderPreset &preset);
     void removeProvider();
+    void moveProvider(int by);              // ▲ / ▼: the order the chain follows after the first choice
+    void showRowsFor(const QString &kind);  // the fields a provider of this kind uses
     void refreshActiveCombo();
     void testConnection();
     void showTestResult(const QString &text, bool ok);
@@ -109,6 +113,9 @@ private:
     QLineEdit *baseUrlEdit_{nullptr};
     QLineEdit *apiKeyEdit_{nullptr};
     QCheckBox *showKeyCheck_{nullptr};
+    QCheckBox *fallbackCheck_{nullptr};
+    QFormLayout *providerFormLayout_{nullptr};
+    QHBoxLayout *keyRow_{nullptr};
     QLineEdit *modelEdit_{nullptr};
     QLineEdit *sttModelEdit_{nullptr};
     QLineEdit *ttsModelEdit_{nullptr};

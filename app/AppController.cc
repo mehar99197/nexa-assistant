@@ -81,6 +81,10 @@ AppController::AppController(AppServices services, Config config, QString enviro
         emit replyNotice(message);
         emit statusChanged(message, true);
     });
+    connect(agent, &Agent::rerouted, this, [this](const QString &route, const QString &reason) {
+        emit replyVia(route);
+        emit statusChanged(tr("AI: %1 — %2").arg(route, reason), false);
+    });
     connect(agent, &Agent::finished, this, &AppController::finishReply);
     connect(agent, &Agent::failed, this, [this](const Error &error) {
         noteProviderError(error);
@@ -153,6 +157,7 @@ void AppController::start() {
         emit apiKeyRequired(active->name);
         return;
     }
+    provider_->warmUp();    // agy's process or opencode's server, so the first question does not wait for it
     refreshModels();
 }
 
@@ -576,7 +581,8 @@ void AppController::rebuildProvider() {
     config_.activeProvider = active->id;
     emit providerChanged(active->name);
 
-    Result<std::unique_ptr<IAiProvider>> created = services_.providers->create(*active);
+    // The first choice, then every provider that may answer when it cannot.
+    Result<std::unique_ptr<IAiProvider>> created = services_.providers->createChain(config_);
     if (!created) {
         emit statusChanged(created.error().message, true);
         return;

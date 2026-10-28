@@ -49,6 +49,8 @@ signals:
     // Something the user should know that is not the end of the reply: the model cannot see
     // the screenshot, say.
     void notice(const QString &message);
+    // The first-choice provider could not answer, so `route` did (ProviderChain).
+    void rerouted(const QString &route, const QString &reason);
 
 private:
     void requestStep();

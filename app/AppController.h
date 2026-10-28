@@ -120,6 +120,7 @@ signals:
     void userMessageAccepted(const QString &text, const QString &source);
     void replyStarted(const QString &source);       // "gui", "voice", …
     void replyRoute(const QString &route);          // "fast" (no model) or "agent"; may change mid-reply
+    void replyVia(const QString &route);            // a fallback provider answered: "agy · claude-sonnet-4-6"
     void replyDelta(const QString &delta);
     void replyNotice(const QString &message);       // a note inside the reply, not its end
     void replyStep(const QString &description, bool ok);    // a tool ran (fast path or agent), as one line

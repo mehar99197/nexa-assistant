@@ -82,6 +82,7 @@ void Agent::sendStep() {
     } else {
         connect(stream, &ChatStream::textDelta, this, &Agent::textDelta);
     }
+    connect(stream, &ChatStream::rerouted, this, &Agent::rerouted);
     connect(stream, &ChatStream::finished, this, [this, stream](FinishReason reason) { onStepFinished(stream, reason); });
     connect(stream, &ChatStream::failed, this, [this, stream](const Error &error) {
         if (stream != stream_.get()) return;

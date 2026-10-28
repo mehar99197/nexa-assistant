@@ -106,12 +106,19 @@ void ChatView::addUserMessage(const QString &text, const QString &source) {
 void ChatView::beginAssistantMessage() {
     const bool follow = isAtBottom();
     route_.clear();
+    via_.clear();
     actionCount_ = 0;
     fastMs_ = -1;
     replyHeader_ = insertMeta(u"Nexa"_s, {}, false);
     inReply_ = true;
     openSegment();
     if (follow) scrollToBottom();
+}
+
+void ChatView::setReplyVia(const QString &via) {
+    if (!inReply_ || via_ == via) return;
+    via_ = via;
+    rewriteReplyHeader();
 }
 
 void ChatView::setReplyRoute(const QString &route) {
@@ -261,7 +268,11 @@ void ChatView::writeMeta(QTextCursor cursor, const QString &who, const QString &
 
 QString ChatView::replyDetail() const {
     if (route_ == u"fast"_s) return fastMs_ >= 0 ? tr("fast path · %1 ms").arg(fastMs_) : tr("fast path");
-    if (route_ == u"agent"_s) return actionCount_ > 0 ? tr("agent · %n tool call(s)", nullptr, actionCount_) : tr("agent");
+    if (route_ == u"agent"_s) {
+        QString detail = actionCount_ > 0 ? tr("agent · %n tool call(s)", nullptr, actionCount_) : tr("agent");
+        if (!via_.isEmpty()) detail += tr(" · via %1").arg(via_);
+        return detail;
+    }
     return {};
 }
 
