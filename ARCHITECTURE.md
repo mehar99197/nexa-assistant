@@ -117,6 +117,17 @@
   ever produced twice, and passes a 400 through (the `Agent`'s image retry depends on it).
 - M15: **an empty model is valid** for agy and opencode (the program's own default; `ProviderRegistry::needsModel`):
   agy needs ~16 s to list its models, and requests were refused until then.
+- M15 (after the owner's report that opencode did not work and pictures must reach fast models that see): the
+  chosen models were the cause — opencode's `opencode/glm-5.3-flash-free` had used up its free quota, agy was set to
+  `gemini-3.1-pro-high`, which agy does not have, Google Gemini had no key and Groq refused the request's size — so
+  every provider failed. Now a provider says per model whether it takes images (`IAiProvider::takesImages`: agy never,
+  its input is text only; opencode from `capabilities.input.image` of its model list), the `ProviderChain` sends a
+  request with a picture to the first provider that can see it (agy first answers words, a screenshot goes to
+  opencode's `google/antigravity-gemini-3-flash`, "via" says so), the toolbar marks such models with an eye, and the
+  failures name the model and what to do: an exhausted quota, a retired model (Antigravity's Gemini 3 Pro answers a
+  notice for minutes; the first 80 characters are held to catch it) and a model agy does not have (NotFound, so the
+  chain moves on). Measured through opencode with a picture: `antigravity-gemini-3-flash` saw it in 1.2 s,
+  `antigravity-gemini-3-pro` is retired, `antigravity-gemini-3.8-flash` did not answer in 140 s.
 - M15: a test copy on private `XDG_*` folders sees none of the user's opencode providers unless `~/.config/opencode` and
   `~/.local/share/opencode` are linked into them (9 models instead of 497), and a scripted `--ask` waits forever while
   the wake word is on (it waits for an idle voice).
