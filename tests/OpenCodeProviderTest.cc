@@ -8,6 +8,7 @@
 
 #include "QtStringMakers.h"
 
+#include <QElapsedTimer>
 #include <QFile>
 #include <QJsonArray>
 #include <QJsonDocument>
@@ -255,4 +256,18 @@ TEST_CASE("Destroying the server stops the process") {
     REQUIRE(pid > 0);
     server.reset();
     CHECK(QTest::qWaitFor([&] { return !alive(pid); }, kWaitMs));
+}
+
+TEST_CASE("An attached server that is not running fails at once, not at the start limit") {
+    OpenCodeRig rig;
+    auto server = std::make_shared<OpenCodeServer>(&rig.http, QString(), QUrl(u"http://127.0.0.1:9"_s), u"pw"_s,
+                                                   rig.dir.filePath(u"work"_s));
+    std::optional<Result<void>> started;
+    QElapsedTimer clock;
+    clock.start();
+    server->ensureStarted([&](Result<void> result) { started = result; });
+    REQUIRE(QTest::qWaitFor([&] { return started.has_value(); }, kWaitMs));
+    REQUIRE_FALSE(started->isOk());
+    CHECK(started->error().code == ErrorCode::ConnectionRefused);
+    CHECK(clock.elapsed() < 3'000);
 }

@@ -163,6 +163,10 @@ void OpenCodeServer::checkHealth() {
         if (state_ != State::Starting) return;
         if (body) {
             openEvents();
+        } else if (attachUrl_.isValid() && body.error().code == ErrorCode::ConnectionRefused) {
+            // A server the user runs is either there or not: nothing of Nexa's is on its way up.
+            finishStart(Error{ErrorCode::ConnectionRefused,
+                              u"nothing answers at %1 — is your opencode server running?"_s.arg(base_.toDisplayString())});
         } else {
             QTimer::singleShot(kHealthPollMs, this, &OpenCodeServer::checkHealth);
         }
