@@ -54,6 +54,8 @@ public:
     static void upgrade(Config &config, const std::function<bool(const QString &program)> &installed);
     // Kinds that talk to a URL, as opposed to a program Nexa runs.
     static bool isHttpKind(const QString &kind);
+    // Whether a request needs a model named: an API does; agy and opencode answer with their own default.
+    static bool needsModel(const ProviderConfig &config);
 
     // The opencode server a provider of this config talks to: one per program and URL, kept for the
     // registry's life, so a provider rebuilt after Settings finds its server already running.

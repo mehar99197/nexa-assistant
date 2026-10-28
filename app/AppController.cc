@@ -455,7 +455,10 @@ bool AppController::canUseModel(bool report) {
         if (report) emit statusChanged(tr("No AI provider is configured — open Settings."), true);
         return false;
     }
-    if (currentModel().isEmpty()) {
+    // agy and opencode take an empty model as their own default, so they answer before (and
+    // without) the model list, which agy needs about 16 s for.
+    const ProviderConfig *active = config_.active();
+    if (currentModel().isEmpty() && active && ProviderRegistry::needsModel(*active)) {
         if (report) emit statusChanged(tr("Choose a model first (model list in the toolbar)."), true);
         return false;
     }

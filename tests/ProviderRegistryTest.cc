@@ -146,3 +146,10 @@ TEST_CASE("create asks for a base URL only for HTTP kinds") {
     CHECK(ProviderRegistry::isHttpKind(kKindAnthropic));
     CHECK_FALSE(ProviderRegistry::isHttpKind(kKindOpenCode));
 }
+
+TEST_CASE("An API needs a model named; agy and opencode answer with their own default") {
+    CHECK(ProviderRegistry::needsModel(ProviderConfig{.kind = kKindOpenAiCompatible}));
+    CHECK(ProviderRegistry::needsModel(ProviderConfig{.kind = kKindAnthropic}));
+    CHECK_FALSE(ProviderRegistry::needsModel(ProviderConfig{.kind = kKindAgy}));
+    CHECK_FALSE(ProviderRegistry::needsModel(ProviderConfig{.kind = kKindOpenCode}));
+}

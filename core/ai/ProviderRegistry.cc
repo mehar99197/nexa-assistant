@@ -158,6 +158,10 @@ bool ProviderRegistry::isHttpKind(const QString &kind) {
     return kind == kKindOpenAiCompatible || kind == kKindAnthropic || kind == kKindGemini;
 }
 
+bool ProviderRegistry::needsModel(const ProviderConfig &config) {
+    return isHttpKind(config.kind);
+}
+
 void ProviderRegistry::upgrade(Config &config, const std::function<bool(const QString &program)> &installed) {
     if (config.version < 2) {
         for (ProviderConfig &provider : config.providers) {
