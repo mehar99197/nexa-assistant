@@ -185,6 +185,13 @@ TEST_CASE("Cancel kills the process and the next request starts fresh") {
     CHECK(QTest::qWaitFor([&] { return !alive(firstPid); }, kWaitMs));
 
     const Outcome next = run(provider, ask({u(u"first"_s), a(QString()), u(u"second"_s)}));
+    // Seen failing once under the parallel suite and never since: on failure, say what agy saw.
+    QStringList seen;
+    for (const QJsonObject &entry : rig.log(u"argv"_s) + rig.log(u"turn"_s)) {
+        seen.append(QString::fromUtf8(QJsonDocument(entry).toJson(QJsonDocument::Compact)));
+    }
+    INFO("fake agy log: " << seen.join(u" | "_s).toStdString());
+    INFO("reply: " << next.text.toStdString() << (next.error ? " error: " + next.error->message.toStdString() : ""));
     CHECK(next.text == u"after"_s);
     CHECK(rig.log(u"argv"_s).size() == 2);
     REQUIRE(rig.turns().size() == 2);
