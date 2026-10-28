@@ -207,8 +207,10 @@ void AppController::setCurrentModel(const QString &model) {
 void AppController::refreshModels() {
     if (!provider_) return;
     emit statusChanged(tr("Loading models from %1…").arg(providerName()), false);
+    emit modelsLoading(true);
     // The callback is dropped if the provider is rebuilt meanwhile.
     provider_->listModels([this](Result<QStringList> result) {
+        emit modelsLoading(false);
         if (!result) {
             noteProviderError(result.error());
             emit statusChanged(describe(result.error()), true);

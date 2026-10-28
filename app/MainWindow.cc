@@ -533,6 +533,10 @@ void MainWindow::connectController() {
         providerLabel_->setText(name.isEmpty() ? tr("none") : name);
     });
     connect(controller_, &AppController::modelsChanged, this, &MainWindow::showModels);
+    // An empty list while a program lists its models reads as broken; say what is happening instead.
+    connect(controller_, &AppController::modelsLoading, this, [this](bool loading) {
+        modelCombo_->lineEdit()->setPlaceholderText(loading ? tr("loading models…") : tr("model"));
+    });
     connect(controller_, &AppController::statusChanged, this, &MainWindow::showStatus);
     // Queued: the prompt is modal and must not run inside a network callback.
     connect(controller_, &AppController::apiKeyRequired, this, &MainWindow::promptForApiKey, Qt::QueuedConnection);

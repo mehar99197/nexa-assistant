@@ -114,6 +114,7 @@ signals:
     void configChanged(const nexa::Config &config);
     void themeChanged(const QString &theme);        // "system" | "dark" | "light"
     void modelsChanged(const QStringList &models, const QString &current);
+    void modelsLoading(bool loading);                // the provider is being asked for its models (agy takes ~16 s)
     void statusChanged(const QString &message, bool isError);
     void apiKeyRequired(const QString &providerName);
     void userMessageAccepted(const QString &text, const QString &source);
