@@ -37,6 +37,10 @@ public:
     std::shared_ptr<ChatStream> chat(const ChatRequest &request) override;
     void warmUp() override;
 
+    // How long a turn may go without an event of its session before it fails (Timeout) — a missed
+    // idle while the event stream was being reopened, a provider that hangs; 5 minutes.
+    void setTurnTimeoutMs(int ms) { turnTimeoutMs_ = ms; }
+
 private:
     void sendTurn();
     void prompt(const QString &session, const QJsonObject &body);
@@ -54,6 +58,8 @@ private:
     bool sawBusy_{false};           // the session has started on this turn: its next idle ends it
     QHash<QString, QString> partTypes_;     // this turn's parts: only "text" ones reach the reply
     QTimer retryLimit_;
+    QTimer turnTimer_;
+    int turnTimeoutMs_{300'000};
 };
 
 } // namespace nexa

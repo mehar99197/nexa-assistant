@@ -82,7 +82,9 @@ private:
     // of the reply, which streams through filter_ so the call markup never reaches the screen.
     bool textTools_{false};
     TextToolParser::StreamFilter filter_;
+    bool filtering_{false};         // this step's words go through filter_ (text tools, or a fallback answered)
     QSet<QString> blindModels_;
+    QSet<QString> sightlessNoticed_;    // providers without vision the user has been told about
     QString pendingBlind_;          // the model whose image-free retry is on its way
     bool stepHadImages_{false};     // the request on its way carries images
 };

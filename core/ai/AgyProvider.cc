@@ -44,6 +44,16 @@ AgyProvider::AgyProvider(ProviderConfig config, QString workingDir, QObject *par
     if (workingDir_.isEmpty()) {
         workingDir_ = QStandardPaths::writableLocation(QStandardPaths::GenericCacheLocation) + u"/nexa/agy"_s;
     }
+    turnTimer_.setSingleShot(true);
+    connect(&turnTimer_, &QTimer::timeout, this, [this] {
+        AgyStream *stream = stream_;
+        if (!stream) return;
+        stream_ = nullptr;
+        ledger_.reset();
+        session_.reset();       // a turn cannot be stopped any other way
+        stream->error(Error{ErrorCode::Timeout, u"agy stopped answering: nothing for %1 s"_s.arg(
+                                                    std::max(1, turnTimeoutMs_ / 1000))});
+    });
 }
 
 AgyProvider::~AgyProvider() = default;
@@ -139,8 +149,10 @@ std::shared_ptr<ChatStream> AgyProvider::chat(const ChatRequest &request) {
 
     reminded_ = false;
     stream_ = stream;
+    turnTimer_.start(turnTimeoutMs_);
     stream->onAbort = [self = QPointer<AgyProvider>(this)] {
         if (!self) return;
+        self->turnTimer_.stop();
         self->stream_ = nullptr;
         self->ledger_.reset();
         self->session_.reset();     // kills agy: a turn cannot be stopped any other way
@@ -162,11 +174,15 @@ void AgyProvider::warmUp() {
 void AgyProvider::replaceSession(const QString &program, const QString &model) {
     session_ = std::make_unique<AgySession>(program, model, workingDir_);
     AgySession *session = session_.get();
+    connect(session, &AgySession::activity, this, [this] {
+        if (stream_) turnTimer_.start(turnTimeoutMs_);
+    });
     connect(session, &AgySession::text, this, [this](const QString &delta) {
         if (stream_) stream_->text(delta);
     });
     connect(session, &AgySession::turnFinished, this, &AgyProvider::onTurnFinished);
     connect(session, &AgySession::turnFailed, this, [this](const Error &error) {
+        turnTimer_.stop();
         ledger_.reset();
         if (AgyStream *stream = stream_) {
             stream_ = nullptr;
@@ -178,6 +194,7 @@ void AgyProvider::replaceSession(const QString &program, const QString &model) {
 void AgyProvider::onTurnFinished(const AgyEvent &result) {
     AgyStream *stream = stream_;
     if (!stream) return;
+    turnTimer_.stop();
     if (!result.ok) {
         ledger_.reset();
         stream_ = nullptr;
@@ -186,6 +203,7 @@ void AgyProvider::onTurnFinished(const AgyEvent &result) {
     }
     if (result.response.trimmed().isEmpty() && !result.deniedActions.isEmpty()) {
         if (!std::exchange(reminded_, true)) {
+            turnTimer_.start(turnTimeoutMs_);
             session_->send(kReminder);
             return;
         }

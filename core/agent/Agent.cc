@@ -66,23 +66,36 @@ void Agent::sendStep() {
     textTools_ = !provider_->capabilities().nativeTools;
     ChatRequest request = conversation_->buildRequest(model_, tools);
     if (textTools_) request = TextToolParser::asTextRequest(request);
-    // A model known to refuse images gets the words alone, and a note where each image was.
+    // A model known to refuse images, or a provider that takes none (agy), gets the words alone and a
+    // note where each image was; the user hears about a provider once.
     stepHadImages_ = hasImages(request);
-    if (stepHadImages_ && (blindModels_.contains(model_) || pendingBlind_ == model_)) {
+    const bool sightless = !provider_->capabilities().vision;
+    if (stepHadImages_ && (sightless || blindModels_.contains(model_) || pendingBlind_ == model_)) {
+        if (sightless && !sightlessNoticed_.contains(provider_->displayName())) {
+            sightlessNoticed_.insert(provider_->displayName());
+            emit notice(u"%1 cannot see images, so the picture was left out of the request. A vision-capable "
+                        "provider is needed to look at the screen."_s.arg(provider_->displayName()));
+        }
         stripImages(request);
         stepHadImages_ = false;
     }
     stream_ = provider_->chat(request);
     ChatStream *stream = stream_.get();
     filter_ = {};
-    if (textTools_) {
-        connect(stream, &ChatStream::textDelta, this, [this](const QString &delta) {
-            if (const QString shown = filter_.feed(delta); !shown.isEmpty()) emit textDelta(shown);
-        });
-    } else {
-        connect(stream, &ChatStream::textDelta, this, &Agent::textDelta);
-    }
-    connect(stream, &ChatStream::rerouted, this, &Agent::rerouted);
+    filtering_ = textTools_;
+    connect(stream, &ChatStream::textDelta, this, [this](const QString &delta) {
+        if (!filtering_) {
+            emit textDelta(delta);
+        } else if (const QString shown = filter_.feed(delta); !shown.isEmpty()) {
+            emit textDelta(shown);
+        }
+    });
+    // A fallback answers before it has said anything, and may write its calls as text whatever the
+    // first choice could do: from then on the step's words go through the filter too.
+    connect(stream, &ChatStream::rerouted, this, [this](const QString &route, const QString &reason) {
+        filtering_ = true;
+        emit rerouted(route, reason);
+    });
     connect(stream, &ChatStream::finished, this, [this, stream](FinishReason reason) { onStepFinished(stream, reason); });
     connect(stream, &ChatStream::failed, this, [this, stream](const Error &error) {
         if (stream != stream_.get()) return;
@@ -172,7 +185,7 @@ void Agent::onStepFinished(ChatStream *stream, FinishReason reason) {
         }
     }
     // What the filter held back while the reply streamed: everything after the words already shown.
-    if (textTools_) {
+    if (filtering_) {
         const QString shown = filter_.shown();
         qsizetype start = 0;    // the filter never shows leading whitespace
         while (start < text.size() && text.at(start).isSpace()) ++start;

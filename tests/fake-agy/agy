@@ -19,6 +19,19 @@ import sys
 import time
 
 
+def parent_death_signal():
+    """The signal this process gets when its parent dies (prctl PR_GET_PDEATHSIG), or None."""
+    try:
+        import ctypes
+        libc = ctypes.CDLL(None, use_errno=True)
+        signal = ctypes.c_int(0)
+        if libc.prctl(2, ctypes.byref(signal), 0, 0, 0) == 0:
+            return signal.value
+    except Exception:
+        pass
+    return None
+
+
 def log(entry):
     path = os.environ.get("FAKE_AGY_LOG")
     if path:
@@ -57,7 +70,8 @@ def main():
         return 0
     settings_path = os.path.join(os.environ.get("HOME", ""), ".gemini", "antigravity-cli", "settings.json")
     settings = json.load(open(settings_path)) if os.path.exists(settings_path) else None
-    log({"argv": args, "pid": os.getpid(), "home": os.environ.get("HOME"), "cwd": os.getcwd(), "settings": settings})
+    log({"argv": args, "pid": os.getpid(), "home": os.environ.get("HOME"), "cwd": os.getcwd(), "settings": settings,
+         "pdeathsig": parent_death_signal()})
     emit({"event": "init", "conversation_id": "fake", "init": {"permission_mode": "request-review"}})
     for line in sys.stdin:
         if not line.strip():

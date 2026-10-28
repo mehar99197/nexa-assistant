@@ -271,3 +271,72 @@ TEST_CASE("An attached server that is not running fails at once, not at the star
     CHECK(started->error().code == ErrorCode::ConnectionRefused);
     CHECK(clock.elapsed() < 3'000);
 }
+
+TEST_CASE("A late idle from the last turn does not end the next one before it is sent") {
+    // opencode ends a turn with session.status idle and then session.idle; the second can arrive
+    // after the next turn has started and before its prompt went out.
+    OpenCodeRig rig({QJsonObject{{u"text"_s, u"one"_s}}, QJsonObject{{u"text"_s, u"two"_s}}});
+    std::shared_ptr<OpenCodeServer> server = rig.server();
+    OpenCodeProvider provider(config(), &rig.http, server);
+    REQUIRE(run(provider, ask({u(u"first"_s)})).text == u"one"_s);
+
+    Outcome outcome;
+    std::shared_ptr<ChatStream> stream = provider.chat(ask({u(u"first"_s), a(u"one"_s), u(u"second"_s)}));
+    QObject::connect(stream.get(), &ChatStream::textDelta, [&](const QString &delta) { outcome.text += delta; });
+    QObject::connect(stream.get(), &ChatStream::finished, [&](FinishReason reason) { outcome.finish = reason; });
+    QObject::connect(stream.get(), &ChatStream::failed, [&](const Error &error) { outcome.error = error; });
+    OpenCodeEvent stale;
+    stale.kind = OpenCodeEvent::Kind::Idle;
+    stale.sessionId = u"ses_1"_s;
+    emit server->event(stale);
+    REQUIRE(QTest::qWaitFor([&] { return outcome.finish || outcome.error; }, kWaitMs));
+    CHECK(outcome.text == u"two"_s);
+    CHECK(rig.requests(u"POST"_s, u"/prompt_async"_s).size() == 2);
+}
+
+TEST_CASE("Nexa's opencode server dies with Nexa, even when Nexa crashes") {
+    OpenCodeRig rig;
+    OpenCodeProvider provider(config(), &rig.http, rig.server());
+    REQUIRE(models(provider)->isOk());
+    CHECK(rig.log().first().value(u"pdeathsig"_s).toInt() == SIGKILL);
+}
+
+TEST_CASE("opencode saying nothing for too long fails the turn and stops the session") {
+    OpenCodeRig rig({QJsonObject{{u"hang"_s, true}}});
+    OpenCodeProvider provider(config(), &rig.http, rig.server());
+    provider.setTurnTimeoutMs(700);
+    const Outcome outcome = run(provider, ask({u(u"hello"_s)}));
+    REQUIRE(outcome.error);
+    CHECK(outcome.error->code == ErrorCode::Timeout);
+    CHECK(QTest::qWaitFor([&] { return !rig.requests(u"POST"_s, u"/session/ses_1/abort"_s).isEmpty(); }, kWaitMs));
+}
+
+TEST_CASE("An attached server that refuses the password says so at once") {
+    OpenCodeRig rig;
+    QProcess own;
+    QProcessEnvironment environment = QProcessEnvironment::systemEnvironment();
+    environment.insert(u"OPENCODE_SERVER_PASSWORD"_s, u"pw"_s);
+    own.setProcessEnvironment(environment);
+    own.start(kFake, {u"serve"_s, u"--hostname"_s, u"127.0.0.1"_s, u"--port"_s, u"0"_s});
+    REQUIRE(own.waitForStarted());
+    QByteArray line;
+    REQUIRE(QTest::qWaitFor([&] {
+        line += own.readAllStandardOutput();
+        return line.contains("listening on");
+    }, kWaitMs));
+    const QString url = QString::fromUtf8(line).section(u"listening on "_s, 1).trimmed();
+
+    auto server = std::make_shared<OpenCodeServer>(&rig.http, QString(), QUrl(url), u"wrong"_s,
+                                                   rig.dir.filePath(u"work"_s));
+    std::optional<Result<void>> started;
+    QElapsedTimer clock;
+    clock.start();
+    server->ensureStarted([&](Result<void> result) { started = result; });
+    REQUIRE(QTest::qWaitFor([&] { return started.has_value(); }, kWaitMs));
+    REQUIRE_FALSE(started->isOk());
+    CHECK(started->error().code == ErrorCode::Unauthorized);
+    CHECK(started->error().message.contains(u"password"_s));
+    CHECK(clock.elapsed() < 3'000);
+    own.kill();
+    own.waitForFinished();
+}

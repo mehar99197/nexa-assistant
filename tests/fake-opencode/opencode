@@ -30,6 +30,19 @@ LISTENERS = []
 SESSIONS = [0]
 
 
+def parent_death_signal():
+    """The signal this process gets when its parent dies (prctl PR_GET_PDEATHSIG), or None."""
+    try:
+        import ctypes
+        libc = ctypes.CDLL(None, use_errno=True)
+        signal = ctypes.c_int(0)
+        if libc.prctl(2, ctypes.byref(signal), 0, 0, 0) == 0:
+            return signal.value
+    except Exception:
+        pass
+    return None
+
+
 def log(entry):
     path = os.environ.get("FAKE_OPENCODE_LOG")
     if path:
@@ -190,7 +203,8 @@ def main():
     port = int(args[args.index("--port") + 1]) if "--port" in args else 0
     server = ThreadingHTTPServer((host, port), Handler)
     server.daemon_threads = True
-    log({"pid": os.getpid(), "argv": args, "cwd": os.getcwd(), "config": os.environ.get("OPENCODE_CONFIG_CONTENT")})
+    log({"pid": os.getpid(), "argv": args, "cwd": os.getcwd(), "config": os.environ.get("OPENCODE_CONFIG_CONTENT"),
+         "pdeathsig": parent_death_signal()})
     print("opencode server listening on http://%s:%d" % (host, server.server_address[1]), flush=True)
     server.serve_forever()
     return 0

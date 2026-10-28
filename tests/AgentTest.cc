@@ -60,7 +60,7 @@ public:
 
     QString id() const override { return u"scripted"_s; }
     QString displayName() const override { return u"Scripted"_s; }
-    Capabilities capabilities() const override { return {.nativeTools = nativeTools}; }
+    Capabilities capabilities() const override { return {.nativeTools = nativeTools, .vision = vision}; }
     void listModels(std::function<void(Result<QStringList>)> done) override { done(QStringList{u"m"_s}); }
 
     std::shared_ptr<ChatStream> chat(const ChatRequest &request) override {
@@ -79,6 +79,7 @@ public:
     QList<Reply> script;
     std::optional<Reply> repeat;
     bool nativeTools{true};
+    bool vision{true};
     QList<ChatRequest> requests;
     ScriptedStream *lastStream{nullptr};
 };
@@ -515,4 +516,42 @@ TEST_CASE("A fallback that answered is reported") {
     f.agent.run(&f.provider, &f.conversation, u"m"_s, u"gui"_s);
     REQUIRE(f.waitDone());
     CHECK(reroutes == QStringList{u"Two · m2 | One: down"_s});
+}
+
+TEST_CASE("A provider that cannot see gets the words and a note, and the user is told once") {
+    Fixture f;
+    f.provider.vision = false;
+    f.provider.script = {{u"I cannot look at it."_s, {}, {}}, {u"Still cannot."_s, {}, {}}};
+    QStringList notices;
+    QObject::connect(&f.agent, &Agent::notice, [&notices](const QString &message) { notices.append(message); });
+    f.conversation.addUser(u"what is on this screenshot?"_s, {ImageAttachment{"JPEG", u"image/jpeg"_s}});
+    f.agent.run(&f.provider, &f.conversation, u"m"_s, u"gui"_s);
+    REQUIRE(f.waitDone());
+    REQUIRE(f.provider.requests.size() == 1);
+    for (const ChatMessage &message : f.provider.requests.first().messages) CHECK(message.images.isEmpty());
+    CHECK(f.provider.requests.first().messages.last().text.contains(u"cannot see images"_s));
+    CHECK(notices.size() == 1);
+
+    f.finish.reset();
+    f.conversation.addUser(u"and now?"_s);
+    f.agent.run(&f.provider, &f.conversation, u"m"_s, u"gui"_s);
+    REQUIRE(f.waitDone());
+    CHECK(notices.size() == 1);     // said once, not at every request that still carries the picture
+}
+
+TEST_CASE("A native first choice falling back to a text-only provider never shows the call markup") {
+    Fixture f;
+    f.provider.nativeTools = true;     // the first choice could call tools; the fallback that answered cannot
+    ScriptedProvider::Reply first;
+    first.route = u"agy · m2"_s;
+    first.chunks = {u"Checking.\n<tool_call>{\"name\": \"echo\", \"arguments\": {\"msg\": \"x\"}}</tool_call>"_s};
+    f.provider.script = {first, {u"Done."_s, {}, {}}};
+    QStringList shown;
+    QObject::connect(&f.agent, &Agent::textDelta, [&shown](const QString &delta) { shown.append(delta); });
+    f.agent.run(&f.provider, &f.conversation, u"m"_s, u"gui"_s);
+    REQUIRE(f.waitDone());
+    CHECK(f.toolRuns == QStringList{u"echo:ok"_s});
+    const QString all = shown.join(QString());
+    CHECK(all.contains(u"Checking."_s));
+    CHECK_FALSE(all.contains(u"<tool"_s));
 }

@@ -53,6 +53,12 @@ OpenCodeProvider::OpenCodeProvider(ProviderConfig config, HttpClient *http, std:
         abortSession();
         finishTurn(Error{ErrorCode::Http, u"HTTP 429: opencode: still retrying after %1 s"_s.arg(kRetryGiveUpMs / 1000)});
     });
+    turnTimer_.setSingleShot(true);
+    connect(&turnTimer_, &QTimer::timeout, this, [this] {
+        abortSession();
+        finishTurn(Error{ErrorCode::Timeout, u"opencode stopped answering: nothing for %1 s"_s.arg(
+                                                 std::max(1, turnTimeoutMs_ / 1000))});
+    });
     connect(server_.get(), &OpenCodeServer::event, this, &OpenCodeProvider::onEvent);
     connect(server_.get(), &OpenCodeServer::stopped, this, [this](const Error &error) {
         sessionId_.clear();
@@ -109,10 +115,14 @@ std::shared_ptr<ChatStream> OpenCodeProvider::chat(const ChatRequest &request) {
     }
     pending_ = request;
     if (pending_.model.isEmpty()) pending_.model = config_.defaultModel;
+    // A new turn owns no busy and no parts yet: a late idle of the last turn must not end it.
+    sawBusy_ = false;
+    partTypes_.clear();
     stream_ = stream;
     stream->onAbort = [self = QPointer<OpenCodeProvider>(this)] {
         if (!self) return;
         self->retryLimit_.stop();
+        self->turnTimer_.stop();
         self->stream_ = nullptr;
         self->ledger_.reset();
         self->abortSession();
@@ -161,8 +171,8 @@ void OpenCodeProvider::sendTurn() {
         sessionId_.clear();
     }
     http_->post(server_->request(u"/session"_s), json(QJsonObject{{u"title"_s, u"Nexa"_s}}), kRequestTimeoutMs, this,
-                [this, body](Result<QByteArray> created) {
-        if (!stream_) return;
+                [this, body, turn = stream_](Result<QByteArray> created) {
+        if (!stream_ || stream_ != turn) return;     // that turn was cancelled meanwhile
         const QString session = created ? OpenCodeWire::parseSessionId(created.value()) : QString();
         if (session.isEmpty()) {
             finishTurn(created ? Error{ErrorCode::Parse, u"opencode did not open a session"_s} : created.error());
@@ -176,6 +186,7 @@ void OpenCodeProvider::prompt(const QString &session, const QJsonObject &body) {
     sessionId_ = session;
     sawBusy_ = false;
     partTypes_.clear();
+    turnTimer_.start(turnTimeoutMs_);
     http_->post(server_->request(u"/session/%1/prompt_async"_s.arg(session)), json(body), kRequestTimeoutMs, this,
                 [this](Result<QByteArray> sent) {
         if (!sent) finishTurn(sent.error());
@@ -184,6 +195,7 @@ void OpenCodeProvider::prompt(const QString &session, const QJsonObject &body) {
 
 void OpenCodeProvider::onEvent(const OpenCodeEvent &event) {
     if (!stream_ || event.sessionId != sessionId_) return;
+    if (turnTimer_.isActive()) turnTimer_.start(turnTimeoutMs_);   // a sign of life, reasoning included
     switch (event.kind) {
     case OpenCodeEvent::Kind::Busy:
         sawBusy_ = true;
@@ -225,6 +237,7 @@ void OpenCodeProvider::onEvent(const OpenCodeEvent &event) {
 
 void OpenCodeProvider::finishTurn(std::optional<Error> error) {
     retryLimit_.stop();
+    turnTimer_.stop();
     OpenCodeStream *stream = stream_;
     stream_ = nullptr;
     if (!stream) return;

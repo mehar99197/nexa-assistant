@@ -6,6 +6,7 @@
 #include "core/config/Config.h"
 
 #include <QPointer>
+#include <QTimer>
 #include <QStringList>
 
 #include <memory>
@@ -34,6 +35,10 @@ public:
     std::shared_ptr<ChatStream> chat(const ChatRequest &request) override;
     void warmUp() override;
 
+    // How long a turn may go without a sign of life from agy before it fails (Timeout), so the chain
+    // can ask another provider; 5 minutes, like the HTTP providers' streams.
+    void setTurnTimeoutMs(int ms) { turnTimeoutMs_ = ms; }
+
 private:
     QString program() const;
     void replaceSession(const QString &program, const QString &model);
@@ -46,6 +51,8 @@ private:
     QPointer<AgyStream> stream_;
     ChatRequest pending_;           // the request of the turn on its way
     bool reminded_{false};
+    QTimer turnTimer_;
+    int turnTimeoutMs_{300'000};
     QStringList models_;
 };
 

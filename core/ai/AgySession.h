@@ -42,6 +42,7 @@ public:
     static const QStringList &deniedTools();
 
 signals:
+    void activity();                    // agy printed something during a turn (thinking counts)
     void text(const QString &delta);
     void toolStep(const QString &tool, bool allowed);
     void turnFinished(const nexa::AgyEvent &result);

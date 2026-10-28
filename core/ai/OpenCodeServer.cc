@@ -12,6 +12,7 @@
 #include <QStandardPaths>
 
 #include <signal.h>
+#include <sys/prctl.h>
 
 using namespace Qt::StringLiterals;
 
@@ -153,6 +154,9 @@ void OpenCodeServer::startProcess() {
     process_.setWorkingDirectory(workingDir_);
     process_.setStandardInputFile(QProcess::nullDevice());    // `opencode run` would wait for stdin to end
     process_.setUnixProcessParameters(kProcessFlags);
+    // Its own session takes it out of reach of the terminal's hangup: tie it to Nexa instead, so a
+    // crash of Nexa does not leave a server running (and the next start add another).
+    process_.setChildProcessModifier([] { ::prctl(PR_SET_PDEATHSIG, SIGKILL); });
     qCInfo(lcAi) << "starting opencode's server";
     process_.start();
 }
@@ -167,6 +171,10 @@ void OpenCodeServer::checkHealth() {
             // A server the user runs is either there or not: nothing of Nexa's is on its way up.
             finishStart(Error{ErrorCode::ConnectionRefused,
                               u"nothing answers at %1 — is your opencode server running?"_s.arg(base_.toDisplayString())});
+        } else if (attachUrl_.isValid() && body.error().code == ErrorCode::Unauthorized) {
+            finishStart(Error{ErrorCode::Unauthorized,
+                              u"opencode's server at %1 refused the password — check the server password in "
+                              "Settings → Providers"_s.arg(base_.toDisplayString())});
         } else {
             QTimer::singleShot(kHealthPollMs, this, &OpenCodeServer::checkHealth);
         }

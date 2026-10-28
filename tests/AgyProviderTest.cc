@@ -233,3 +233,21 @@ TEST_CASE("Nexa's agy settings keep what agy itself wrote there") {
     const QJsonArray deny = written.value(u"permissions"_s).toObject().value(u"deny"_s).toArray();
     CHECK(deny.count() == 7);
 }
+
+TEST_CASE("agy dies with Nexa, even when Nexa crashes") {
+    AgyRig rig({QJsonObject{{u"text"_s, u"ok"_s}}});
+    AgyProvider provider(rig.config(), rig.workingDir());
+    REQUIRE_FALSE(run(provider, ask({u(u"hello"_s)})).error);
+    CHECK(rig.log(u"argv"_s).first().value(u"pdeathsig"_s).toInt() == SIGKILL);
+}
+
+TEST_CASE("agy saying nothing for too long fails the turn, so another provider can answer") {
+    AgyRig rig({QJsonObject{{u"hang"_s, true}}});
+    AgyProvider provider(rig.config(), rig.workingDir());
+    provider.setTurnTimeoutMs(700);
+    const Outcome outcome = run(provider, ask({u(u"hello"_s)}));
+    REQUIRE(outcome.error);
+    CHECK(outcome.error->code == ErrorCode::Timeout);
+    const qint64 pid = qint64(rig.log(u"argv"_s).first().value(u"pid"_s).toInteger());
+    CHECK(QTest::qWaitFor([&] { return !alive(pid); }, kWaitMs));
+}

@@ -11,6 +11,7 @@
 #include <QSaveFile>
 
 #include <signal.h>
+#include <sys/prctl.h>
 
 using namespace Qt::StringLiterals;
 
@@ -120,6 +121,9 @@ void AgySession::start() {
     process_.setArguments(arguments);
     process_.setWorkingDirectory(workspace(workingDir_));
     process_.setUnixProcessParameters(kProcessFlags);
+    // Its own session takes it out of reach of the terminal's hangup: tie it to Nexa instead, so a
+    // crash of Nexa does not leave agy running.
+    process_.setChildProcessModifier([] { ::prctl(PR_SET_PDEATHSIG, SIGKILL); });
     qCInfo(lcAi) << "starting agy" << (model_.isEmpty() ? u"(its own model)"_s : model_);
     process_.start();
 }
@@ -147,6 +151,7 @@ void AgySession::readEvents() {
         const QByteArray line = buffer_.left(newline);
         buffer_.remove(0, newline + 1);
         const AgyEvent event = AgyEvents::decode(line);
+        if (busy_) emit activity();
         switch (event.kind) {
         case AgyEvent::Kind::Text:
             if (busy_) emit text(event.text);
