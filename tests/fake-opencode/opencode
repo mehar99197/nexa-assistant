@@ -7,6 +7,7 @@ request needs basic auth as "opencode" with $OPENCODE_SERVER_PASSWORD. Routes: G
 /session/<id>/abort; DELETE /session/<id>. Each prompt plays the next entry of the JSON list in
 $FAKE_OPENCODE_SCRIPT on the event stream:
   {"text": "..."}                    busy, the text in two deltas, idle
+  {"reasoning": "...", "text": "..."}  the same, after a reasoning part streamed the way opencode does
   {"retry": "...", "reason": "..."}  busy, then a retry status (and nothing more)
   {"autherror": "..."}               busy, a ProviderAuthError, idle
   {"hang": true}                     busy, and nothing more
@@ -70,6 +71,15 @@ def play(session, entry):
         broadcast("session.error", sessionID=session,
                   error={"name": "ProviderAuthError", "data": {"providerID": "fake", "message": entry["autherror"]}})
     else:
+        # Like opencode, each part is announced (with its type) before its deltas, and every delta's
+        # field is "text" — a reasoning part's included.
+        if "reasoning" in entry:
+            broadcast("message.part.updated", sessionID=session,
+                      part={"id": "prt_r", "messageID": "msg_1", "sessionID": session, "type": "reasoning", "text": ""})
+            broadcast("message.part.delta", sessionID=session, messageID="msg_1", partID="prt_r",
+                      field="text", delta=entry["reasoning"])
+        broadcast("message.part.updated", sessionID=session,
+                  part={"id": "prt_1", "messageID": "msg_1", "sessionID": session, "type": "text", "text": ""})
         text = entry["text"]
         half = len(text) // 2
         for piece in (text[:half], text[half:]):

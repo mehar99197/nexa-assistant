@@ -88,6 +88,21 @@ TEST_CASE("decodeEvent reads deltas, status, idle and errors") {
     CHECK(OpenCodeWire::decodeEvent("not json").kind == OpenCodeEvent::Kind::Other);
 }
 
+TEST_CASE("decodeEvent tells which part a delta belongs to, and what kind each part is") {
+    // As opencode 1.19.3 streamed a Gemini reply on 2026-10-28: the reasoning's deltas say field "text" too.
+    const OpenCodeEvent announced = OpenCodeWire::decodeEvent(
+        R"({"type":"message.part.updated","properties":{"sessionID":"ses_1","part":{"id":"prt_r","messageID":"msg_1","sessionID":"ses_1","type":"reasoning","text":""},"time":1}})");
+    CHECK(announced.kind == OpenCodeEvent::Kind::PartType);
+    CHECK(announced.sessionId == u"ses_1"_s);
+    CHECK(announced.partId == u"prt_r"_s);
+    CHECK(announced.partType == u"reasoning"_s);
+
+    const OpenCodeEvent delta = OpenCodeWire::decodeEvent(
+        R"({"type":"message.part.delta","properties":{"sessionID":"ses_1","messageID":"msg_1","partID":"prt_r","field":"text","delta":"The user wants"}})");
+    CHECK(delta.kind == OpenCodeEvent::Kind::TextDelta);
+    CHECK(delta.partId == u"prt_r"_s);
+}
+
 TEST_CASE("parseModels lists every provider's models with the default first") {
     const QByteArray providers =
         R"({"providers":[{"id":"other","models":{"one":{}}},{"id":"fake","models":{"smart":{},"fast":{}}}],"default":{"fake":"smart"}})";

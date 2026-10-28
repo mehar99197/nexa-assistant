@@ -151,6 +151,15 @@ TEST_CASE("A request streams the reply with Nexa's system prompt and opencode's 
     CHECK(promptText(prompts.first()) == u"hello"_s);
 }
 
+TEST_CASE("The model's reasoning never reaches the reply") {
+    OpenCodeRig rig({QJsonObject{{u"reasoning"_s, u"The user wants two things. Let's plan."_s},
+                                 {u"text"_s, u"Volume is 12%."_s}}});
+    OpenCodeProvider provider(config(), &rig.http, rig.server());
+    const Outcome outcome = run(provider, ask({u(u"volume?"_s)}));
+    REQUIRE_FALSE(outcome.error);
+    CHECK(outcome.text == u"Volume is 12%."_s);
+}
+
 TEST_CASE("The next request continues the same session and sends only the new turn") {
     OpenCodeRig rig({QJsonObject{{u"text"_s, u"one"_s}}, QJsonObject{{u"text"_s, u"two"_s}}});
     OpenCodeProvider provider(config(), &rig.http, rig.server());

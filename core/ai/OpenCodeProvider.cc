@@ -175,6 +175,7 @@ void OpenCodeProvider::sendTurn() {
 void OpenCodeProvider::prompt(const QString &session, const QJsonObject &body) {
     sessionId_ = session;
     sawBusy_ = false;
+    partTypes_.clear();
     http_->post(server_->request(u"/session/%1/prompt_async"_s.arg(session)), json(body), kRequestTimeoutMs, this,
                 [this](Result<QByteArray> sent) {
         if (!sent) finishTurn(sent.error());
@@ -187,10 +188,16 @@ void OpenCodeProvider::onEvent(const OpenCodeEvent &event) {
     case OpenCodeEvent::Kind::Busy:
         sawBusy_ = true;
         break;
-    case OpenCodeEvent::Kind::TextDelta:
+    case OpenCodeEvent::Kind::TextDelta: {
         sawBusy_ = true;
         retryLimit_.stop();
-        stream_->text(event.text);
+        // A thinking model's reasoning streams as text of a "reasoning" part: it is not the reply.
+        const QString type = partTypes_.value(event.partId);
+        if (type.isEmpty() || type == u"text") stream_->text(event.text);
+        break;
+    }
+    case OpenCodeEvent::Kind::PartType:
+        partTypes_.insert(event.partId, event.partType);
         break;
     case OpenCodeEvent::Kind::Idle:
         if (!sawBusy_) break;       // the end of an earlier turn

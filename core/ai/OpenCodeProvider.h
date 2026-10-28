@@ -5,6 +5,7 @@
 #include "core/ai/TurnLedger.h"
 #include "core/config/Config.h"
 
+#include <QHash>
 #include <QPointer>
 #include <QTimer>
 
@@ -51,6 +52,7 @@ private:
     QPointer<OpenCodeStream> stream_;
     ChatRequest pending_;           // the request of the turn on its way
     bool sawBusy_{false};           // the session has started on this turn: its next idle ends it
+    QHash<QString, QString> partTypes_;     // this turn's parts: only "text" ones reach the reply
     QTimer retryLimit_;
 };
 

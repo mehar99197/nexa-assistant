@@ -38,8 +38,16 @@ OpenCodeEvent OpenCodeWire::decodeEvent(const QByteArray &data) {
     if (type == u"message.part.delta") {
         if (properties.value(u"field"_s).toString() == u"text") {
             event.kind = OpenCodeEvent::Kind::TextDelta;
+            event.partId = properties.value(u"partID"_s).toString();
             event.text = properties.value(u"delta"_s).toString();
         }
+    } else if (type == u"message.part.updated") {
+        // Each part is announced before its deltas; only this says which are reasoning.
+        const QJsonObject part = properties.value(u"part"_s).toObject();
+        event.kind = OpenCodeEvent::Kind::PartType;
+        event.partId = part.value(u"id"_s).toString();
+        event.partType = part.value(u"type"_s).toString();
+        if (event.sessionId.isEmpty()) event.sessionId = part.value(u"sessionID"_s).toString();
     } else if (type == u"session.status") {
         const QJsonObject status = properties.value(u"status"_s).toObject();
         const QString state = status.value(u"type"_s).toString();

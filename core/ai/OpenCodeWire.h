@@ -13,10 +13,12 @@ namespace nexa {
 
 // One event of opencode's /event stream, as far as a Nexa turn cares.
 struct OpenCodeEvent {
-    enum class Kind { TextDelta, Busy, Idle, Retry, Error, Other };
+    enum class Kind { TextDelta, PartType, Busy, Idle, Retry, Error, Other };
     Kind kind{Kind::Other};
     QString sessionId;
-    QString text;           // TextDelta: a piece of the reply's text (reasoning is Other)
+    QString partId;         // TextDelta, PartType: which part of the reply
+    QString partType;       // PartType: "text", "reasoning", "step-start", …
+    QString text;           // TextDelta: a piece of a part's text — the reasoning's too: see partType
     QString message;        // Retry, Error
     QString reason;         // Retry: why, e.g. "free_tier_limit"
     bool authError{false};  // Error: the provider behind the model wants a sign-in
