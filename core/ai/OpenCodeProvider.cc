@@ -7,6 +7,9 @@
 #include "core/net/HttpClient.h"
 
 #include <QJsonDocument>
+#include <QRegularExpression>
+
+#include <algorithm>
 
 using namespace Qt::StringLiterals;
 
@@ -16,6 +19,7 @@ namespace {
 
 constexpr int kRequestTimeoutMs = 30'000;
 constexpr int kRetryGiveUpMs = 30'000;
+constexpr qsizetype kHeldChars = 80;        // enough for "Gemini 3 Pro is no longer available."
 
 QByteArray json(const QJsonObject &object) {
     return QJsonDocument(object).toJson(QJsonDocument::Compact);
@@ -87,11 +91,12 @@ void OpenCodeProvider::listModels(std::function<void(Result<QStringList>)> done)
                          [self, done](Result<QByteArray> config) {
             const QString preferred = config ? OpenCodeWire::parseDefaultModel(config.value()) : QString();
             self->http_->get(self->server_->request(u"/config/providers"_s), kRequestTimeoutMs, self,
-                             [done, preferred](Result<QByteArray> body) {
+                             [self, done, preferred](Result<QByteArray> body) {
                 if (!body) {
                     done(body.error());
                     return;
                 }
+                self->images_ = OpenCodeWire::parseImageSupport(body.value());
                 const QStringList models = OpenCodeWire::parseModels(body.value(), preferred);
                 if (models.isEmpty()) {
                     done(Error{ErrorCode::Parse, u"opencode listed no models — sign in to a provider with "
@@ -118,6 +123,8 @@ std::shared_ptr<ChatStream> OpenCodeProvider::chat(const ChatRequest &request) {
     // A new turn owns no busy and no parts yet: a late idle of the last turn must not end it.
     sawBusy_ = false;
     partTypes_.clear();
+    held_.clear();
+    holding_ = true;
     stream_ = stream;
     stream->onAbort = [self = QPointer<OpenCodeProvider>(this)] {
         if (!self) return;
@@ -138,6 +145,21 @@ std::shared_ptr<ChatStream> OpenCodeProvider::chat(const ChatRequest &request) {
         self->sendTurn();
     });
     return handle;
+}
+
+std::optional<bool> OpenCodeProvider::takesImages(const QString &model) const {
+    const auto known = images_.constFind(model.isEmpty() ? config_.defaultModel : model);
+    if (known == images_.constEnd()) return std::nullopt;
+    return *known;
+}
+
+QStringList OpenCodeProvider::imageModels() const {
+    QStringList seeing;
+    for (auto it = images_.constBegin(); it != images_.constEnd(); ++it) {
+        if (it.value()) seeing.append(it.key());
+    }
+    std::sort(seeing.begin(), seeing.end());
+    return seeing;
 }
 
 void OpenCodeProvider::warmUp() {
@@ -205,7 +227,7 @@ void OpenCodeProvider::onEvent(const OpenCodeEvent &event) {
         retryLimit_.stop();
         // A thinking model's reasoning streams as text of a "reasoning" part: it is not the reply.
         const QString type = partTypes_.value(event.partId);
-        if (type.isEmpty() || type == u"text") stream_->text(event.text);
+        if (type.isEmpty() || type == u"text") showText(event.text);
         break;
     }
     case OpenCodeEvent::Kind::PartType:
@@ -213,13 +235,16 @@ void OpenCodeProvider::onEvent(const OpenCodeEvent &event) {
         break;
     case OpenCodeEvent::Kind::Idle:
         if (!sawBusy_) break;       // the end of an earlier turn
+        if (failIfRetired()) break;
+        if (!held_.isEmpty()) stream_->text(std::exchange(held_, {}));
         ledger_.commit(pending_);
         finishTurn(std::nullopt);
         break;
     case OpenCodeEvent::Kind::Retry:
         if (outOfQuota(event)) {
             abortSession();
-            finishTurn(Error{ErrorCode::Http, u"HTTP 429: opencode: "_s + event.message});
+            finishTurn(Error{ErrorCode::Http, u"HTTP 429: opencode: %1 is out of its quota (%2) — choose another model "
+                                              "in the toolbar"_s.arg(modelName(), event.message)});
         } else if (!retryLimit_.isActive()) {
             retryLimit_.start(kRetryGiveUpMs);
         }
@@ -233,6 +258,32 @@ void OpenCodeProvider::onEvent(const OpenCodeEvent &event) {
     case OpenCodeEvent::Kind::Other:
         break;
     }
+}
+
+void OpenCodeProvider::showText(const QString &text) {
+    if (!holding_) {
+        stream_->text(text);
+        return;
+    }
+    held_ += text;
+    if (failIfRetired() || held_.size() < kHeldChars) return;
+    holding_ = false;
+    stream_->text(std::exchange(held_, {}));
+}
+
+bool OpenCodeProvider::failIfRetired() {
+    static const QRegularExpression notice(u"is no longer available"_s, QRegularExpression::CaseInsensitiveOption);
+    if (!holding_ || !notice.match(held_).hasMatch()) return false;
+    const QString said = held_.section(u'.', 0, 0).trimmed();
+    held_.clear();
+    abortSession();
+    finishTurn(Error{ErrorCode::NotFound, u"opencode: %1 is no longer available (\"%2\") — choose another model in "
+                                          "the toolbar"_s.arg(modelName(), said)});
+    return true;
+}
+
+QString OpenCodeProvider::modelName() const {
+    return pending_.model.isEmpty() ? u"opencode's default model"_s : pending_.model;
 }
 
 void OpenCodeProvider::finishTurn(std::optional<Error> error) {

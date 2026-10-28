@@ -69,7 +69,10 @@ void Agent::sendStep() {
     // A model known to refuse images, or a provider that takes none (agy), gets the words alone and a
     // note where each image was; the user hears about a provider once.
     stepHadImages_ = hasImages(request);
-    const bool sightless = !provider_->capabilities().vision;
+    // What the provider knows about this model wins (a chain can take the picture to one that sees);
+    // otherwise its capabilities say.
+    const std::optional<bool> seesImages = provider_->takesImages(model_);
+    const bool sightless = seesImages ? !*seesImages : !provider_->capabilities().vision;
     if (stepHadImages_ && (sightless || blindModels_.contains(model_) || pendingBlind_ == model_)) {
         if (sightless && !sightlessNoticed_.contains(provider_->displayName())) {
             sightlessNoticed_.insert(provider_->displayName());

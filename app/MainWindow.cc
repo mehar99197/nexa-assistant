@@ -813,7 +813,17 @@ void MainWindow::promptForApiKey(const QString &providerName) {
 void MainWindow::showModels(const QStringList &models, const QString &current) {
     const QSignalBlocker blocker(modelCombo_);
     modelCombo_->clear();
-    modelCombo_->addItems(models);
+    // Models known to take images wear an eye, so a screenshot can go to a fast one that sees.
+    const QStringList seeing = controller_->imageModels();
+    const QIcon eye = NexaIcons::icon(NexaIcons::Kind::Eye, palette().color(QPalette::Text), 16);
+    for (const QString &model : models) {
+        if (seeing.contains(model)) {
+            modelCombo_->addItem(eye, model);
+            modelCombo_->setItemData(modelCombo_->count() - 1, tr("Takes images"), Qt::ToolTipRole);
+        } else {
+            modelCombo_->addItem(model);
+        }
+    }
     const int index = modelCombo_->findText(current);
     if (index >= 0) {
         modelCombo_->setCurrentIndex(index);

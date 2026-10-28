@@ -3,6 +3,7 @@
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
+#include <QRegularExpression>
 
 using namespace Qt::StringLiterals;
 
@@ -65,6 +66,20 @@ Error AgyEvents::exitError(int exitCode, const QString &stderrTail) {
 }
 
 Error AgyEvents::resultError(const QString &error) {
+    // A model agy does not have: say which, and the ones it has (its own list, after "Available models:").
+    static const QRegularExpression unknown(u"model (\\S+) is not recognized"_s);
+    if (const QRegularExpressionMatch match = unknown.match(error); match.hasMatch()) {
+        QStringList available;
+        const qsizetype list = error.indexOf(u"Available models:"_s);
+        if (list >= 0) {
+            for (const QString &line : error.mid(list).split(u'\n').mid(1)) {
+                if (!line.trimmed().isEmpty()) available.append(line.trimmed());
+            }
+        }
+        return Error{ErrorCode::NotFound,
+                     u"agy has no model \"%1\" — choose one in the toolbar%2"_s.arg(
+                         match.captured(1), available.isEmpty() ? QString() : u" (%1)"_s.arg(available.join(u", "_s)))};
+    }
     const QString lower = error.toLower();
     if (lower.contains(u"quota"_s) || lower.contains(u"exhausted"_s) || lower.contains(u"rate limit"_s)
         || lower.contains(u"429"_s)) {

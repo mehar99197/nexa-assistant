@@ -34,6 +34,7 @@ public:
     void listModels(std::function<void(Result<QStringList>)> done) override;
     std::shared_ptr<ChatStream> chat(const ChatRequest &request) override;
     void warmUp() override;
+    std::optional<bool> takesImages(const QString &) const override { return false; }   // its input is text only
 
     // How long a turn may go without a sign of life from agy before it fails (Timeout), so the chain
     // can ask another provider; 5 minutes, like the HTTP providers' streams.

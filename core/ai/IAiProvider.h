@@ -8,6 +8,7 @@
 
 #include <functional>
 #include <memory>
+#include <optional>
 
 namespace nexa {
 
@@ -39,6 +40,14 @@ public:
     virtual std::shared_ptr<ChatStream> chat(const ChatRequest &request) = 0;
     // Start whatever makes the first answer slow (a program, a server); the default has nothing to start.
     virtual void warmUp() {}
+    // Whether `model` takes images, when the provider knows (agy never does; opencode says per model);
+    // empty: not known — the request goes, and a refusal is handled as for any model.
+    virtual std::optional<bool> takesImages(const QString &model) const {
+        Q_UNUSED(model);
+        return std::nullopt;
+    }
+    // The models known to take images, of those listModels() gave: the toolbar marks them.
+    virtual QStringList imageModels() const { return {}; }
 };
 
 } // namespace nexa

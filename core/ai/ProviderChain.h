@@ -36,6 +36,10 @@ public:
     void listModels(std::function<void(Result<QStringList>)> done) override;
     std::shared_ptr<ChatStream> chat(const ChatRequest &request) override;
     void warmUp() override;
+    // Whether some provider of the chain can take a picture (each with its own model): a request
+    // with one then goes to the first that can, the words of others still to the first choice.
+    std::optional<bool> takesImages(const QString &model) const override;
+    QStringList imageModels() const override;   // the first choice's
 
     void setSkipWindowMs(int ms) { skipWindowMs_ = ms; }
     // An error that means "this provider cannot answer now", as opposed to "this request is wrong".
@@ -47,6 +51,8 @@ private:
     // The first link at or after `from` not sitting out; links_.size() when there is none.
     size_t firstUsable(size_t from) const;
     void sitOut(size_t link);
+    QString modelFor(size_t link, const ChatRequest &request) const;
+    bool canSee(size_t link, const QString &model) const;
     void answered(size_t link);
 
     std::vector<Link> links_;

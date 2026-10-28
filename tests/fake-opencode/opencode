@@ -143,7 +143,10 @@ class Handler(BaseHTTPRequestHandler):
         if self.path == "/config":
             return self.reply(200, {"model": "fake/smart"})
         if self.path == "/config/providers":
-            return self.reply(200, {"providers": [{"id": "fake", "models": {"fast": {}, "smart": {}}},
+            # Capabilities as opencode reports them: fast takes images, smart does not, one does not say.
+            seeing = {"capabilities": {"toolcall": True, "input": {"text": True, "image": True}}}
+            blind = {"capabilities": {"toolcall": True, "input": {"text": True, "image": False}}}
+            return self.reply(200, {"providers": [{"id": "fake", "models": {"fast": seeing, "smart": blind}},
                                                   {"id": "other", "models": {"one": {}}}],
                                     "default": {"fake": "smart"}})
         self.reply(404, {"error": "no such route"})

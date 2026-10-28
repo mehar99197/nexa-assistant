@@ -99,6 +99,17 @@ void NexaIcons::paint(QPainter &p, Kind kind, const QRectF &box, const QColor &c
         p.drawPolyline(QPolygonF() << (tip + QPointF(-0.2 * s, -0.02 * s)) << tip << (tip + QPointF(0.0, -0.2 * s)));
         break;
     }
+    case Kind::Eye: {
+        // An almond of two arcs and a round pupil: "this model sees images".
+        QPainterPath almond;
+        almond.moveTo(-0.38 * s, 0);
+        almond.quadTo(0, -0.34 * s, 0.38 * s, 0);
+        almond.quadTo(0, 0.34 * s, -0.38 * s, 0);
+        p.drawPath(almond);
+        p.setBrush(colour);
+        p.drawEllipse(QPointF(0, 0), 0.09 * s, 0.09 * s);
+        break;
+    }
     case Kind::NewChat:
         p.drawLine(QPointF(-0.3 * s, 0), QPointF(0.3 * s, 0));
         p.drawLine(QPointF(0, -0.3 * s), QPointF(0, 0.3 * s));

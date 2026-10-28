@@ -61,6 +61,7 @@ public:
     QString id() const override { return u"scripted"_s; }
     QString displayName() const override { return u"Scripted"_s; }
     Capabilities capabilities() const override { return {.nativeTools = nativeTools, .vision = vision}; }
+    std::optional<bool> takesImages(const QString &) const override { return images; }
     void listModels(std::function<void(Result<QStringList>)> done) override { done(QStringList{u"m"_s}); }
 
     std::shared_ptr<ChatStream> chat(const ChatRequest &request) override {
@@ -80,6 +81,7 @@ public:
     std::optional<Reply> repeat;
     bool nativeTools{true};
     bool vision{true};
+    std::optional<bool> images;     // what takesImages() answers
     QList<ChatRequest> requests;
     ScriptedStream *lastStream{nullptr};
 };
@@ -554,4 +556,19 @@ TEST_CASE("A native first choice falling back to a text-only provider never show
     const QString all = shown.join(QString());
     CHECK(all.contains(u"Checking."_s));
     CHECK_FALSE(all.contains(u"<tool"_s));
+}
+
+TEST_CASE("A picture is kept when some provider of the chain can see it, though the first choice cannot") {
+    Fixture f;
+    f.provider.vision = false;      // the first choice (agy) cannot…
+    f.provider.images = true;       // …but the chain can take the picture to one that can
+    f.provider.script = {{u"A red square."_s, {}, {}}};
+    QStringList notices;
+    QObject::connect(&f.agent, &Agent::notice, [&notices](const QString &message) { notices.append(message); });
+    f.conversation.addUser(u"what is on this picture?"_s, {ImageAttachment{"PNG", u"image/png"_s}});
+    f.agent.run(&f.provider, &f.conversation, u"m"_s, u"gui"_s);
+    REQUIRE(f.waitDone());
+    REQUIRE(f.provider.requests.size() == 1);
+    CHECK(f.provider.requests.first().messages.last().images.size() == 1);
+    CHECK(notices.isEmpty());
 }

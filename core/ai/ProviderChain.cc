@@ -17,25 +17,35 @@ namespace nexa {
 // next link tried when that one cannot answer before it said anything.
 class ChainStream : public ChatStream {
 public:
-    ChainStream(ProviderChain *chain, ChatRequest request) : chain_(chain), request_(std::move(request)) {}
+    ChainStream(ProviderChain *chain, ChatRequest request) : chain_(chain), request_(std::move(request)) {
+        // A picture goes to a provider that can see it, when one of them can.
+        for (const ChatMessage &message : request_.messages) pictures_ = pictures_ || !message.images.isEmpty();
+        pictures_ = pictures_ && chain_->takesImages(request_.model) == std::optional<bool>(true);
+    }
 
     void attempt(size_t from) {
         if (isDone() || !chain_) return;
-        const size_t index = chain_->firstUsable(from);
+        size_t index = chain_->firstUsable(from);
+        while (pictures_ && index < chain_->links_.size()
+               && !chain_->canSee(index, chain_->modelFor(index, request_))) {
+            unseeing_.append(chain_->links_[index].provider->displayName() + u" cannot see images"_s);
+            index = chain_->firstUsable(index + 1);
+        }
         if (index >= chain_->links_.size()) {
-            fail(Error{lastCode_, failures_.join(u"; "_s)});
+            fail(Error{lastCode_, (failures_ + unseeing_).join(u"; "_s)});
             return;
         }
         const ProviderChain::Link &link = chain_->links_[index];
         ChatRequest request = request_;
-        if (index > 0 || request.model.isEmpty()) request.model = link.model;
+        request.model = chain_->modelFor(index, request_);
         if (!link.provider->capabilities().nativeTools && !request.tools.isEmpty()) {
             request = TextToolParser::asTextRequest(request);
         }
         if (index > 0) {
             const QString route = request.model.isEmpty() ? link.provider->displayName()
                                                           : link.provider->displayName() + u" · "_s + request.model;
-            const QString reason = failures_.isEmpty() ? chain_->lastFailure_[0] : failures_.join(u"; "_s);
+            const QStringList why = failures_ + unseeing_;
+            const QString reason = why.isEmpty() ? chain_->lastFailure_[0] : why.join(u"; "_s);
             qCInfo(lcAi) << "answering through" << route << "—" << reason;
             setRoute(route, reason);
         }
@@ -80,8 +90,10 @@ private:
     ChatRequest request_;
     std::shared_ptr<ChatStream> inner_;
     QStringList failures_;
+    QStringList unseeing_;      // links passed over because the request has a picture they cannot see
     ErrorCode lastCode_{ErrorCode::Unknown};
     bool output_{false};
+    bool pictures_{false};      // the request has a picture, and some link can see it
 };
 
 ProviderChain::ProviderChain(std::vector<Link> links, QObject *parent)
@@ -117,6 +129,31 @@ std::shared_ptr<ChatStream> ProviderChain::chat(const ChatRequest &request) {
     // From the event loop: the caller connects first, and hears even an immediate reroute.
     QTimer::singleShot(0, stream, [stream] { stream->attempt(0); });
     return handle;
+}
+
+std::optional<bool> ProviderChain::takesImages(const QString &model) const {
+    ChatRequest asked;
+    asked.model = model;
+    for (size_t i = 0; i < links_.size(); ++i) {
+        if (canSee(i, modelFor(i, asked))) return true;
+    }
+    return false;
+}
+
+QStringList ProviderChain::imageModels() const {
+    return links_.empty() ? QStringList() : links_.front().provider->imageModels();
+}
+
+QString ProviderChain::modelFor(size_t link, const ChatRequest &request) const {
+    return link == 0 && !request.model.isEmpty() ? request.model : links_[link].model;
+}
+
+// A provider that does not know about the model counts as seeing when it has vision at all: the
+// request goes, and a refusal is handled as for any model.
+bool ProviderChain::canSee(size_t link, const QString &model) const {
+    const IAiProvider *provider = links_[link].provider.get();
+    const std::optional<bool> known = provider->takesImages(model);
+    return known ? *known : provider->capabilities().vision;
 }
 
 void ProviderChain::warmUp() {

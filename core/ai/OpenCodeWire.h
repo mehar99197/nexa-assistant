@@ -3,6 +3,7 @@
 #include "core/ai/ChatRequest.h"
 
 #include <QByteArray>
+#include <QHash>
 #include <QJsonObject>
 #include <QNetworkRequest>
 #include <QString>
@@ -34,6 +35,9 @@ public:
     static OpenCodeEvent decodeEvent(const QByteArray &data);
     // Every "provider/model" of GET /config/providers, sorted, `preferred` first when it is listed.
     static QStringList parseModels(const QByteArray &configProviders, const QString &preferred);
+    // Of the same list, which "provider/model" takes images (capabilities.input.image) and which does
+    // not; a model whose capabilities do not say is left out (unknown).
+    static QHash<QString, bool> parseImageSupport(const QByteArray &configProviders);
     // GET /config's "model": opencode's own default model, or "".
     static QString parseDefaultModel(const QByteArray &config);
     // `opencode serve`'s "opencode server listening on http://…" line; invalid until it appears.

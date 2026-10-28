@@ -36,6 +36,8 @@ public:
     void listModels(std::function<void(Result<QStringList>)> done) override;
     std::shared_ptr<ChatStream> chat(const ChatRequest &request) override;
     void warmUp() override;
+    std::optional<bool> takesImages(const QString &model) const override;
+    QStringList imageModels() const override;
 
     // How long a turn may go without an event of its session before it fails (Timeout) — a missed
     // idle while the event stream was being reopened, a provider that hangs; 5 minutes.
@@ -47,6 +49,9 @@ private:
     void onEvent(const OpenCodeEvent &event);
     void finishTurn(std::optional<Error> error);
     void abortSession();
+    void showText(const QString &text);
+    bool failIfRetired();               // the held text is a "no longer available" notice: fail the turn
+    QString modelName() const;
 
     ProviderConfig config_;
     HttpClient *http_;
@@ -57,6 +62,11 @@ private:
     ChatRequest pending_;           // the request of the turn on its way
     bool sawBusy_{false};           // the session has started on this turn: its next idle ends it
     QHash<QString, QString> partTypes_;     // this turn's parts: only "text" ones reach the reply
+    // The start of a reply, held until it cannot be a retired model's notice (which the Antigravity
+    // plugin repeats as the reply for minutes).
+    QString held_;
+    bool holding_{true};
+    QHash<QString, bool> images_;           // "provider/model" → takes images, from the last model list
     QTimer retryLimit_;
     QTimer turnTimer_;
     int turnTimeoutMs_{300'000};

@@ -74,6 +74,8 @@ public:
     void setApiKey(const QString &key);             // for the active provider
 
     QString currentModel() const;
+    // Of the models listed, those known to take images (the first choice's, as its provider knows them).
+    QStringList imageModels() const;
     void setCurrentModel(const QString &model);
     void refreshModels();
 

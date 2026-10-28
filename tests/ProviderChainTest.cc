@@ -50,7 +50,9 @@ public:
 
     QString id() const override { return name_.toLower(); }
     QString displayName() const override { return name_; }
-    Capabilities capabilities() const override { return {.nativeTools = native_}; }
+    Capabilities capabilities() const override { return {.nativeTools = native_, .vision = vision}; }
+    std::optional<bool> takesImages(const QString &) const override { return images; }
+    QStringList imageModels() const override { return seeing; }
     void listModels(std::function<void(Result<QStringList>)> done) override { done(QStringList{name_ + u"-model"_s}); }
     std::shared_ptr<ChatStream> chat(const ChatRequest &request) override {
         requests.append(request);
@@ -64,6 +66,9 @@ public:
     QList<Outcome> outcomes;
     QList<ChatRequest> requests;
     int warmed{0};
+    std::optional<bool> images;     // what takesImages() answers
+    bool vision{true};
+    QStringList seeing;
 
 private:
     QString name_;
@@ -227,4 +232,51 @@ TEST_CASE("createChain puts the first choice first and leaves out providers with
     QObject::connect(stream.get(), &ChatStream::failed, [&](const Error &e) { error = e; });
     REQUIRE(QTest::qWaitFor([&] { return error.has_value(); }, kWaitMs));
     CHECK(error->message == u"C: down; A: down"_s);
+}
+
+namespace {
+
+ChatRequest withPicture() {
+    return {.model = u"m1"_s,
+            .messages = {{.role = Role::User, .text = u"what is this?"_s, .images = {ImageAttachment{"PNG", u"image/png"_s}}}}};
+}
+
+} // namespace
+
+TEST_CASE("A request with a picture goes to the first provider that can see it") {
+    Chain c{{new FakeLink(u"One"_s), u"m1"_s}, {new FakeLink(u"Two"_s), u"m2"_s}};
+    c.fakes[0]->images = false;
+    c.fakes[1]->images = true;
+    const Chain::Outcome outcome = c.ask(withPicture());
+    CHECK(outcome.text == u"from Two"_s);
+    CHECK(c.fakes[0]->requests.isEmpty());
+    REQUIRE(outcome.reroutes.size() == 1);
+    CHECK(outcome.reroutes.first() == u"Two · m2 | One cannot see images"_s);
+
+    // Words alone still go to the first choice.
+    CHECK(c.ask().text == u"from One"_s);
+}
+
+TEST_CASE("A provider that does not know counts as seeing when it has vision") {
+    Chain c{{new FakeLink(u"One"_s), u"m1"_s}, {new FakeLink(u"Two"_s), u"m2"_s}, {new FakeLink(u"Three"_s), u"m3"_s}};
+    c.fakes[0]->images = false;
+    c.fakes[1]->vision = false;     // unknown, and no vision at all: skipped
+    c.fakes[2]->images = std::nullopt;
+    CHECK(c.ask(withPicture()).text == u"from Three"_s);
+}
+
+TEST_CASE("The chain says whether any of its providers can see, and lists the first choice's seeing models") {
+    Chain blind{{new FakeLink(u"One"_s), u"m1"_s}, {new FakeLink(u"Two"_s), u"m2"_s}};
+    blind.fakes[0]->images = false;
+    blind.fakes[1]->images = false;
+    CHECK(blind.chain->takesImages(u"m1"_s) == std::optional<bool>(false));
+    // With nobody to see it, a picture still goes the usual way (the Agent has left it out already).
+    CHECK(blind.ask(withPicture()).text == u"from One"_s);
+
+    Chain seeing{{new FakeLink(u"One"_s), u"m1"_s}, {new FakeLink(u"Two"_s), u"m2"_s}};
+    seeing.fakes[0]->images = false;
+    seeing.fakes[0]->seeing = {u"one-vision"_s};
+    seeing.fakes[1]->images = true;
+    CHECK(seeing.chain->takesImages(u"m1"_s) == std::optional<bool>(true));
+    CHECK(seeing.chain->imageModels() == QStringList{u"one-vision"_s});
 }

@@ -195,6 +195,10 @@ void AppController::setApiKey(const QString &key) {
     refreshModels();
 }
 
+QStringList AppController::imageModels() const {
+    return provider_ ? provider_->imageModels() : QStringList();
+}
+
 QString AppController::currentModel() const {
     const ProviderConfig *active = config_.active();
     return active ? active->defaultModel : QString();

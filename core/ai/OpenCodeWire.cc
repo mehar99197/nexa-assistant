@@ -84,6 +84,22 @@ QStringList OpenCodeWire::parseModels(const QByteArray &configProviders, const Q
     return models;
 }
 
+QHash<QString, bool> OpenCodeWire::parseImageSupport(const QByteArray &configProviders) {
+    QHash<QString, bool> images;
+    const QJsonArray providers = QJsonDocument::fromJson(configProviders).object().value(u"providers"_s).toArray();
+    for (const QJsonValue &value : providers) {
+        const QJsonObject provider = value.toObject();
+        const QString id = provider.value(u"id"_s).toString();
+        const QJsonObject list = provider.value(u"models"_s).toObject();
+        for (auto it = list.begin(); it != list.end(); ++it) {
+            const QJsonValue image =
+                it.value().toObject().value(u"capabilities"_s).toObject().value(u"input"_s).toObject().value(u"image"_s);
+            if (image.isBool()) images.insert(id + u'/' + it.key(), image.toBool());
+        }
+    }
+    return images;
+}
+
 QString OpenCodeWire::parseDefaultModel(const QByteArray &config) {
     return QJsonDocument::fromJson(config).object().value(u"model"_s).toString();
 }

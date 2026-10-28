@@ -31,7 +31,8 @@ public:
     static QStringList parseModels(const QString &output);
     // agy ended before it answered: not signed in, or what it said last.
     static Error exitError(int exitCode, const QString &stderrTail);
-    // A turn that ended with status ERROR; a quota or rate limit reads as HTTP 429.
+    // A turn that ended with status ERROR; a quota or rate limit reads as HTTP 429, a model agy does not
+    // have as NotFound (this provider cannot answer: the chain may ask another).
     static Error resultError(const QString &error);
 };
 

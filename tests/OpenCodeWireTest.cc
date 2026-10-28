@@ -115,6 +115,21 @@ TEST_CASE("parseModels lists every provider's models with the default first") {
     CHECK(OpenCodeWire::parseDefaultModel(R"({"lsp":true})").isEmpty());
 }
 
+TEST_CASE("parseImageSupport says which models take images, as opencode reports them") {
+    // The shape of opencode 1.19.3's /config/providers, capabilities as measured on 2026-10-28.
+    const QByteArray providers = R"({"providers":[
+        {"id":"google","models":{
+            "antigravity-gemini-3-flash":{"capabilities":{"toolcall":true,"input":{"text":true,"image":true}}},
+            "gemini-2.5-flash-preview-tts":{"capabilities":{"toolcall":false,"input":{"text":true,"image":false}}}}},
+        {"id":"opencode","models":{"big-pickle":{"capabilities":{"input":{"text":true,"image":false}}},
+                                   "mystery":{}}}],"default":{}})";
+    const QHash<QString, bool> images = OpenCodeWire::parseImageSupport(providers);
+    CHECK(images.value(u"google/antigravity-gemini-3-flash"_s) == true);
+    CHECK(images.value(u"google/gemini-2.5-flash-preview-tts"_s, true) == false);
+    CHECK(images.value(u"opencode/big-pickle"_s, true) == false);
+    CHECK_FALSE(images.contains(u"opencode/mystery"_s));     // not reported: unknown, not "no"
+}
+
 TEST_CASE("parseListening finds the server's address") {
     CHECK(OpenCodeWire::parseListening("opencode server listening on http://127.0.0.1:4096\n")
           == QUrl(u"http://127.0.0.1:4096"_s));

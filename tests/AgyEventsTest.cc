@@ -101,3 +101,15 @@ TEST_CASE("exitError and resultError say what to do") {
     CHECK(other.code == ErrorCode::Unknown);
     CHECK(other.message == u"agy: something broke"_s);
 }
+
+TEST_CASE("An unknown model says which and what to do, and counts as this provider unable to answer") {
+    // agy 1.4.8, on 2026-10-28, given a model it does not have.
+    const Error error = AgyEvents::resultError(
+        u"invalid model selection (--model \"gemini-3.1-pro-high\" --effort \"\"): model gemini-3.1-pro-high is not "
+        "recognized as a known model or custom model in settings\nAvailable models:\n  Gemini 3.8 Flash (High)\n  "
+        "Claude Sonnet 4.6 (Thinking)"_s);
+    CHECK(error.code == ErrorCode::NotFound);
+    CHECK(error.message.contains(u"agy has no model \"gemini-3.1-pro-high\""_s));
+    CHECK(error.message.contains(u"choose one in the toolbar"_s));
+    CHECK(error.message.contains(u"Gemini 3.8 Flash (High)"_s));
+}

@@ -251,3 +251,10 @@ TEST_CASE("agy saying nothing for too long fails the turn, so another provider c
     const qint64 pid = qint64(rig.log(u"argv"_s).first().value(u"pid"_s).toInteger());
     CHECK(QTest::qWaitFor([&] { return !alive(pid); }, kWaitMs));
 }
+
+TEST_CASE("agy takes no images, whatever the model") {
+    AgyRig rig({});
+    AgyProvider provider(rig.config(), rig.workingDir());
+    CHECK(provider.takesImages(u"gemini-3.8-flash-high"_s) == std::optional<bool>(false));
+    CHECK(provider.imageModels().isEmpty());
+}

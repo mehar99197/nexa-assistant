@@ -180,6 +180,8 @@ TEST_CASE("A quota retry gives up at once and says so") {
     REQUIRE(outcome.error);
     CHECK(outcome.error->code == ErrorCode::Http);
     CHECK(outcome.error->message.startsWith(u"HTTP 429: opencode:"_s));
+    CHECK(outcome.error->message.contains(u"fake/fast"_s));                 // which model ran out
+    CHECK(outcome.error->message.contains(u"choose another model"_s));     // and what to do
     CHECK(QTest::qWaitFor([&] { return !rig.requests(u"POST"_s, u"/session/ses_1/abort"_s).isEmpty(); }, kWaitMs));
 }
 
@@ -339,4 +341,36 @@ TEST_CASE("An attached server that refuses the password says so at once") {
     CHECK(clock.elapsed() < 3'000);
     own.kill();
     own.waitForFinished();
+}
+
+TEST_CASE("opencode says which of its models take images, once it has listed them") {
+    OpenCodeRig rig;
+    OpenCodeProvider provider(config(), &rig.http, rig.server());
+    CHECK_FALSE(provider.takesImages(u"fake/fast"_s).has_value());     // not listed yet: unknown
+    REQUIRE(models(provider)->isOk());
+    CHECK(provider.takesImages(u"fake/fast"_s) == std::optional<bool>(true));
+    CHECK(provider.takesImages(u"fake/smart"_s) == std::optional<bool>(false));
+    CHECK_FALSE(provider.takesImages(u"other/one"_s).has_value());
+    CHECK(provider.imageModels() == QStringList{u"fake/fast"_s});
+}
+
+TEST_CASE("A retired model fails at once with what to do, instead of repeating its notice") {
+    // What the Antigravity plugin answered for Gemini 3 Pro on 2026-10-28, over and over for 140 s.
+    OpenCodeRig rig({QJsonObject{{u"text"_s, u"Gemini 3 Pro is no longer available. Please switch to Gemini 3.1 Pro "
+                                              "in the latest version of Antigravity."_s}}});
+    OpenCodeProvider provider(config(), &rig.http, rig.server());
+    const Outcome outcome = run(provider, ask({u(u"hello"_s)}));
+    REQUIRE(outcome.error);
+    CHECK(outcome.error->code == ErrorCode::NotFound);       // the chain may ask another provider
+    CHECK(outcome.error->message.contains(u"fake/fast"_s));
+    CHECK(outcome.error->message.contains(u"no longer available"_s));
+    CHECK(outcome.error->message.contains(u"choose another model"_s));
+    CHECK(outcome.text.isEmpty());                            // nothing of the notice reached the chat
+    CHECK(QTest::qWaitFor([&] { return !rig.requests(u"POST"_s, u"/abort"_s).isEmpty(); }, kWaitMs));
+}
+
+TEST_CASE("A short reply is still delivered whole, held back or not") {
+    OpenCodeRig rig({QJsonObject{{u"text"_s, u"Yes."_s}}});
+    OpenCodeProvider provider(config(), &rig.http, rig.server());
+    CHECK(run(provider, ask({u(u"ok?"_s)})).text == u"Yes."_s);
 }
