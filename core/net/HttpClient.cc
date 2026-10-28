@@ -31,6 +31,13 @@ QNetworkReply *HttpClient::get(const QNetworkRequest &request, int timeoutMs, QO
     return deliver(manager_.get(timed), context, std::move(done));
 }
 
+QNetworkReply *HttpClient::deleteResource(const QNetworkRequest &request, int timeoutMs, QObject *context,
+                                          BodyCallback done) {
+    QNetworkRequest timed(request);
+    timed.setTransferTimeout(std::chrono::milliseconds(timeoutMs));
+    return deliver(manager_.deleteResource(timed), context, std::move(done));
+}
+
 QNetworkReply *HttpClient::post(const QNetworkRequest &request, const QByteArray &body, int timeoutMs,
                                 QObject *context, BodyCallback done) {
     QNetworkRequest timed(request);

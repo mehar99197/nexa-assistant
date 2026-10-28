@@ -14,6 +14,7 @@
 namespace nexa {
 
 class HttpClient;
+class OpenCodeServer;
 
 struct ProviderPreset {
     QString id;
@@ -34,6 +35,7 @@ public:
     using Factory = std::function<std::unique_ptr<IAiProvider>(const ProviderConfig &, HttpClient *)>;
 
     explicit ProviderRegistry(HttpClient *http);    // registers the built-in kinds
+    ~ProviderRegistry();
 
     void registerKind(const QString &kind, Factory factory);
     bool supports(const QString &kind) const { return factories_.contains(kind); }
@@ -50,9 +52,14 @@ public:
     // Kinds that talk to a URL, as opposed to a program Nexa runs.
     static bool isHttpKind(const QString &kind);
 
+    // The opencode server a provider of this config talks to: one per program and URL, kept for the
+    // registry's life, so a provider rebuilt after Settings finds its server already running.
+    std::shared_ptr<OpenCodeServer> openCodeServer(const ProviderConfig &config);
+
 private:
     HttpClient *http_;
     QHash<QString, Factory> factories_;
+    QHash<QString, std::shared_ptr<OpenCodeServer>> openCodeServers_;
 };
 
 } // namespace nexa

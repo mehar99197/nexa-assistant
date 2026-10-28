@@ -29,6 +29,7 @@ public:
     QNetworkReply *get(const QNetworkRequest &request, int timeoutMs, QObject *context, BodyCallback done);
     QNetworkReply *post(const QNetworkRequest &request, const QByteArray &body, int timeoutMs,
                         QObject *context, BodyCallback done);
+    QNetworkReply *deleteResource(const QNetworkRequest &request, int timeoutMs, QObject *context, BodyCallback done);
 
     // Streaming POST: the caller owns the reply and reads it on readyRead(). The transfer is
     // aborted only after `idleTimeoutMs` without receiving any bytes.

@@ -4,6 +4,9 @@
 #include "core/ai/AnthropicProvider.h"
 #include "core/ai/GeminiProvider.h"
 #include "core/ai/OpenAiProvider.h"
+#include "core/ai/OpenCodeProvider.h"
+#include "core/ai/OpenCodeServer.h"
+#include "core/ai/ProgramLookup.h"
 
 using namespace Qt::StringLiterals;
 
@@ -22,6 +25,23 @@ ProviderRegistry::ProviderRegistry(HttpClient *http) : http_(http) {
     registerKind(kKindAgy, [](const ProviderConfig &config, HttpClient *) {
         return std::make_unique<AgyProvider>(config);
     });
+    registerKind(kKindOpenCode, [this](const ProviderConfig &config, HttpClient *client) {
+        return std::make_unique<OpenCodeProvider>(config, client, openCodeServer(config));
+    });
+}
+
+ProviderRegistry::~ProviderRegistry() = default;
+
+std::shared_ptr<OpenCodeServer> ProviderRegistry::openCodeServer(const ProviderConfig &config) {
+    const QString url = config.baseUrl.trimmed();
+    const QString key = url + u'|' + config.apiKey;
+    std::shared_ptr<OpenCodeServer> &server = openCodeServers_[key];
+    if (!server) {
+        // A URL is a server the user runs; otherwise Nexa starts opencode itself.
+        const QString program = url.isEmpty() ? findProgram(u"opencode"_s) : QString();
+        server = std::make_shared<OpenCodeServer>(http_, program, url.isEmpty() ? QUrl() : QUrl(url), config.apiKey);
+    }
+    return server;
 }
 
 void ProviderRegistry::registerKind(const QString &kind, Factory factory) {

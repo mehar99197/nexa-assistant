@@ -29,6 +29,7 @@ add_executable(nexa_tests
     MemoryIntentTest.cc
     MemoryStoreTest.cc
     OdfWriterTest.cc
+    OpenCodeProviderTest.cc
     OpenCodeWireTest.cc
     OfficeToolsTest.cc
     OpenAiProviderTest.cc
