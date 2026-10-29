@@ -22,6 +22,8 @@ Decisions taken in the conversation:
   speech output each with a provider, a model and (for output) a voice; and "set models from agy for voice", which
   cannot be done (§3.10).
 - Found the same day: **"it's not listening with Hey Nexa"** — the microphone signal is overloaded (§2, §3.11).
+- And: a ceiling fan stays on near the laptop — **"keep its best listening, only human voice, and noise reduction"**
+  (§3.12).
 - Assumptions put to the owner and not corrected: Urdu is wanted in **Roman letters** ("Ammi ko call karo") because
   the contacts and apps are named that way; **follow-ups** last about 8 s after Nexa finishes speaking and go to Groq
   like a request; Nexa **answers to the chosen name** in replies too.
@@ -80,6 +82,29 @@ is that the request after the name (and a follow-up) may now go to the cloud rec
   Lower input volumes did not bring it down reliably (25 %: −24 and −10 dBFS in two tries; 30–40 %: median −2.7 and
   −0.8), so the room was loud at the time or the volume does not reach the mic's gain — settled with the owner by a
   controlled test (quiet, then "Hey Nexa").
+- **The controlled test** (the owner quiet, then "Hey Nexa, what time is it?", at 100 %): every second the same — median
+  −1 to −4 dBFS, 14–38 % clipped; silence and speech indistinguishable. The ALC295's internal-mic boost was at its
+  maximum (`Amp-In 0x03`, +30 dB) and the capture amp at its maximum (`0x3f`, about +30 dB); GNOME's input volume moves
+  both (30 %: boost 0, capture `0x3d`; 10 %: both 0 dB). Ruled out: Nexa's code, Nexa's actions, a driver or package
+  change (the kernel's audio lines read the same as on Oct 24), the charger (on battery), the speakers (digital
+  silence), the CPU fan (47 °C, idle). The cause: **a ceiling fan blowing on the laptop** (the owner: it stays on).
+  Even at 10 % (0 dB gain) the room measured −29 dBFS median; at 15 % −19, at 20 % −13, without clipping.
+- **Speech detection in fan noise** (the 1.0-speed clips over synthetic fan noise — rumble plus gusty wind — at 10, 5
+  and 0 dB SNR; "right" = start within 0.4 s and end within 0.6 s of the truth):
+
+  | | 10 dB | 5 dB | 0 dB |
+  |---|---|---|---|
+  | `EnergyVad` (today) | 4/24 right | 1/24 (4 missed) | 0/24 (20 missed) |
+  | Silero VAD (sherpa-onnx, `silero_vad.onnx` 0.64 MB) | 24/24 | 24/24 | 11/24 |
+  | Silero VAD on GTCRN-denoised audio | 24/24 | 24/24 | **24/24** |
+
+  Silero costs real-time factor 0.009 (under 1 % of a core).
+- **Noise reduction** (sherpa-onnx's streaming `OnlineSpeechDenoiser` with GTCRN, `gtcrn_simple.onnx` 0.54 MB):
+  real-time factor 0.181 on one thread. The spotter on denoised audio caught "Nexa" in 10/12 · 8/12 · 4/12 clips
+  (10 · 5 · 0 dB) against 8/12 · 6/12 · 4/12 raw, 0 false wakes either way. Whisper `base.en` is unchanged by it (name
+  heard 21/24 · 20/24 · 19/24 denoised against 21/24 · 21/24 · 19/24 raw; word errors within a few points).
+  sherpa-onnx also has **VoxLock** (keeps one enrolled speaker's voice, removes other voices; 72 MB) — not taken now
+  (§7).
 
 ## 3. Design
 
@@ -263,7 +288,30 @@ applies when Settings is closed with OK, without a restart (`applyVoiceConfig`).
   a minute: "The microphone is overloaded (52 % of the sound is clipped), so Nexa cannot tell when you speak. Lower the
   input volume in GNOME Settings → Sound → Input." Settings → Voice shows the same as a live line ("Microphone: fine" /
   "overloaded"), and the core's hint while the wake word is on says so.
-- Nexa never changes the system's input volume itself.
+- The notice has a **Lower it** button (and Settings → Voice the same): only when pressed, Nexa lowers the default
+  input's volume (`wpctl set-volume @DEFAULT_AUDIO_SOURCE@`) step by step — 5 % at a time, 2 s of measuring each —
+  until no sample clips and the loudest tenth of the room's frames is at or below −20 dBFS (room for a voice), never
+  below 5 %; it says where it stopped. Nexa never changes the input volume on its own.
+
+### 3.12 Human voice only, and noise reduction
+
+- **`IVoiceDetector`** (Strategy) replaces the direct use of `EnergyVad` in `VoicePipeline` for "speech started" and
+  "speech ended": **`SileroVoiceDetector`** (sherpa-onnx's voice activity detector with `silero_vad.onnx`, loaded with
+  the spotter's library; threshold 0.5, 512-sample windows; the ending pause is the *Pause before I'm done* setting)
+  when installed, `EnergyVad` otherwise. Silero hears speech, not loudness, so a fan, a hum or a door does not start an
+  utterance and does not keep one going. The sensitivity setting moves Silero's threshold (Low 0.6, Normal 0.5,
+  High 0.4) as well as the spotter's.
+- **`NoiseReducer`**: sherpa-onnx's streaming denoiser with GTCRN, on the worker thread, in front of the voice
+  detector and the spotter — where it measurably helps. The **recognisers get the raw audio** (it does not help
+  whisper, §2). Settings → Voice: **Reduce background noise** (on by default; "uses about a fifth of one CPU core
+  while listening").
+- Push-to-talk and the follow-up window use the same voice detector, so a tap of Talk ends at the owner's pause even
+  with the fan on, and the follow-up window opens only for a voice.
+- The download script also fetches `silero_vad.onnx` (SHA-256
+  `9e2449e1087496d8d4caba907f23e0bd3f78d91fa552479bb9c23ac09cbb1fd6`, matching GitHub's digest) and
+  `gtcrn_simple.onnx` (`e77603ac0c23dac3227dd2d7135b3a585cbee2679048aecfa886657d3ae1b534`; GitHub records no
+  digest) into `~/.local/share/nexa/sherpa/`.
+- Cost while listening: denoiser ~18 % + spotter ~3 % + Silero < 1 % of one core.
 
 ## 4. Error handling
 
@@ -293,7 +341,10 @@ Pure, Catch2:
 - The cloud voice selection: an explicit provider; Automatic's order; a provider without a key, agy, opencode and a
   Gemini kind greyed with their reasons; the voice table; `sttProvider`/`ttsProvider` round-trip.
 - `MicrophoneCheck`: clean speech-like PCM → fine; 52 % clipped → overloaded; a loud steady floor → overloaded; the
-  notice at most once a minute.
+  notice at most once a minute; the **Lower it** steps (pure: measured levels in, next volume out — stops at no
+  clipping and the 90th percentile ≤ −20 dBFS, never below 5 %).
+- `VoicePipeline` with a fake `IVoiceDetector`: start and end come from it, not from loudness; the noise reducer feeds
+  the detector and the spotter, the recogniser gets the raw audio.
 
 `VoicePipelineTest` (fake input, fake spotter, fake recognisers):
 - A spotter hit mid-speech: Listening at once; the request recogniser gets the audio from 0.3 s before the phrase,
@@ -311,7 +362,9 @@ Pure, Catch2:
 End to end (scripted, then live):
 - `--hear` with probe clips (start, mid-sentence, bare, noise, TV) on a private test copy: the request reaches the chat
   through Groq; the clips without the name never wake it.
-- Live with the owner: the microphone at a level where the check says "fine"; Groq recognising and Groq speaking (after
+- Scripted: `--hear` with the probe's fan-noise clips (10, 5 and 0 dB): woken, the request's end found, the request
+  heard.
+- Live with the owner: the ceiling fan on; **Lower it** pressed, the microphone at a level where the check says "fine"; Groq recognising and Groq speaking (after
   the terms are accepted); the name normally, mid-sentence and with the TV on; a pause mid-request; "Pehchan" and "Ammi
   ko call karo"; a follow-up; interrupting by name; a new name chosen in Settings working at once.
 
@@ -323,12 +376,15 @@ End to end (scripted, then live):
   wake name says a distinctive two- or three-syllable name works best.
 - **Library version**: the header is vendored from v2.0.1 and the script pins v2.0.1; a later library is only used
   through the script after re-checking the header.
-- **Memory**: onnxruntime and the model add about 40 MB to Nexa while the wake word is on.
+- **Memory**: onnxruntime and the models add about 40 MB to Nexa while the wake word is on.
+- **The fan**: the probe's fan is synthetic; a real ceiling fan's wind on the mic may be harsher. The live test decides
+  whether the input level, the noise reducer and Silero are enough.
 - **Continuous background speech** keeps the energy VAD in speech, so a request said over a TV ends at the 15 s cap
   instead of at the owner's pause; the follow-up window's onset and level checks can still let a loud TV in.
 
 ## 7. Not in this milestone
 
-Speaker recognition (waking only for the owner's voice), an Urdu voice for spoken replies (Piper has none), wake
+Speaker recognition (waking only for the owner's voice) and VoxLock voice isolation (keeping only the owner's voice;
+a 72 MB model and an enrolled sample — the next step if a TV or other people stay a problem), an Urdu voice for spoken replies (Piper has none), wake
 detection on the phone, echo cancellation (barge-in without the name still wants headphones), and the Tailscale work
 (next).
