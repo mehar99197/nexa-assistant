@@ -8,6 +8,7 @@
 #include "voice/capture/EnergyVad.h"
 #include "voice/pipeline/WakeWordDetector.h"
 #include "voice/stt/CloudRecognizer.h"
+#include "voice/stt/ISpeechRecognizer.h"
 #include "voice/stt/Transcript.h"
 #include "voice/tts/CloudSynthesizer.h"
 #include "voice/tts/SentenceChunker.h"
@@ -302,6 +303,40 @@ TEST_CASE("WakeWordDetector finds any name anywhere") {
     CHECK(WakeWordDetector::soundKey(u"Jarvis"_s) == u"jrvs"_s);
     CHECK(nexa.recognizerPrompt() == u"Hey Nexa."_s);
     CHECK(jarvis.name() == u"Jarvis"_s);
+}
+
+namespace {
+
+// A recogniser that knows no word times: transcribeWords() must still answer through transcribe().
+class PlainRecognizer : public ISpeechRecognizer {
+public:
+    explicit PlainRecognizer(Result<QString> answer) : answer_(std::move(answer)) {}
+    QString name() const override { return u"plain"_s; }
+    bool isLocal() const override { return true; }
+    void transcribe(const QByteArray &, const QString &, Done done) override { done(answer_); }
+    void cancel() override {}
+
+private:
+    Result<QString> answer_;
+};
+
+} // namespace
+
+TEST_CASE("A recogniser without word times still answers transcribeWords") {
+    PlainRecognizer plain(QString(u"hello there"_s));
+    std::optional<Result<TimedTranscript>> got;
+    plain.transcribeWords(QByteArray(3200, 0), u"Hey Nexa."_s, [&got](Result<TimedTranscript> result) { got = result; });
+    REQUIRE(got);
+    REQUIRE(got->isOk());
+    CHECK(got->value().text == u"hello there"_s);
+    CHECK(got->value().words.isEmpty());
+
+    PlainRecognizer failing(Error{ErrorCode::Network, u"offline"_s});
+    std::optional<Result<TimedTranscript>> failed;
+    failing.transcribeWords(QByteArray(3200, 0), QString(), [&failed](Result<TimedTranscript> result) { failed = result; });
+    REQUIRE(failed);
+    REQUIRE_FALSE(failed->isOk());
+    CHECK(failed->error().code == ErrorCode::Network);
 }
 
 TEST_CASE("cleanTranscript drops non-speech annotations") {

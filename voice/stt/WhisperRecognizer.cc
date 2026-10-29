@@ -69,7 +69,8 @@ public:
         qCDebug(lcVoice) << "unloaded the whisper model";
     }
 
-    Result<QString> transcribe(const QByteArray &pcm, const QString &prompt, std::atomic_bool *abort) {
+    // With `words`, every segment is one word (max_len 1, split on words) and carries its time.
+    Result<TimedTranscript> transcribe(const QByteArray &pcm, const QString &prompt, bool words, std::atomic_bool *abort) {
         if (const Result<void> loaded = load(); !loaded) return loaded.error();
         if (abort->load()) return Error{ErrorCode::Cancelled, u"Cancelled"_s};
 
@@ -86,7 +87,10 @@ public:
         params.print_special = false;
         params.translate = false;
         params.no_context = true;
-        params.no_timestamps = true;
+        params.no_timestamps = !words;
+        params.token_timestamps = words;
+        params.split_on_word = words;
+        params.max_len = words ? 1 : 0;
         params.single_segment = samples.size() <= size_t(30 * kSampleRate);
         params.suppress_blank = true;
         params.suppress_nst = true;
@@ -108,12 +112,22 @@ public:
         if (abort->load()) return Error{ErrorCode::Cancelled, u"Cancelled"_s};
         if (status != 0) return Error{ErrorCode::Unknown, u"Local speech recognition failed (%1)."_s.arg(status)};
 
-        QString text;
+        TimedTranscript transcript;
         const int segments = whisper_full_n_segments(context_);
-        for (int i = 0; i < segments; ++i) text += QString::fromUtf8(whisper_full_get_segment_text(context_, i));
+        for (int i = 0; i < segments; ++i) {
+            const QString segment = QString::fromUtf8(whisper_full_get_segment_text(context_, i));
+            transcript.text += segment;
+            if (words && !segment.trimmed().isEmpty()) {
+                // Segment times are in hundredths of a second.
+                transcript.words.append(TimedWord{.text = segment.trimmed(),
+                                                  .startMs = int(whisper_full_get_segment_t0(context_, i) * 10),
+                                                  .endMs = int(whisper_full_get_segment_t1(context_, i) * 10)});
+            }
+        }
+        transcript.text = transcript.text.trimmed();
         qCDebug(lcVoice) << "whisper:" << pcm.size() / 32 << "ms of audio in" << timer.elapsed() << "ms with"
                          << params.n_threads << "threads";
-        return text.trimmed();
+        return transcript;
     }
 
 private:
@@ -155,14 +169,28 @@ void WhisperRecognizer::warmUp() {
 }
 
 void WhisperRecognizer::transcribe(const QByteArray &pcm16k, const QString &prompt, Done done) {
+    run(pcm16k, prompt, false, [done = std::move(done)](Result<TimedTranscript> result) {
+        if (!result) {
+            done(result.error());
+            return;
+        }
+        done(result.value().text);
+    });
+}
+
+void WhisperRecognizer::transcribeWords(const QByteArray &pcm16k, const QString &prompt, DoneWords done) {
+    run(pcm16k, prompt, true, std::move(done));
+}
+
+void WhisperRecognizer::run(const QByteArray &pcm16k, const QString &prompt, bool words, DoneWords done) {
     cancel();
-    auto call = std::make_shared<Done>(std::move(done));
+    auto call = std::make_shared<DoneWords>(std::move(done));
     auto abort = std::make_shared<std::atomic_bool>(false);
     pending_ = call;
     abort_ = abort;
     unloadTimer_.stop();
-    QMetaObject::invokeMethod(worker_, [this, worker = worker_, pcm16k, prompt, abort, call] {
-        Result<QString> result = worker->transcribe(pcm16k, prompt, abort.get());
+    QMetaObject::invokeMethod(worker_, [this, worker = worker_, pcm16k, prompt, words, abort, call] {
+        Result<TimedTranscript> result = worker->transcribe(pcm16k, prompt, words, abort.get());
         // Back on the GUI thread; dropped if the recogniser is gone by then.
         QMetaObject::invokeMethod(this, [this, call, result] {
             unloadTimer_.start();
@@ -174,7 +202,7 @@ void WhisperRecognizer::transcribe(const QByteArray &pcm16k, const QString &prom
 void WhisperRecognizer::cancel() {
     if (abort_) abort_->store(true);
     abort_.reset();
-    if (const std::shared_ptr<Done> call = std::exchange(pending_, nullptr); call && *call) {
+    if (const std::shared_ptr<DoneWords> call = std::exchange(pending_, nullptr); call && *call) {
         std::exchange(*call, nullptr)(Error{ErrorCode::Cancelled, u"Cancelled"_s});
     }
 }

@@ -25,15 +25,18 @@ public:
     QString name() const override;
     bool isLocal() const override { return true; }
     void transcribe(const QByteArray &pcm16k, const QString &prompt, Done done) override;
+    void transcribeWords(const QByteArray &pcm16k, const QString &prompt, DoneWords done) override;
     void cancel() override;
     void warmUp() override;
 
 private:
+    void run(const QByteArray &pcm16k, const QString &prompt, bool words, DoneWords done);
+
     QString modelPath_;
     QThread thread_;
     WhisperWorker *worker_{nullptr};            // lives in thread_
     std::shared_ptr<std::atomic_bool> abort_;   // of the running job
-    std::shared_ptr<Done> pending_;
+    std::shared_ptr<DoneWords> pending_;
     QTimer unloadTimer_;
 };
 
