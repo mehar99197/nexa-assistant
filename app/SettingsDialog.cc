@@ -390,8 +390,10 @@ void SettingsDialog::testVoice() {
     storeProvider();
     storeVoice();
     if (testSpeech_) testSpeech_->stop();
-    const ProviderConfig *active = config_.provider(activeCombo_->currentData().toString());
-    Result<std::unique_ptr<ITextToSpeech>> speech = VoiceBackends::createTextToSpeech(config_.voice, active, http_);
+    // As the dialog stands now, the first choice included.
+    Config trial = config_;
+    trial.activeProvider = activeCombo_->currentData().toString();
+    Result<std::unique_ptr<ITextToSpeech>> speech = VoiceBackends::createTextToSpeech(trial, http_);
     if (!speech || !speech.value()) {
         voiceTestResult_->setText(speech ? tr("Speech output is off.") : speech.error().message);
         return;

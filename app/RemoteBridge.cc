@@ -30,15 +30,13 @@ void RemoteBridge::applyConfig(const Config &config) {
 void RemoteBridge::build() const {
     if (built_) return;
     built_ = true;
-    Result<std::unique_ptr<ISpeechRecognizer>> recognizer =
-        VoiceBackends::createRecognizer(config_.voice, config_.active(), http_);
+    Result<std::unique_ptr<ISpeechRecognizer>> recognizer = VoiceBackends::createRecognizer(config_, http_);
     if (recognizer) {
         recognizer_ = std::move(recognizer).value();
     } else {
         qCInfo(lcVoice).noquote() << "remote: no speech recognition for the phone:" << recognizer.error().message;
     }
-    renderer_ = std::make_unique<TtsFileRenderer>(
-        VoiceBackends::createSynthesizers(config_.voice, config_.active(), http_));
+    renderer_ = std::make_unique<TtsFileRenderer>(VoiceBackends::createSynthesizers(config_, http_));
 }
 
 bool RemoteBridge::isBusy() const {

@@ -22,6 +22,7 @@ add_library(nexa_voice STATIC
     stt/Transcript.h stt/Transcript.cc
     tts/AudioFileDecoder.h tts/AudioFileDecoder.cc
     tts/CloudSynthesizer.h tts/CloudSynthesizer.cc
+    tts/CloudVoices.h tts/CloudVoices.cc
     tts/ISpeechSynthesizer.h
     tts/ITextToSpeech.h
     tts/PcmPlayer.h tts/PcmPlayer.cc

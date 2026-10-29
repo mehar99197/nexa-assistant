@@ -69,6 +69,7 @@ add_executable(nexa_tests
     ToolCallAccumulatorTest.cc
     TtsFileRendererTest.cc
     TurnLedgerTest.cc
+    VoiceBackendsTest.cc
     VoicePipelineTest.cc
     VoicePureTest.cc
     WakePhrasesTest.cc

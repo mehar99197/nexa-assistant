@@ -507,11 +507,10 @@ void AppController::applyVoiceConfig() {
     VoicePipeline *voice = services_.voice;
     if (!voice) return;
     const VoiceConfig &settings = config_.voice;
-    const ProviderConfig *active = config_.active();
     QStringList problems;
 
-    Result<std::unique_ptr<ISpeechRecognizer>> recognizer =
-        VoiceBackends::createRecognizer(settings, active, services_.http);
+    // The PC's voice, the phone app and the web remote all build from the same choice (Settings → Voice).
+    Result<std::unique_ptr<ISpeechRecognizer>> recognizer = VoiceBackends::createRecognizer(config_, services_.http);
     if (recognizer) {
         voice->setRecognizer(std::move(recognizer).value());
     } else {
@@ -531,7 +530,7 @@ void AppController::applyVoiceConfig() {
     }
     voice->setWakeRecognizer(std::move(wake));
 
-    Result<std::unique_ptr<ITextToSpeech>> speech = VoiceBackends::createTextToSpeech(settings, active, services_.http);
+    Result<std::unique_ptr<ITextToSpeech>> speech = VoiceBackends::createTextToSpeech(config_, services_.http);
     if (speech) {
         voice->setTextToSpeech(std::move(speech).value());
     } else {

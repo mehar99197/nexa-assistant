@@ -1,11 +1,18 @@
 #include "voice/VoiceBackends.h"
 
+#include "voice/listen/EnergyVoiceDetector.h"
+#include "voice/listen/NoiseReducer.h"
+#include "voice/listen/SileroVoiceDetector.h"
 #include "voice/stt/CloudRecognizer.h"
 #include "voice/stt/RecognizerChain.h"
 #include "voice/tts/CloudSynthesizer.h"
 #include "voice/tts/PiperSynthesizer.h"
 #include "voice/tts/SpeechdTtsBackend.h"
 #include "voice/tts/SynthesizedSpeech.h"
+#include "voice/wake/KeywordSpotter.h"
+#include "voice/wake/SherpaRuntime.h"
+#include "voice/wake/WakePhrases.h"
+#include "voice/wake/WordPieces.h"
 #ifdef NEXA_HAVE_WHISPER
 #include "voice/stt/WhisperRecognizer.h"
 #endif
@@ -20,10 +27,52 @@ namespace nexa {
 
 namespace {
 
-// The active provider's endpoint, when it can serve `model` (OpenAI-compatible, key present).
-bool cloudUsable(const ProviderConfig *provider, const QString &model) {
-    return provider && provider->kind == kKindOpenAiCompatible && !provider->baseUrl.trimmed().isEmpty()
-        && (!provider->requiresKey || !provider->apiKey.isEmpty()) && !model.trimmed().isEmpty();
+// Why a provider cannot do speech; empty when it can (an OpenAI-compatible endpoint with its key — Nexa's cloud
+// voice speaks the OpenAI audio API).
+QString cannotSpeak(const ProviderConfig &provider) {
+    if (provider.kind == kKindAgy) return u"takes text only"_s;
+    if (provider.kind == kKindOpenCode) return u"no speech models"_s;
+    if (provider.kind == kKindGemini || provider.kind == kKindAnthropic) {
+        return u"Nexa's cloud voice speaks the OpenAI audio API"_s;
+    }
+    if (provider.kind != kKindOpenAiCompatible) return u"no speech models"_s;
+    if (provider.baseUrl.trimmed().isEmpty()) return u"no address"_s;
+    if (provider.requiresKey && provider.apiKey.isEmpty()) return u"no API key"_s;
+    return {};
+}
+
+// The first choice, then the others in the list's order.
+QList<const ProviderConfig *> inChainOrder(const Config &config) {
+    QList<const ProviderConfig *> order;
+    if (const ProviderConfig *first = config.active()) order.append(first);
+    for (const ProviderConfig &provider : config.providers) {
+        if (!order.contains(&provider)) order.append(&provider);
+    }
+    return order;
+}
+
+// The providers for one side (recognition: the sttModel; the voice: the ttsModel) — the chosen one only, or
+// every one that can, in chain order.
+QList<const ProviderConfig *> speechLinks(const Config &config, const QString &chosen,
+                                          QString ProviderConfig::*model) {
+    QList<const ProviderConfig *> links;
+    for (const ProviderConfig *provider : inChainOrder(config)) {
+        if (!chosen.isEmpty() && provider->id != chosen) continue;
+        if (cannotSpeak(*provider).isEmpty() && !(provider->*model).trimmed().isEmpty()) links.append(provider);
+    }
+    return links;
+}
+
+QList<VoiceProviderChoice> choicesOf(const Config &config) {
+    QList<VoiceProviderChoice> choices;
+    for (const ProviderConfig &provider : config.providers) {
+        const QString reason = cannotSpeak(provider);
+        choices.append(VoiceProviderChoice{.id = provider.id,
+                                           .name = provider.name.isEmpty() ? provider.id : provider.name,
+                                           .usable = reason.isEmpty(),
+                                           .reason = reason});
+    }
+    return choices;
 }
 
 QString baseUrl(const ProviderConfig &provider) {
@@ -82,25 +131,41 @@ Result<std::unique_ptr<ISpeechRecognizer>> VoiceBackends::createLocalRecognizer(
 #endif
 }
 
-Result<std::unique_ptr<ISpeechRecognizer>> VoiceBackends::createRecognizer(const VoiceConfig &voice,
-                                                                            const ProviderConfig *provider,
-                                                                            HttpClient *http) {
+QList<const ProviderConfig *> VoiceBackends::recognitionProviders(const Config &config) {
+    return speechLinks(config, config.voice.sttProvider, &ProviderConfig::sttModel);
+}
+
+const ProviderConfig *VoiceBackends::speechProvider(const Config &config) {
+    const QList<const ProviderConfig *> links = speechLinks(config, config.voice.ttsProvider, &ProviderConfig::ttsModel);
+    return links.isEmpty() ? nullptr : links.first();
+}
+
+QList<VoiceProviderChoice> VoiceBackends::recognitionChoices(const Config &config) {
+    return choicesOf(config);
+}
+
+QList<VoiceProviderChoice> VoiceBackends::speechChoices(const Config &config) {
+    return choicesOf(config);
+}
+
+Result<std::unique_ptr<ISpeechRecognizer>> VoiceBackends::createRecognizer(const Config &config, HttpClient *http) {
+    const VoiceConfig &voice = config.voice;
     const bool wantCloud = voice.sttBackend != u"whisper"_s;
     const bool wantLocal = voice.sttBackend != u"cloud"_s;
     std::vector<std::unique_ptr<ISpeechRecognizer>> chain;
     QStringList problems;
 
     if (wantCloud) {
-        if (cloudUsable(provider, provider ? provider->sttModel : QString())) {
+        const QList<const ProviderConfig *> providers = recognitionProviders(config);
+        for (const ProviderConfig *provider : providers) {
             chain.push_back(std::make_unique<CloudRecognizer>(
                 http, CloudRecognizer::Settings{.providerName = provider->name,
                                                 .baseUrl = baseUrl(*provider),
                                                 .apiKey = provider->apiKey,
                                                 .model = provider->sttModel,
                                                 .language = voice.language}));
-        } else {
-            problems.append(u"the active provider has no speech recognition model"_s);
         }
+        if (providers.isEmpty()) problems.append(u"no provider has a speech recognition model"_s);
     }
     if (wantLocal) {
         Result<std::unique_ptr<ISpeechRecognizer>> local = createLocalRecognizer(voice);
@@ -118,9 +183,8 @@ Result<std::unique_ptr<ISpeechRecognizer>> VoiceBackends::createRecognizer(const
     return std::unique_ptr<ISpeechRecognizer>(std::make_unique<RecognizerChain>(std::move(chain)));
 }
 
-Result<std::unique_ptr<ITextToSpeech>> VoiceBackends::createTextToSpeech(const VoiceConfig &voice,
-                                                                          const ProviderConfig *provider,
-                                                                          HttpClient *http) {
+Result<std::unique_ptr<ITextToSpeech>> VoiceBackends::createTextToSpeech(const Config &config, HttpClient *http) {
+    const VoiceConfig &voice = config.voice;
     const QString backend = voice.ttsBackend;
     if (backend == u"off"_s) return std::unique_ptr<ITextToSpeech>();
     if (backend == u"speechd"_s) {
@@ -128,7 +192,7 @@ Result<std::unique_ptr<ITextToSpeech>> VoiceBackends::createTextToSpeech(const V
     }
 
     QStringList problems;
-    std::vector<std::unique_ptr<ISpeechSynthesizer>> chain = createSynthesizers(voice, provider, http, &problems);
+    std::vector<std::unique_ptr<ISpeechSynthesizer>> chain = createSynthesizers(config, http, &problems);
     if (!chain.empty()) return std::unique_ptr<ITextToSpeech>(std::make_unique<SynthesizedSpeech>(std::move(chain)));
     if (backend != u"cloud"_s && backend != u"piper"_s) {
         return std::unique_ptr<ITextToSpeech>(std::make_unique<SpeechdTtsBackend>(voice.speechdVoice, voice.ttsRate));
@@ -136,10 +200,9 @@ Result<std::unique_ptr<ITextToSpeech>> VoiceBackends::createTextToSpeech(const V
     return Error{ErrorCode::NotFound, u"No speech output: %1."_s.arg(problems.join(u"; "_s))};
 }
 
-std::vector<std::unique_ptr<ISpeechSynthesizer>> VoiceBackends::createSynthesizers(const VoiceConfig &voice,
-                                                                                   const ProviderConfig *provider,
-                                                                                   HttpClient *http,
+std::vector<std::unique_ptr<ISpeechSynthesizer>> VoiceBackends::createSynthesizers(const Config &config, HttpClient *http,
                                                                                    QStringList *problemsOut) {
+    const VoiceConfig &voice = config.voice;
     const QString backend = voice.ttsBackend;
     std::vector<std::unique_ptr<ISpeechSynthesizer>> chain;
     if (backend == u"off"_s) return chain;
@@ -147,7 +210,7 @@ std::vector<std::unique_ptr<ISpeechSynthesizer>> VoiceBackends::createSynthesize
     QStringList problems;
 
     if (automatic || backend == u"cloud"_s) {
-        if (cloudUsable(provider, provider ? provider->ttsModel : QString())) {
+        if (const ProviderConfig *provider = speechProvider(config)) {
             chain.push_back(std::make_unique<CloudSynthesizer>(
                 http, CloudSynthesizer::Settings{.providerName = provider->name,
                                                  .baseUrl = baseUrl(*provider),
@@ -156,7 +219,7 @@ std::vector<std::unique_ptr<ISpeechSynthesizer>> VoiceBackends::createSynthesize
                                                  .voice = provider->ttsVoice,
                                                  .rate = voice.ttsRate}));
         } else {
-            problems.append(u"the active provider has no speech model"_s);
+            problems.append(u"no provider has a speech model"_s);
         }
     }
     if (automatic || backend == u"piper"_s) {
@@ -172,6 +235,47 @@ std::vector<std::unique_ptr<ISpeechSynthesizer>> VoiceBackends::createSynthesize
 
     if (problemsOut) *problemsOut = problems;
     return chain;
+}
+
+VoiceBackends::FrontBuild VoiceBackends::createListeningFront(const VoiceConfig &voice, SherpaRuntime *sherpa,
+                                                            bool withSpotter) {
+    FrontBuild build;
+    const SpotterTuning tuning = WakePhrases::tuning(WakePhrases::sensitivityFrom(voice.wakeSensitivity));
+    ListeningFront::Parts parts;
+    if (sherpa && sherpa->load()) {
+        if (Result<std::unique_ptr<SileroVoiceDetector>> silero = SileroVoiceDetector::create(sherpa, tuning.sileroThreshold)) {
+            parts.detector = std::move(silero).value();
+        } else {
+            build.problems.append(silero.error().message);
+        }
+        if (voice.noiseReduction) {
+            if (Result<std::unique_ptr<NoiseReducer>> reducer = NoiseReducer::create(sherpa)) {
+                parts.filter = std::move(reducer).value();
+            } else {
+                build.problems.append(reducer.error().message);
+            }
+        }
+        if (withSpotter) {
+            const Result<WordPieces> pieces = WordPieces::fromModelFile(sherpa->kwsDir() + u"/bpe.model"_s);
+            const Result<QString> lines = pieces ? WakePhrases::keywordLines(voice.wakeName, pieces.value())
+                                                 : Result<QString>(pieces.error());
+            if (!lines) {
+                build.problems.append(u"Instant spotting cannot spell the name: %1"_s.arg(lines.error().message));
+            } else if (Result<std::unique_ptr<KeywordSpotter>> spotter = KeywordSpotter::create(sherpa, lines.value(), tuning)) {
+                parts.spotter = std::move(spotter).value();
+            } else {
+                build.problems.append(spotter.error().message);
+            }
+        }
+    } else if (sherpa && withSpotter) {
+        build.problems.append(sherpa->problem());
+    }
+    if (!parts.detector) parts.detector = std::make_unique<EnergyVoiceDetector>(tuning.startMarginDb);
+    // The models want a thread of their own; loudness alone is cheap enough to run where the audio arrives.
+    const bool models = parts.filter || parts.spotter || parts.detector->name() != u"loudness"_s;
+    build.front = std::make_unique<ListeningFront>(std::move(parts), models ? ListeningFront::Threading::Worker
+                                                                            : ListeningFront::Threading::Inline);
+    return build;
 }
 
 } // namespace nexa
