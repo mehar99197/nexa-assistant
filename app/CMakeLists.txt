@@ -6,6 +6,7 @@ qt_add_executable(nexa_assistant
     ChatView.h ChatView.cc
     GlobalShortcuts.h GlobalShortcuts.cc
     MainWindow.h MainWindow.cc
+    MicrophoneLeveler.h MicrophoneLeveler.cc
     MicButton.h MicButton.cc
     PhoneLink.h PhoneLink.cc
     PhonePanel.h PhonePanel.cc

@@ -29,6 +29,8 @@ class ProviderRegistry;
 class SkillCatalog;
 class ToolRegistry;
 class VoicePipeline;
+class WpctlAudioController;
+class MicrophoneLeveler;
 
 // Everything the controller coordinates; owned by the composition root (app/main.cc).
 struct AppServices {
@@ -42,6 +44,7 @@ struct AppServices {
     PolicyEngine *policy{nullptr};
     VoicePipeline *voice{nullptr};
     HttpClient *http{nullptr};          // for the cloud voice backends
+    WpctlAudioController *microphoneVolume{nullptr};    // the input's volume, for "Lower it" only
     AppContext *context{nullptr};       // the app the user is in (filled by open_app, close_app)
     std::function<bool()> windowActive; // Nexa's own window has the keyboard focus
     std::function<bool()> canType;      // an input backend can type (the helper, or the portal)
@@ -92,6 +95,7 @@ public:
     QString appContextHint() const;
     void cancel();                                  // the current reply and its speech
     void cancelReply();                             // the current reply only
+    void lowerMicrophone();                         // "Lower it": step the input volume down until nothing clips
     void panic();                                   // everything: replies, tools, child processes, voice
     void newConversation();
     bool isBusy() const { return busy_; }
@@ -132,6 +136,7 @@ signals:
     void busyChanged(bool busy);
     void conversationCleared();
     void panicked();
+    void microphoneOverloaded(const QString &notice);   // with a "Lower it" button beside it
     void coreModeChanged(nexa::CoreMode mode);
     void litNodesChanged(unsigned nodes);           // CoreNodes: the satellites the running action lights
     void screenSharingChanged(bool shared);
@@ -173,6 +178,7 @@ private:
     quint64 replyGeneration_{0};    // fast-path callbacks of a cancelled reply are ignored
     CoreActivity activity_;
     CoreMode coreMode_{CoreMode::Idle};
+    std::unique_ptr<MicrophoneLeveler> leveler_;
     CoreNodes litNodes_{NoNode};
     int runningActions_{0};
     QString offlineReason_;

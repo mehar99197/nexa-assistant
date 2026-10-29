@@ -1,5 +1,6 @@
 #include "app/AppController.h"
 
+#include "app/MicrophoneLeveler.h"
 #include "core/Logging.h"
 #include "core/agent/Agent.h"
 #include "core/ai/IAiProvider.h"
@@ -139,6 +140,7 @@ AppController::AppController(AppServices services, Config config, QString enviro
             activity_.wakeWord = services_.voice->wakeWordActive();
             refreshCoreMode();
         });
+        connect(voice, &VoicePipeline::microphoneOverloaded, this, &AppController::microphoneOverloaded);
     }
 }
 
@@ -596,6 +598,14 @@ void AppController::rebuildProvider() {
     }
     provider_ = std::move(created).value();
     emit modelsChanged(models_, currentModel());
+}
+
+void AppController::lowerMicrophone() {
+    if (!services_.microphoneVolume || !services_.voice) return;
+    if (!leveler_) leveler_ = std::make_unique<MicrophoneLeveler>(services_.microphoneVolume, services_.voice);
+    if (leveler_->running()) return;
+    emit statusChanged(tr("Lowering the microphone's input volume…"), false);
+    leveler_->run([this](const QString &summary) { emit statusChanged(summary, false); });
 }
 
 void AppController::persist() {

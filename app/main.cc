@@ -260,6 +260,7 @@ int main(int argc, char *argv[]) {
     DesktopEntryIndex apps;
     apps.refresh();
     WpctlAudioController audio;
+    WpctlAudioController microphoneVolume(WpctlAudioController::Target::Microphone);   // "Lower it" only
     MprisController media;
     FileAccess files;
     ScreenCapture screen;
@@ -368,6 +369,7 @@ int main(int argc, char *argv[]) {
                     .policy = &policy,
                     .voice = &voice,
                     .http = &http,
+                    .microphoneVolume = &microphoneVolume,
                     .context = &appContext,
                     // Typing goes to the window with the keyboard: when that is Nexa's own, it
                     // must not be done.

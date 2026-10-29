@@ -3,6 +3,7 @@
 
 #include "voice/capture/IAudioInput.h"
 #include "voice/capture/EnergyVad.h"
+#include "voice/capture/MicrophoneCheck.h"
 #include "voice/listen/EnergyVoiceDetector.h"
 #include "voice/listen/IAudioFilter.h"
 #include "voice/listen/ListeningFront.h"
@@ -699,6 +700,32 @@ TEST_CASE("Talk in the follow-up window: one request, from the key") {
     rig.microphone.play(testaudio::quiet(1600));
     CHECK(rig.recognizer->requests == 2);
     CHECK(rig.requests == QStringList{u"What's the weather?"_s, u"open files"_s});
+}
+
+TEST_CASE("An overloaded microphone is reported, at most once a minute") {
+    WakeRig rig;
+    QSignalSpy overloaded(&rig.pipeline, &VoicePipeline::microphoneOverloaded);
+    const QByteArray clipped = testaudio::make(3000, 1.2, 0.0);     // a tone too loud for the input: clipped
+    rig.microphone.play(clipped);
+    REQUIRE(overloaded.count() == 1);
+    CHECK(overloaded.at(0).at(0).toString().contains(u"% of the sound is clipped"_s));
+    CHECK_FALSE(rig.pipeline.microphoneTrouble().isEmpty());
+    rig.microphone.play(clipped);
+    CHECK(overloaded.count() == 1);
+}
+
+TEST_CASE("Measuring the microphone keeps it open for the time asked") {
+    Rig rig;
+    CHECK_FALSE(rig.microphone.active);
+    std::optional<MicrophoneCheck::Stats> measured;
+    rig.pipeline.measureLevels(300, [&measured](MicrophoneCheck::Stats stats) { measured = stats; });
+    CHECK(rig.microphone.active);
+    rig.microphone.play(testaudio::quiet(300));
+    QTest::qWait(450);
+    REQUIRE(measured);
+    CHECK(measured->clippedShare == 0.0);
+    CHECK(measured->p90Db < -50.0);
+    CHECK_FALSE(rig.microphone.active);
 }
 
 TEST_CASE("The wake word refuses a cloud recogniser") {

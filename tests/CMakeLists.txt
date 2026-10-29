@@ -28,6 +28,7 @@ add_executable(nexa_tests
     LocalCommandRunnerTest.cc
     McpClientTest.cc
     MemoryIntentTest.cc
+    MicrophoneCheckTest.cc
     MemoryStoreTest.cc
     OdfWriterTest.cc
     OpenCodeProviderTest.cc

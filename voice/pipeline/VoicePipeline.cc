@@ -174,6 +174,18 @@ QString VoicePipeline::requestPrompt(const QString &wakeName) {
     return u"Hey %1. Ammi ko call karo. Volume kam karo. YouTube par Pehchan OST chalao."_s.arg(wakeName);
 }
 
+void VoicePipeline::measureLevels(int ms, std::function<void(MicrophoneCheck::Stats)> done) {
+    measuring_ = true;
+    measured_.clear();
+    updateMicrophone();
+    QTimer::singleShot(ms, this, [this, done = std::move(done)] {
+        measuring_ = false;
+        const MicrophoneCheck::Stats stats = MicrophoneCheck::measure(std::exchange(measured_, {}));
+        updateMicrophone();
+        done(stats);
+    });
+}
+
 void VoicePipeline::toggleListening() {
     if (state_ != VoiceState::Listening) {
         startListening(false);
@@ -275,6 +287,10 @@ void VoicePipeline::submitRecording(const QByteArray &pcm16k) {
 void VoicePipeline::onAudio(const QByteArray &pcm) {
     const double level = EnergyVad::rmsDb(reinterpret_cast<const qint16 *>(pcm.constData()), pcm.size() / 2);
     emit levelChanged(std::clamp((level + 60.0) / 50.0, 0.0, 1.0));
+    micSamples_ += pcm.size() / 2;
+    micCheck_.feed(pcm, micSamples_ / 16);
+    if (const std::optional<QString> trouble = micCheck_.notice(micSamples_ / 16)) emit microphoneOverloaded(*trouble);
+    if (measuring_) measured_.append(pcm);
     ring_.append(pcm);
     if (state_ == VoiceState::Listening && !fromVad_) recording_.append(pcm);
     front_->feed(pcm);      // speech and the name come back through onSpeechStarted/onSpeechEnded
@@ -627,7 +643,7 @@ void VoicePipeline::applyPauses() {
 }
 
 void VoicePipeline::updateMicrophone() {
-    const bool wanted = state_ == VoiceState::Listening || wakeWordActive()
+    const bool wanted = state_ == VoiceState::Listening || wakeWordActive() || measuring_
                         || (settings_.bargeIn && state_ == VoiceState::Speaking);
     if (wanted == input_->isActive()) return;
     if (!wanted) {

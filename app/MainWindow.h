@@ -84,6 +84,7 @@ private:
     void confirm(const QString &question, std::function<void(bool)> answer);
     void showModels(const QStringList &models, const QString &current);
     void showStatus(const QString &message, bool isError);
+    void showMicrophoneTrouble(const QString &notice);  // the notice, with "Lower it" beside it
     void showPolicy();
     void showVoiceEngines();
     void showHelper();
@@ -125,6 +126,7 @@ private:
     QAction *themeAction_{nullptr};
     QAction *shareScreenAction_{nullptr};
     QLabel *statusLabel_{nullptr};
+    QToolButton *lowerMicButton_{nullptr};
     QLabel *screenLabel_{nullptr};
     QLabel *browserLabel_{nullptr};
     QLabel *appLabel_{nullptr};     // "In: GNOME Terminal" while Nexa knows where the user is

@@ -17,7 +17,8 @@ const QString kSink = u"@DEFAULT_AUDIO_SINK@"_s;
 
 } // namespace
 
-WpctlAudioController::WpctlAudioController(QObject *parent) : QObject(parent) {}
+WpctlAudioController::WpctlAudioController(Target target, QObject *parent)
+    : QObject(parent), target_(target == Target::Microphone ? u"@DEFAULT_AUDIO_SOURCE@"_s : kSink) {}
 
 Result<VolumeState> WpctlAudioController::parse(const QString &output) {
     static const QRegularExpression expression(u"Volume:\\s*([0-9]+(?:\\.[0-9]+)?)(\\s*\\[MUTED\\])?"_s);
@@ -27,7 +28,7 @@ Result<VolumeState> WpctlAudioController::parse(const QString &output) {
 }
 
 void WpctlAudioController::volume(Done done) {
-    wpctl({u"get-volume"_s, kSink}, [done = std::move(done)](Result<QString> output) {
+    wpctl({u"get-volume"_s, target_}, [done = std::move(done)](Result<QString> output) {
         if (!output) {
             done(output.error());
             return;
@@ -38,28 +39,28 @@ void WpctlAudioController::volume(Done done) {
 
 void WpctlAudioController::setVolume(int percent, Done done) {
     const double level = qBound(0, percent, 100) / 100.0;
-    thenReport({u"set-volume"_s, kSink, QString::number(level, 'f', 2)}, std::move(done));
+    thenReport({u"set-volume"_s, target_, QString::number(level, 'f', 2)}, std::move(done));
 }
 
 void WpctlAudioController::changeVolume(int delta, Done done) {
     const QString step = u"%1%%2"_s.arg(qMin(qAbs(delta), 100)).arg(delta >= 0 ? u'+' : u'-');
     if (delta <= 0) {
-        thenReport({u"set-volume"_s, kSink, step}, std::move(done));
+        thenReport({u"set-volume"_s, target_, step}, std::move(done));
         return;
     }
     // -l 1.0 caps the level at 100%.
-    wpctl({u"set-volume"_s, u"-l"_s, u"1.0"_s, kSink, step}, [this, done = std::move(done)](Result<QString> result) {
+    wpctl({u"set-volume"_s, u"-l"_s, u"1.0"_s, target_, step}, [this, done = std::move(done)](Result<QString> result) {
         if (!result) {
             done(result.error());
             return;
         }
-        thenReport({u"set-mute"_s, kSink, u"0"_s}, done);
+        thenReport({u"set-mute"_s, target_, u"0"_s}, done);
     });
 }
 
 void WpctlAudioController::setMuted(std::optional<bool> muted, Done done) {
     const QString state = !muted ? u"toggle"_s : (*muted ? u"1"_s : u"0"_s);
-    thenReport({u"set-mute"_s, kSink, state}, std::move(done));
+    thenReport({u"set-mute"_s, target_, state}, std::move(done));
 }
 
 void WpctlAudioController::thenReport(const QStringList &arguments, Done done) {

@@ -454,6 +454,17 @@ void MainWindow::buildStatusBar() {
     statusLabel_->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Preferred);
     statusLabel_->installEventFilter(this);
     statusBar()->addWidget(statusLabel_, 1);
+    // Shown with the microphone's trouble: steps the input volume down until nothing clips.
+    lowerMicButton_ = new QToolButton(this);
+    lowerMicButton_->setObjectName(u"lowerMicrophone"_s);
+    lowerMicButton_->setText(tr("Lower it"));
+    lowerMicButton_->setToolTip(tr("Lower the microphone's input volume until its sound is no longer clipped"));
+    lowerMicButton_->hide();
+    connect(lowerMicButton_, &QToolButton::clicked, this, [this] {
+        lowerMicButton_->hide();
+        controller_->lowerMicrophone();
+    });
+    statusBar()->addWidget(lowerMicButton_);
 
     appLabel_ = new QLabel(this);
     statusBar()->addPermanentWidget(appLabel_);
@@ -538,6 +549,7 @@ void MainWindow::connectController() {
         modelCombo_->lineEdit()->setPlaceholderText(loading ? tr("loading models…") : tr("model"));
     });
     connect(controller_, &AppController::statusChanged, this, &MainWindow::showStatus);
+    connect(controller_, &AppController::microphoneOverloaded, this, &MainWindow::showMicrophoneTrouble);
     // Queued: the prompt is modal and must not run inside a network callback.
     connect(controller_, &AppController::apiKeyRequired, this, &MainWindow::promptForApiKey, Qt::QueuedConnection);
 
@@ -667,6 +679,10 @@ QString MainWindow::hintFor(CoreMode mode) const {
         return (canListen ? tr("Type a request, or hold Talk and speak.") : tr("Type a request."))
                + (controller_->isScreenShared() ? tr(" Your screen is shared.") : QString());
     case CoreMode::WakeWord:
+        // An overloaded microphone hears nothing as speech: say that instead of inviting the name.
+        if (const QString trouble = voice ? voice->microphoneTrouble() : QString(); !trouble.isEmpty()) {
+            return trouble.section(u". "_s, 0, 0) + u'.';
+        }
         return tr("Say “Hey Nexa” and your request, type one, or hold Talk.");
     case CoreMode::Listening:
         return tr("Speak now. Let go of Talk, or pause, to send.");
@@ -838,6 +854,12 @@ void MainWindow::showStatus(const QString &message, bool isError) {
     statusLabel_->setToolTip(message);
     statusLabel_->setProperty("error", isError);
     repolish(statusLabel_);
+}
+
+void MainWindow::showMicrophoneTrouble(const QString &notice) {
+    showStatus(notice, true);
+    lowerMicButton_->show();
+    stateHint_->setText(hintFor(controller_->coreMode()));
 }
 
 void MainWindow::showPolicy() {

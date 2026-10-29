@@ -2,6 +2,7 @@
 
 #include "core/ai/ChatStream.h"
 #include "voice/stt/ISpeechRecognizer.h"
+#include "voice/capture/MicrophoneCheck.h"
 #include "voice/listen/AudioRing.h"
 #include "voice/pipeline/WakeWordDetector.h"
 #include "voice/tts/SentenceChunker.h"
@@ -61,6 +62,10 @@ public:
     bool wakeWordActive() const;
     QString recognizerName() const;
     QString speechName() const;
+    // What is wrong with the microphone's sound (clipped, drowned in noise); empty when it is fine.
+    QString microphoneTrouble() const { return micCheck_.describe(); }
+    // Keeps the microphone open for `ms` and measures what it hears (Settings' "Lower it").
+    void measureLevels(int ms, std::function<void(MicrophoneCheck::Stats)> done);
 
     static SpeakMode speakModeFromString(const QString &mode);
     // The spelling hint for a request: the name, and Roman-Urdu examples that pull Urdu towards Latin letters.
@@ -90,6 +95,7 @@ signals:
     void request(const QString &text);          // a recognised request
     void interruptRequested();                  // the user spoke over a reply still being generated
     void notice(const QString &message, bool isError);
+    void microphoneOverloaded(const QString &notice);   // at most once a minute while it lasts
 
 private:
     void onAudio(const QByteArray &pcm);
@@ -137,6 +143,10 @@ private:
     bool followUpIgnoring_{false};      // the speech going on when it opened does not count
     bool followUpCounting_{false};      // speech that began in the window: heard to its end
     double lastRequestLevelDb_{-100.0}; // how loud the owner's last request was
+    MicrophoneCheck micCheck_;
+    qint64 micSamples_{0};              // heard since Nexa started: the check's clock
+    bool measuring_{false};
+    QByteArray measured_;
     QTimer followUpOpener_;             // the window opens a moment after the speech
     QTimer followUpWindow_;
     QByteArray recording_;
