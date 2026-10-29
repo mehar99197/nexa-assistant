@@ -18,6 +18,10 @@ Decisions taken in the conversation:
   Nexa). Offline whisper is the fallback.
 - **Both detectors**: an offline keyword spotter (sherpa-onnx) wakes Nexa the moment the name is said; whisper keeps
   checking each sentence as a second net, now finding the name anywhere.
+- Added the same day: **choose the cloud voice in Settings → Voice** from the providers that exist — recognition and
+  speech output each with a provider, a model and (for output) a voice; and "set models from agy for voice", which
+  cannot be done (§3.10).
+- Found the same day: **"it's not listening with Hey Nexa"** — the microphone signal is overloaded (§2, §3.11).
 - Assumptions put to the owner and not corrected: Urdu is wanted in **Roman letters** ("Ammi ko call karo") because
   the contacts and apps are named that way; **follow-ups** last about 8 s after Nexa finishes speaking and go to Groq
   like a request; Nexa **answers to the chosen name** in replies too.
@@ -60,6 +64,22 @@ is that the request after the name (and a follow-up) may now go to the cloud rec
     "hey" at 2.23 s) but its end only loosely (last piece at 2.80 s, whisper's "Nexa," ending at 3.33 s, detection at
     3.40 s). Whisper's word timestamps (`token_timestamps`, `max_len = 1`, `split_on_word`) are good in mid-utterance
     and loose at the very edges of a clip.
+
+- **Groq's voice**: `/models` lists `canopylabs/orpheus-v1-english` and `canopylabs/orpheus-arabic-saudi` for speech
+  output, `whisper-large-v3` and `whisper-large-v3-turbo` for recognition. Speech output answers 400
+  `model_terms_required` until the account's owner accepts the model's terms once in Groq's console. The owner's
+  other providers: opencode and agy have no speech models; Google Gemini has no key.
+- **agy and audio**: no option takes a file or audio (`agy --help`), the stream input accepts text blocks only (M15),
+  and nothing comes back but text — agy can neither hear a recording nor speak.
+- **The microphone (why "Hey Nexa" stopped working)**: the wake check transcribed 173 utterances on Oct 24 and almost
+  none since Oct 27; Talk requests now run to the 8 s "nothing said" limit (8064, 8128, 8042 ms) — the energy VAD never
+  sees speech start or end. Measured from the default source at the owner's 100 % input: **52–76 % of the samples
+  clipped**, median level −1.6 dBFS, the quietest 20 ms −24.6 dBFS (a quiet room is around −60 to −45). No voice code
+  changed (M15 touched comments only) and no Nexa action touched the input volume (audit log). Easy Effects routes
+  every recording through `easyeffects_source`, but its input chain is a pass-through (spectrum and level meters).
+  Lower input volumes did not bring it down reliably (25 %: −24 and −10 dBFS in two tries; 30–40 %: median −2.7 and
+  −0.8), so the room was loud at the time or the volume does not reach the mic's gain — settled with the owner by a
+  controlled test (quiet, then "Hey Nexa").
 
 ## 3. Design
 
@@ -212,6 +232,39 @@ applies when Settings is closed with OK, without a restart (`applyVoiceConfig`).
   and the wake word is on — the whole wake → request → reply → follow-up path runs as if the room had said it. With
   `--screenshot`, the picture is taken once the pipeline is idle.
 
+### 3.10 Choosing the cloud voice (Settings → Voice)
+
+- **Recognition**: the mode stays (Automatic — cloud, offline if it fails / Cloud only / Offline only); new **Cloud
+  provider** list: *Automatic* (the first choice, then every other provider with a recognition model, in the list's
+  order — §3.3) and then every provider that exists, the ones that cannot do it greyed with the reason; new **Model**
+  list, filled from the chosen provider's model list (names with `whisper`, `transcri` or `audio`), typing allowed.
+  With *Automatic*, a line says what is used ("Using Groq — whisper-large-v3-turbo").
+- **Speech output**: the mode stays (Automatic / Cloud only / Piper / Speech Dispatcher / Off); new **Cloud provider**
+  and **Model** lists the same way (names with `tts`, `speech`, `orpheus`, `playai` or `audio`), and a **Voice** list
+  with the voices known for that model, typing allowed — Orpheus English: autumn, diana, hannah, austin, daniel,
+  troy (checked live once the terms are accepted); OpenAI `tts-1`/`gpt-4o-mini-tts`: alloy, ash, ballad, coral, echo,
+  fable, nova, onyx, sage, shimmer. Piper's voice, the rate and Test voice stay.
+- **Greyed reasons**: "no API key"; "takes text only" (agy); "no speech models" (opencode); "Nexa's cloud voice speaks
+  the OpenAI audio API" (Gemini and Anthropic kinds).
+- **Data**: `config.voice` gains `sttProvider` and `ttsProvider` (a provider id; empty = Automatic). The model and the
+  voice stay **per provider** (`ProviderConfig::sttModel`, `ttsModel`, `ttsVoice`), so switching back and forth keeps
+  each provider's choice; the Providers tab loses its three speech fields, which now live here.
+- **One selection for everything that listens or speaks**: `VoiceBackends` resolves the providers from the config (pure,
+  tested: `VoiceBackends::recognitionProviders(config)`, `VoiceBackends::speechProvider(config)`) — used by the PC's
+  voice, the phone app and the web remote (`RemoteBridge`), so they always agree.
+- **Groq's speech output** needs its terms accepted by the owner in Groq's console; until then a test or a reply falls
+  back to Piper and Test voice shows Groq's message.
+
+### 3.11 Microphone check
+
+- **`MicrophoneCheck`** (pure, `voice/capture/`): over the audio the pipeline already receives, a rolling 3 s share of
+  clipped samples (|x| ≥ 32 700) and the noise floor (the VAD's).
+- **Overloaded** — more than 5 % clipped for 3 s, or the floor above −30 dBFS for 10 s: a status-bar notice, at most once
+  a minute: "The microphone is overloaded (52 % of the sound is clipped), so Nexa cannot tell when you speak. Lower the
+  input volume in GNOME Settings → Sound → Input." Settings → Voice shows the same as a live line ("Microphone: fine" /
+  "overloaded"), and the core's hint while the wake word is on says so.
+- Nexa never changes the system's input volume itself.
+
 ## 4. Error handling
 
 - Spotter library or model missing, or a function missing (another version): the second net works alone; Settings
@@ -237,6 +290,10 @@ Pure, Catch2:
 - `Config`: the four keys round-trip; defaults when missing.
 - `VoiceBackends`: first choice without a speech model → the next provider with one → whisper.
 - `IntentRouter`: a typed "hey jarvis, open firefox" reaches the fast path when the name is Jarvis.
+- The cloud voice selection: an explicit provider; Automatic's order; a provider without a key, agy, opencode and a
+  Gemini kind greyed with their reasons; the voice table; `sttProvider`/`ttsProvider` round-trip.
+- `MicrophoneCheck`: clean speech-like PCM → fine; 52 % clipped → overloaded; a loud steady floor → overloaded; the
+  notice at most once a minute.
 
 `VoicePipelineTest` (fake input, fake spotter, fake recognisers):
 - A spotter hit mid-speech: Listening at once; the request recogniser gets the audio from 0.3 s before the phrase,
@@ -254,7 +311,8 @@ Pure, Catch2:
 End to end (scripted, then live):
 - `--hear` with probe clips (start, mid-sentence, bare, noise, TV) on a private test copy: the request reaches the chat
   through Groq; the clips without the name never wake it.
-- Live with the owner: the name normally, mid-sentence and with the TV on; a pause mid-request; "Pehchan" and "Ammi
+- Live with the owner: the microphone at a level where the check says "fine"; Groq recognising and Groq speaking (after
+  the terms are accepted); the name normally, mid-sentence and with the TV on; a pause mid-request; "Pehchan" and "Ammi
   ko call karo"; a follow-up; interrupting by name; a new name chosen in Settings working at once.
 
 ## 6. Risks and open points
