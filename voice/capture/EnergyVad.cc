@@ -88,6 +88,9 @@ void EnergyVad::reset() {
     loudMs_ = 0;
     quietMs_ = 0;
     speechMs_ = 0;
+    samples_ = 0;
+    utteranceStart_ = 0;
+    lastSpan_ = {};
 }
 
 QByteArray EnergyVad::takeUtterance() {
@@ -114,6 +117,7 @@ QList<EnergyVad::Event> EnergyVad::feed(QByteArrayView pcm) {
 void EnergyVad::processFrame(const qint16 *samples, QList<Event> &events) {
     const QByteArrayView frame(reinterpret_cast<const char *>(samples), frameSamples_ * 2);
     levelDb_ = rmsDb(samples, frameSamples_);
+    samples_ += frameSamples_;
 
     recentLevels_.push_back(levelDb_);
     const auto window = size_t(std::max(1, settings_.floorWindowMs / settings_.frameMs));
@@ -130,6 +134,7 @@ void EnergyVad::processFrame(const qint16 *samples, QList<Event> &events) {
             inSpeech_ = true;
             heardSpeech_ = true;
             utterance_ = preRoll_ + candidate_;
+            utteranceStart_ = samples_ - utterance_.size() / 2;
             preRoll_.clear();
             candidate_.clear();
             speechMs_ = loudMs_;
@@ -157,6 +162,7 @@ void EnergyVad::endUtterance(QList<Event> &events) {
     // Drop most of the trailing quiet; recognisers do not need it.
     const qsizetype trailing = bytesFor(std::max(0, quietMs_ - settings_.trailingMs));
     utterance_.chop(std::min(trailing, utterance_.size()));
+    lastSpan_ = Span{.start = utteranceStart_, .end = utteranceStart_ + utterance_.size() / 2};
     finished_ = std::exchange(utterance_, {});
     inSpeech_ = false;
     loudMs_ = 0;

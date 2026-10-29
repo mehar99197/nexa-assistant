@@ -1,7 +1,10 @@
 #include "voice/pipeline/VoicePipeline.h"
 
 #include "core/Logging.h"
+#include "voice/capture/EnergyVad.h"
 #include "voice/capture/IAudioInput.h"
+#include "voice/listen/EnergyVoiceDetector.h"
+#include "voice/listen/ListeningFront.h"
 #include "voice/pipeline/WakeWordDetector.h"
 #include "voice/stt/ISpeechRecognizer.h"
 #include "voice/stt/Transcript.h"
@@ -30,10 +33,16 @@ EnergyVad::Settings vadSettings() {
 } // namespace
 
 VoicePipeline::VoicePipeline(IAudioInput *input, QObject *parent)
-    : QObject(parent), input_(input), vad_(vadSettings()) {
+    : QObject(parent), input_(input) {
+    ListeningFront::Parts parts;
+    parts.detector = std::make_unique<EnergyVoiceDetector>();
+    setListeningFront(std::make_unique<ListeningFront>(std::move(parts), ListeningFront::Threading::Inline));
     connect(input_, &IAudioInput::audio, this, &VoicePipeline::onAudio);
     connect(input_, &IAudioInput::failed, this, [this](const Error &error) {
         emit notice(error.message, true);
+        // What was heard so far is cut off: no utterance of it may end later.
+        ring_.reset();
+        front_->reset();
         if (state_ == VoiceState::Listening) {
             recording_.clear();
             setState(VoiceState::Idle);
@@ -47,7 +56,7 @@ VoicePipeline::VoicePipeline(IAudioInput *input, QObject *parent)
             return;
         }
         const qint64 elapsed = listenClock_.elapsed();
-        const bool silent = !hold_ && !fromVad_ && !vad_.heardSpeech() && elapsed >= kNoSpeechTimeoutMs;
+        const bool silent = !hold_ && !fromVad_ && !heardSpeech_ && elapsed >= kNoSpeechTimeoutMs;
         if (elapsed >= kMaxListenMs || silent) finishListening();
     });
     commandTimer_.setSingleShot(true);
@@ -86,6 +95,15 @@ void VoicePipeline::setWakeRecognizer(std::unique_ptr<ISpeechRecognizer> recogni
     wakeRecognizer_ = recognizer && recognizer->isLocal() ? std::move(recognizer) : nullptr;
     if (wakeWordActive()) wakeRecognizer_->warmUp();
     updateMicrophone();
+}
+
+void VoicePipeline::setListeningFront(std::unique_ptr<ListeningFront> front) {
+    if (!front) return;
+    front_ = std::move(front);      // the old front goes, with whatever it had not reported yet
+    connect(front_.get(), &ListeningFront::speechStarted, this, &VoicePipeline::onSpeechStarted);
+    connect(front_.get(), &ListeningFront::speechEnded, this, &VoicePipeline::onSpeechEnded);
+    front_->setEndPauseMs(vadSettings().hangoverMs);
+    ring_.reset();                  // the ring and the front count positions from the same sample
 }
 
 void VoicePipeline::setTextToSpeech(std::unique_ptr<ITextToSpeech> speech) {
@@ -160,7 +178,9 @@ void VoicePipeline::startListening(bool hold) {
     recording_.clear();
     hold_ = hold;
     fromVad_ = false;
-    vad_.reset();
+    ring_.reset();
+    front_->reset();
+    heardSpeech_ = false;
     listenClock_.restart();
     setState(VoiceState::Listening);
     if (state_ != VoiceState::Listening) return;    // the microphone could not be opened
@@ -216,32 +236,35 @@ void VoicePipeline::submitRecording(const QByteArray &pcm16k) {
 }
 
 void VoicePipeline::onAudio(const QByteArray &pcm) {
-    const QList<EnergyVad::Event> events = vad_.feed(pcm);
-    emit levelChanged(std::clamp((vad_.levelDb() + 60.0) / 50.0, 0.0, 1.0));
-    const bool started = events.contains(EnergyVad::Event::SpeechStarted);
-    const bool ended = events.contains(EnergyVad::Event::SpeechEnded);
+    const double level = EnergyVad::rmsDb(reinterpret_cast<const qint16 *>(pcm.constData()), pcm.size() / 2);
+    emit levelChanged(std::clamp((level + 60.0) / 50.0, 0.0, 1.0));
+    ring_.append(pcm);
+    if (state_ == VoiceState::Listening && !fromVad_) recording_.append(pcm);
+    front_->feed(pcm);      // speech and the name come back through onSpeechStarted/onSpeechEnded
+}
 
+void VoicePipeline::onSpeechStarted(qint64 start) {
+    Q_UNUSED(start)
+    heardSpeech_ = true;
+    if (state_ != VoiceState::Speaking || !settings_.bargeIn) return;
+    // Talking over the reply: stop speaking and take what is said as the next request.
+    if (speech_) speech_->stop();
+    chunker_.reset();
+    speakReply_ = false;
+    fromVad_ = true;
+    hold_ = false;
+    listenClock_.restart();
+    setState(VoiceState::Listening);
+    listenTimer_.start();
+    if (replyActive_) emit interruptRequested();
+}
+
+void VoicePipeline::onSpeechEnded(qint64 start, qint64 end) {
     if (state_ == VoiceState::Listening && !fromVad_) {
-        recording_.append(pcm);
-        if (!hold_ && ended) finishListening();     // toggle mode: the pause ends the request
+        if (!hold_) finishListening();      // toggle mode: the pause ends the request
         return;
     }
-    if (state_ == VoiceState::Speaking && settings_.bargeIn && started) {
-        // Talking over the reply: stop speaking and take what is said as the next request.
-        if (speech_) speech_->stop();
-        chunker_.reset();
-        speakReply_ = false;
-        fromVad_ = true;
-        hold_ = false;
-        listenClock_.restart();
-        setState(VoiceState::Listening);
-        listenTimer_.start();
-        if (replyActive_) emit interruptRequested();
-        return;
-    }
-    if (!ended) return;
-
-    const QByteArray utterance = vad_.takeUtterance();
+    const QByteArray utterance = ring_.slice(start, end);
     if (state_ == VoiceState::Listening && fromVad_) {
         if (awaitingCommand_) {
             checkWakeWord(utterance);       // the command after a bare "Hey Nexa", transcribed locally
@@ -411,7 +434,8 @@ void VoicePipeline::updateMicrophone() {
         emit levelChanged(0.0);
         return;
     }
-    vad_.reset();
+    ring_.reset();
+    front_->reset();
     if (const Result<void> started = input_->start(); !started) {
         emit notice(started.error().message, true);
         if (state_ == VoiceState::Listening) {

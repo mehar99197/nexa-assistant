@@ -165,6 +165,21 @@ TEST_CASE("EnergyVad finds an utterance between quiet stretches") {
     CHECK(vad.takeUtterance().isEmpty());
 }
 
+TEST_CASE("EnergyVad reports where the utterance was") {
+    EnergyVad vad;
+    QList<EnergyVad::Event> events = vad.feed(testaudio::quiet(500) + testaudio::speech(600));
+    REQUIRE(events == QList{EnergyVad::Event::SpeechStarted});
+    // The speech starts at 500 ms; the utterance keeps 300 ms before it.
+    CHECK(std::abs(vad.utteranceStart() - 3200) <= 320);
+    events = vad.feed(testaudio::quiet(1200));
+    REQUIRE(events == QList{EnergyVad::Event::SpeechEnded});
+    const EnergyVad::Span span = vad.lastSpan();
+    CHECK(std::abs(span.start - 3200) <= 320);
+    // The speech ends at 1100 ms; 200 ms of quiet are kept after it.
+    CHECK(std::abs(span.end - 20800) <= 320);
+    CHECK(span.end - span.start == vad.takeUtterance().size() / 2);
+}
+
 TEST_CASE("EnergyVad ignores clicks and gives the same result for any chunking") {
     EnergyVad vad;
     QByteArray audio = testaudio::quiet(800) + testaudio::speech(60) + testaudio::quiet(800);

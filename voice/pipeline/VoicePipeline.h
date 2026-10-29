@@ -1,7 +1,7 @@
 #pragma once
 
 #include "core/ai/ChatStream.h"
-#include "voice/capture/EnergyVad.h"
+#include "voice/listen/AudioRing.h"
 #include "voice/pipeline/WakeWordDetector.h"
 #include "voice/tts/SentenceChunker.h"
 
@@ -14,6 +14,7 @@
 namespace nexa {
 
 class IAudioInput;
+class ListeningFront;
 class ISpeechRecognizer;
 class ITextToSpeech;
 
@@ -25,7 +26,8 @@ enum class VoiceState { Idle, Listening, Transcribing, Thinking, Speaking };
 // the reply slots and is spoken sentence by sentence as it streams in. Pressing the key again cuts
 // the speech (and, with barge-in, so does talking). With the wake word on, the microphone stays
 // open and only utterances with the wake name ("Hey Nexa") become requests — transcribed by the local
-// recogniser only, so room audio never leaves the machine.
+// recogniser only, so room audio never leaves the machine. What it hears goes through a listening front (noise
+// reduction, the voice detector, the wake-name spotter); requests are cut, as said, from a ring of raw audio.
 class VoicePipeline : public QObject {
     Q_OBJECT
 public:
@@ -45,6 +47,8 @@ public:
     void setRecognizer(std::unique_ptr<ISpeechRecognizer> recognizer);
     void setWakeRecognizer(std::unique_ptr<ISpeechRecognizer> recognizer);     // must be local
     void setTextToSpeech(std::unique_ptr<ITextToSpeech> speech);
+    // Replaces what hears speech and the name (an energy detector, inline, until one is set).
+    void setListeningFront(std::unique_ptr<ListeningFront> front);
     void setSettings(Settings settings);
 
     VoiceState state() const { return state_; }
@@ -83,6 +87,8 @@ signals:
 
 private:
     void onAudio(const QByteArray &pcm);
+    void onSpeechStarted(qint64 start);
+    void onSpeechEnded(qint64 start, qint64 end);
     void finishListening();
     void transcribe(const QByteArray &pcm);
     void checkWakeWord(const QByteArray &utterance);
@@ -99,7 +105,9 @@ private:
     Settings settings_;
     VoiceState state_{VoiceState::Idle};
 
-    EnergyVad vad_;
+    AudioRing ring_;
+    std::unique_ptr<ListeningFront> front_;
+    bool heardSpeech_{false};           // since listening began
     QByteArray recording_;
     bool hold_{false};
     bool fromVad_{false};               // this utterance is the VAD's (barge-in), not a key press

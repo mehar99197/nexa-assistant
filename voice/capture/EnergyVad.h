@@ -31,6 +31,12 @@ public:
 
     enum class Event { SpeechStarted, SpeechEnded };
 
+    // Where an utterance was, in samples since reset(): its kept audio, pre-roll and trailing quiet included.
+    struct Span {
+        qint64 start{0};
+        qint64 end{0};
+    };
+
     EnergyVad();
     explicit EnergyVad(Settings settings);
 
@@ -41,6 +47,9 @@ public:
     void reset();
 
     void setHangoverMs(int ms) { settings_.hangoverMs = ms; }
+    void setMaxUtteranceMs(int ms) { settings_.maxUtteranceMs = ms; }
+    qint64 utteranceStart() const { return utteranceStart_; }  // of the utterance in progress (or the last one)
+    Span lastSpan() const { return lastSpan_; }                 // of the last completed utterance
     bool inSpeech() const { return inSpeech_; }
     bool heardSpeech() const { return heardSpeech_; }       // any speech since the last reset()
     double levelDb() const { return levelDb_; }             // of the last frame
@@ -78,6 +87,9 @@ private:
     int loudMs_{0};
     int quietMs_{0};
     int speechMs_{0};
+    qint64 samples_{0};             // processed since reset()
+    qint64 utteranceStart_{0};
+    Span lastSpan_;
 };
 
 } // namespace nexa

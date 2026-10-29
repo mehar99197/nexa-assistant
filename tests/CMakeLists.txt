@@ -23,6 +23,7 @@ add_executable(nexa_tests
     FileAccessTest.cc
     GeminiProviderTest.cc
     IntentRouterTest.cc
+    ListeningFrontTest.cc
     KeyMapTest.cc
     LocalCommandRunnerTest.cc
     McpClientTest.cc

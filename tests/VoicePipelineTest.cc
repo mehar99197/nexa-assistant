@@ -2,6 +2,10 @@
 // ends a request, speaking replies sentence by sentence, barge-in, the wake word and failures.
 
 #include "voice/capture/IAudioInput.h"
+#include "voice/capture/EnergyVad.h"
+#include "voice/listen/EnergyVoiceDetector.h"
+#include "voice/listen/IAudioFilter.h"
+#include "voice/listen/ListeningFront.h"
 #include "voice/pipeline/VoicePipeline.h"
 #include "voice/stt/ISpeechRecognizer.h"
 #include "voice/tts/ITextToSpeech.h"
@@ -284,6 +288,64 @@ TEST_CASE("Wake word: only utterances that start with it become requests") {
 
     rig.pipeline.setSettings({.wakeWord = false});
     CHECK_FALSE(rig.microphone.active);
+}
+
+namespace {
+
+// Halves every sample: what the detectors hear is quieter than what was said.
+class HalvingFilter : public IAudioFilter {
+public:
+    QByteArray process(QByteArrayView pcm16k) override {
+        QByteArray out(pcm16k.data(), pcm16k.size());
+        auto *samples = reinterpret_cast<qint16 *>(out.data());
+        for (qsizetype i = 0; i < out.size() / 2; ++i) samples[i] = qint16(samples[i] / 2);
+        heard += out.size() / 2;
+        return out;
+    }
+    void reset() override {}
+    qint64 heard{0};
+};
+
+double levelOf(const QByteArray &pcm) {
+    return EnergyVad::rmsDb(reinterpret_cast<const qint16 *>(pcm.constData()), pcm.size() / 2);
+}
+
+} // namespace
+
+TEST_CASE("The recogniser gets the raw audio while the detectors hear it filtered") {
+    Rig rig;
+    auto filter = std::make_unique<HalvingFilter>();
+    HalvingFilter *halving = filter.get();
+    ListeningFront::Parts parts;
+    parts.detector = std::make_unique<EnergyVoiceDetector>();
+    parts.filter = std::move(filter);
+    rig.pipeline.setListeningFront(std::make_unique<ListeningFront>(std::move(parts), ListeningFront::Threading::Inline));
+    auto wake = std::make_unique<FakeRecognizer>(true);
+    FakeRecognizer *local = wake.get();
+    rig.pipeline.setWakeRecognizer(std::move(wake));
+    rig.pipeline.setSettings({.wakeWord = true});
+
+    rig.microphone.play(testaudio::quiet(800) + testaudio::speech(700) + testaudio::quiet(1200));
+    REQUIRE(local->pending());
+    CHECK(halving->heard > 0);
+    // testaudio::speech is about -15 dBFS; halved it would be about -21.
+    CHECK(levelOf(local->audio) > -18.0);
+}
+
+TEST_CASE("A failing microphone leaves the pipeline idle and the front reset") {
+    Rig rig;
+    auto wake = std::make_unique<FakeRecognizer>(true);
+    FakeRecognizer *local = wake.get();
+    rig.pipeline.setWakeRecognizer(std::move(wake));
+    rig.pipeline.setSettings({.wakeWord = true});
+    QSignalSpy notices(&rig.pipeline, &VoicePipeline::notice);
+
+    rig.microphone.play(testaudio::quiet(800) + testaudio::speech(700));     // an utterance in progress
+    emit rig.microphone.failed(Error{ErrorCode::Io, u"The microphone was unplugged."_s});
+    CHECK(notices.count() == 1);
+    CHECK(rig.pipeline.state() == VoiceState::Idle);
+    rig.microphone.play(testaudio::quiet(1200));
+    CHECK(local->requests == 0);    // the cut-off utterance is not checked for the name
 }
 
 TEST_CASE("The wake word refuses a cloud recogniser") {
