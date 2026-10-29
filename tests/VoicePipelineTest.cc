@@ -49,23 +49,47 @@ public:
     explicit FakeRecognizer(bool local) : local_(local) {}
     QString name() const override { return local_ ? u"local"_s : u"cloud"_s; }
     bool isLocal() const override { return local_; }
-    void transcribe(const QByteArray &pcm16k, const QString &, Done done) override {
+    void transcribe(const QByteArray &pcm16k, const QString &prompt, Done done) override {
         audio = pcm16k;
+        lastPrompt = prompt;
         ++requests;
         done_ = std::move(done);
     }
+    void transcribeWords(const QByteArray &pcm16k, const QString &prompt, DoneWords done) override {
+        audio = pcm16k;
+        lastPrompt = prompt;
+        ++requests;
+        doneWords_ = std::move(done);
+    }
     void cancel() override {
         if (done_) std::exchange(done_, nullptr)(Error{ErrorCode::Cancelled, u"Cancelled"_s});
+        if (doneWords_) std::exchange(doneWords_, nullptr)(Error{ErrorCode::Cancelled, u"Cancelled"_s});
     }
-    bool pending() const { return bool(done_); }
-    void answer(Result<QString> text) { std::exchange(done_, nullptr)(std::move(text)); }
+    bool pending() const { return bool(done_) || bool(doneWords_); }
+    void answer(Result<QString> text) {
+        if (doneWords_) {
+            if (!text) {
+                std::exchange(doneWords_, nullptr)(text.error());
+            } else {
+                std::exchange(doneWords_, nullptr)(TimedTranscript{.text = text.value(), .words = {}});
+            }
+            return;
+        }
+        std::exchange(done_, nullptr)(std::move(text));
+    }
+    // With the time of each word, as whisper.cpp gives them.
+    void answerWords(const QString &text, const QList<TimedWord> &words) {
+        std::exchange(doneWords_, nullptr)(TimedTranscript{.text = text, .words = words});
+    }
 
     QByteArray audio;
+    QString lastPrompt;
     int requests{0};
 
 private:
     bool local_;
     Done done_;
+    DoneWords doneWords_;
 };
 
 class FakeVoice : public ITextToSpeech {
@@ -277,7 +301,7 @@ TEST_CASE("Cancel drops the utterance, the transcription and the speech") {
     CHECK_FALSE(rig.microphone.active);
 }
 
-TEST_CASE("Wake word: only utterances that start with it become requests") {
+TEST_CASE("Wake word: only utterances with the name become requests") {
     Rig rig;
     auto wake = std::make_unique<FakeRecognizer>(true);
     FakeRecognizer *local = wake.get();
@@ -297,12 +321,13 @@ TEST_CASE("Wake word: only utterances that start with it become requests") {
     local->answer(u"Hey Nexa, pause the music."_s);
     CHECK(rig.requests == QStringList{u"pause the music."_s});
 
-    // The name alone: the next utterance is the command.
+    // The name alone: the next utterance is the request — said to Nexa, so the request recogniser hears it.
     rig.microphone.play(testaudio::speech(500) + testaudio::quiet(1200));
     local->answer(u"Hey Nexa."_s);
     CHECK(rig.pipeline.state() == VoiceState::Listening);
     rig.microphone.play(testaudio::speech(900) + testaudio::quiet(1600));     // a request: the 1.4 s pause
-    local->answer(u"Open the calculator."_s);
+    REQUIRE(rig.recognizer->pending());
+    rig.recognizer->answer(u"Open the calculator."_s);
     CHECK(rig.requests.last() == u"Open the calculator."_s);
 
     rig.pipeline.setSettings({.wakeWord = false});
@@ -365,6 +390,107 @@ TEST_CASE("A failing microphone leaves the pipeline idle and the front reset") {
     CHECK(rig.pipeline.state() == VoiceState::Idle);
     rig.microphone.play(testaudio::quiet(1200));
     CHECK(local->requests == 0);    // the cut-off utterance is not checked for the name
+}
+
+namespace {
+
+// A rig listening for the name, with the offline recogniser the second net uses.
+struct WakeRig : Rig {
+    FakeRecognizer *local{nullptr};
+    WakeRig() {
+        auto wake = std::make_unique<FakeRecognizer>(true);
+        local = wake.get();
+        pipeline.setWakeRecognizer(std::move(wake));
+        pipeline.setSettings({.wakeWord = true});
+    }
+};
+
+const QList<TimedWord> kMidWords{{u"I"_s, 0, 300},        {u"was"_s, 300, 500},    {u"just"_s, 500, 800},
+                                 {u"saying"_s, 800, 1300}, {u"that,"_s, 1300, 2000}, {u"hey"_s, 2000, 2200},
+                                 {u"Nexa,"_s, 2200, 2600}, {u"pause"_s, 2600, 2900}, {u"the"_s, 2900, 3000},
+                                 {u"music."_s, 3000, 3300}};
+const QString kMidText = u"I was just saying that, hey Nexa, pause the music."_s;
+
+} // namespace
+
+TEST_CASE("Second net: the name mid-utterance → the request from the word time") {
+    WakeRig rig;
+    rig.microphone.play(testaudio::quiet(800) + testaudio::speech(3000) + testaudio::quiet(1200));
+    REQUIRE(rig.local->pending());
+    const QByteArray utterance = rig.local->audio;
+    rig.local->answerWords(kMidText, kMidWords);
+    REQUIRE(rig.recognizer->pending());
+    CHECK(rig.recognizer->audio == utterance.mid(1800 * 32));      // from 0.2 s before "hey"
+    CHECK(rig.recognizer->lastPrompt == VoicePipeline::requestPrompt(u"Nexa"_s));
+    CHECK(rig.pipeline.state() == VoiceState::Transcribing);
+    rig.recognizer->answer(u"Hey Nexa, pause the music."_s);
+    CHECK(rig.requests == QStringList{u"pause the music."_s});
+}
+
+TEST_CASE("Second net: a failing request recogniser → the offline text after the name") {
+    WakeRig rig;
+    rig.microphone.play(testaudio::quiet(800) + testaudio::speech(3000) + testaudio::quiet(1200));
+    rig.local->answerWords(kMidText, kMidWords);
+    REQUIRE(rig.recognizer->pending());
+    rig.recognizer->answer(Error{ErrorCode::Network, u"offline"_s});
+    CHECK(rig.requests == QStringList{u"pause the music."_s});
+}
+
+TEST_CASE("An utterance arriving while whisper is busy is checked afterwards, not dropped") {
+    WakeRig rig;
+    rig.microphone.play(testaudio::quiet(800) + testaudio::speech(700) + testaudio::quiet(1200));
+    REQUIRE(rig.local->requests == 1);
+    rig.microphone.play(testaudio::speech(700) + testaudio::quiet(1200));    // waits
+    rig.microphone.play(testaudio::speech(500) + testaudio::quiet(1200));    // newer: replaces the waiting one
+    CHECK(rig.local->requests == 1);
+    rig.local->answer(u"So I said to him, no way."_s);
+    REQUIRE(rig.local->requests == 2);
+    CHECK(rig.local->audio.size() / 32 < 1200);     // the newest one (500 ms of speech), not the 700 ms one
+    rig.local->answer(u"Hey Nexa, open files."_s);
+    CHECK(rig.requests == QStringList{u"open files."_s});
+}
+
+TEST_CASE("The name alone: Nexa listens for the request") {
+    WakeRig rig;
+    rig.microphone.play(testaudio::quiet(800) + testaudio::speech(500) + testaudio::quiet(1200));
+    rig.local->answer(u"Hey Nexa."_s);
+    CHECK(rig.pipeline.state() == VoiceState::Listening);
+    rig.microphone.play(testaudio::speech(900) + testaudio::quiet(1600));
+    REQUIRE(rig.recognizer->pending());
+    CHECK(rig.local->requests == 1);       // the request is not the offline recogniser's
+    rig.recognizer->answer(u"Open the calculator."_s);
+    CHECK(rig.requests == QStringList{u"Open the calculator."_s});
+}
+
+TEST_CASE("Only the name back from the recogniser: Nexa waits for the request") {
+    Rig rig;
+    QSignalSpy notices(&rig.pipeline, &VoicePipeline::notice);
+    rig.pipeline.startListening(true);
+    rig.microphone.play(testaudio::quiet(300) + testaudio::speech(600) + testaudio::quiet(300));
+    rig.pipeline.stopListening();
+    rig.recognizer->answer(u"Hey Nexa."_s);
+    CHECK(rig.pipeline.state() == VoiceState::Listening);
+    CHECK(notices.isEmpty());
+    CHECK(rig.requests.isEmpty());
+    // The microphone opens again for the request; the room is heard before the speech.
+    rig.microphone.play(testaudio::quiet(500) + testaudio::speech(900) + testaudio::quiet(1600));
+    REQUIRE(rig.recognizer->pending());
+    rig.recognizer->answer(u"What time is it?"_s);
+    CHECK(rig.requests == QStringList{u"What time is it?"_s});
+}
+
+TEST_CASE("A request started by the name ends at 15 s when the room never goes quiet") {
+    WakeRig rig;
+    rig.microphone.play(testaudio::quiet(800) + testaudio::speech(500) + testaudio::quiet(1200));
+    rig.local->answer(u"Hey Nexa."_s);
+    // Speech that never pauses for long: 400 ms of words, 100 ms between them, for 16.5 s.
+    QByteArray endless;
+    for (int i = 0; i < 33; ++i) endless += testaudio::speech(400, std::uint32_t(i + 3)) + testaudio::quiet(100);
+    rig.microphone.play(endless);
+    REQUIRE(rig.recognizer->pending());
+    const qint64 ms = rig.recognizer->audio.size() / 32;
+    CHECK(ms >= 14800);
+    CHECK(ms <= 15600);
 }
 
 TEST_CASE("The wake word refuses a cloud recogniser") {

@@ -1,6 +1,7 @@
 #pragma once
 
 #include "core/ai/ChatStream.h"
+#include "voice/stt/ISpeechRecognizer.h"
 #include "voice/listen/AudioRing.h"
 #include "voice/pipeline/WakeWordDetector.h"
 #include "voice/tts/SentenceChunker.h"
@@ -60,6 +61,8 @@ public:
     QString speechName() const;
 
     static SpeakMode speakModeFromString(const QString &mode);
+    // The spelling hint for a request: the name, and Roman-Urdu examples that pull Urdu towards Latin letters.
+    static QString requestPrompt(const QString &wakeName);
 
 public slots:
     void toggleListening();                     // mic button, hotkey
@@ -92,7 +95,12 @@ private:
     void onSpeechEnded(qint64 start, qint64 end);
     void finishListening();
     void transcribe(const QByteArray &pcm);
+    // A request said to Nexa, through the request recogniser; `fallback` (the offline text after the name) is
+    // used when that recogniser fails or hears only the name.
+    void transcribeRequest(const QByteArray &pcm, const QString &fallback);
     void checkWakeWord(const QByteArray &utterance);
+    void handleWakeTranscript(const QByteArray &utterance, const TimedTranscript &transcript);
+    void awaitRequest();            // the name alone was said: listen for the request
     void submit(const QString &text);
     void say(const QString &sentence);
     void onSpeechFinished();
@@ -119,6 +127,7 @@ private:
 
     WakeWordDetector wake_;
     bool wakeBusy_{false};
+    QByteArray pendingUtterance_;       // heard while the second net was busy: the newest one waits
     bool awaitingCommand_{false};       // the wake phrase was said alone: the next utterance is the command
     QTimer commandTimer_;
 

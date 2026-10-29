@@ -9,7 +9,8 @@ namespace nexa {
 // The detectors may hear the audio cleaned; a request or an utterance is cut from here, as it was said. Pure.
 class AudioRing {
 public:
-    explicit AudioRing(int seconds = 10);
+    // 16 s: a request after the name may run 15 s, and is cut from here with what came just before it.
+    explicit AudioRing(int seconds = 16);
 
     void append(QByteArrayView pcm16k);
     void reset();       // position 0 again

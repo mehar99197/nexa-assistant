@@ -20,11 +20,13 @@ namespace {
 
 constexpr int kNoSpeechTimeoutMs = 8'000;       // toggle mode: give up when nothing is said
 constexpr int kMaxListenMs = 60'000;
-constexpr int kCommandTimeoutMs = 6'000;        // after a bare "Hey Nexa"
+constexpr int kCommandTimeoutMs = 8'000;        // after the name alone, for the request to start
 constexpr int kTapMs = 350;                     // pressed shorter than this: a tap, not a hold
 constexpr qsizetype kMinUtteranceBytes = 16'000 * 2 * 3 / 10;     // 300 ms
 constexpr int kWakePauseMs = 700;               // between sentences checked for the name
 constexpr int kWakeUtteranceMs = 8'000;         // longer room speech is checked in pieces
+constexpr int kWakeRequestMaxMs = 15'000;       // a request after the name: a TV can keep the room from going quiet
+constexpr int kCutBeforeWordMs = 200;           // the request starts this long before the name's first word
 
 EnergyVad::Settings vadSettings() {
     EnergyVad::Settings settings;
@@ -148,6 +150,10 @@ VoicePipeline::SpeakMode VoicePipeline::speakModeFromString(const QString &mode)
     return SpeakMode::VoiceRequests;
 }
 
+QString VoicePipeline::requestPrompt(const QString &wakeName) {
+    return u"Hey %1. Ammi ko call karo. Volume kam karo. YouTube par Pehchan OST chalao."_s.arg(wakeName);
+}
+
 void VoicePipeline::toggleListening() {
     if (state_ != VoiceState::Listening) {
         startListening(false);
@@ -249,6 +255,7 @@ void VoicePipeline::onAudio(const QByteArray &pcm) {
 void VoicePipeline::onSpeechStarted(qint64 start) {
     Q_UNUSED(start)
     heardSpeech_ = true;
+    if (awaitingCommand_) commandTimer_.stop();     // the request has begun: it ends at the pause
     if (state_ != VoiceState::Speaking || !settings_.bargeIn) return;
     // Talking over the reply: stop speaking and take what is said as the next request.
     if (speech_) speech_->stop();
@@ -270,7 +277,11 @@ void VoicePipeline::onSpeechEnded(qint64 start, qint64 end) {
     const QByteArray utterance = ring_.slice(start, end);
     if (state_ == VoiceState::Listening && fromVad_) {
         if (awaitingCommand_) {
-            checkWakeWord(utterance);       // the command after a bare "Hey Nexa", transcribed locally
+            // The request after the name alone: said to Nexa, so it goes to the request recogniser.
+            awaitingCommand_ = false;
+            commandTimer_.stop();
+            fromVad_ = false;
+            transcribeRequest(utterance, QString());
         } else {
             recording_ = utterance;
             finishListening();
@@ -298,63 +309,110 @@ void VoicePipeline::finishListening() {
 }
 
 void VoicePipeline::transcribe(const QByteArray &pcm) {
+    transcribeRequest(pcm, QString());
+}
+
+void VoicePipeline::transcribeRequest(const QByteArray &pcm, const QString &fallback) {
+    if (!recognizer_) {
+        if (!fallback.isEmpty()) submit(fallback);
+        return;
+    }
     setState(VoiceState::Transcribing);
     const quint64 generation = ++generation_;
-    recognizer_->transcribe(pcm, wake_.recognizerPrompt(), [this, generation](Result<QString> text) {
+    recognizer_->transcribe(pcm, requestPrompt(settings_.wakeName), [this, generation, fallback](Result<QString> text) {
         if (generation != generation_) return;
         if (!text) {
+            if (text.error().code != ErrorCode::Cancelled && !fallback.isEmpty()) {
+                submit(fallback);       // the offline recogniser understood it already
+                return;
+            }
             setState(VoiceState::Idle);
             if (text.error().code != ErrorCode::Cancelled) {
                 emit notice(tr("Speech recognition failed: %1").arg(text.error().message), true);
             }
             return;
         }
-        QString heard = cleanTranscript(text.value());
-        // "Hey Nexa, open Firefox" said while holding the key: the name is not part of the request.
-        if (const QString command = wake_.commandOf(heard); !command.isEmpty()) heard = command;
-        if (heard.isEmpty()) {
+        const QString heard = cleanTranscript(text.value());
+        // Only the name ("Hey Nexa."): the request is still to come.
+        if (const auto name = wake_.find(heard); name && name->firstWord == 0 && name->command.isEmpty()) {
+            if (fallback.isEmpty()) {
+                awaitRequest();
+            } else {
+                submit(fallback);
+            }
+            return;
+        }
+        // "Hey Nexa, open Firefox": the name is not part of the request.
+        const QString command = wake_.commandOf(heard);
+        if (command.isEmpty()) {
+            if (!fallback.isEmpty()) {
+                submit(fallback);
+                return;
+            }
             setState(VoiceState::Idle);
             emit notice(tr("I didn't catch that."), false);
             return;
         }
-        submit(heard);
+        submit(command);
     });
 }
 
 void VoicePipeline::checkWakeWord(const QByteArray &utterance) {
-    if (!wakeRecognizer_ || wakeBusy_ || utterance.size() < kMinUtteranceBytes) return;
+    if (!wakeRecognizer_ || utterance.size() < kMinUtteranceBytes) return;
+    if (wakeBusy_) {
+        pendingUtterance_ = utterance;      // checked next; an older one waiting is stale by now
+        return;
+    }
     wakeBusy_ = true;
     const quint64 generation = generation_;
-    wakeRecognizer_->transcribe(utterance, wake_.recognizerPrompt(), [this, generation](Result<QString> text) {
-        if (generation != generation_) return;
+    wakeRecognizer_->transcribeWords(utterance, wake_.recognizerPrompt(),
+                                     [this, generation, utterance](Result<TimedTranscript> transcript) {
         wakeBusy_ = false;
-        if (!text) return;
-        const QString heard = cleanTranscript(text.value());
-        if (awaitingCommand_) {
-            awaitingCommand_ = false;
-            commandTimer_.stop();
-            fromVad_ = false;
-            if (heard.isEmpty()) {
-                setState(VoiceState::Idle);
-            } else {
-                submit(heard);
-            }
+        if (generation != generation_) {
+            pendingUtterance_.clear();
             return;
         }
-        // Utterances without the wake phrase are dropped unlogged: they were not meant for Nexa.
-        const std::optional<WakeWordDetector::Match> wake = wake_.find(heard);
-        if (!wake) return;
-        if (speech_) speech_->stop();
-        if (wake->command.isEmpty()) {
-            awaitingCommand_ = true;
-            fromVad_ = true;
-            listenClock_.restart();
-            setState(VoiceState::Listening);
-            commandTimer_.start();
-            return;
+        // Utterances without the name are dropped unlogged: they were not meant for Nexa.
+        if (transcript) handleWakeTranscript(utterance, transcript.value());
+        if (!pendingUtterance_.isEmpty() && wakeWordActive() && state_ != VoiceState::Listening
+            && state_ != VoiceState::Transcribing) {
+            checkWakeWord(std::exchange(pendingUtterance_, {}));
         }
-        submit(wake->command);
     });
+}
+
+void VoicePipeline::handleWakeTranscript(const QByteArray &utterance, const TimedTranscript &transcript) {
+    const QString heard = cleanTranscript(transcript.text);
+    const std::optional<WakeWordDetector::Match> wake = wake_.find(heard);
+    if (!wake) return;
+    pendingUtterance_.clear();
+    if (speech_) speech_->stop();
+    if (wake->command.isEmpty()) {
+        awaitRequest();
+        return;
+    }
+    // The request goes to the request recogniser, cut from just before the name — nothing said earlier goes
+    // with it. Without word times (or when they do not line up with the words), the offline text is used.
+    const QList<TimedWord> &words = transcript.words;
+    const qsizetype wordCount = heard.split(u' ', Qt::SkipEmptyParts).size();
+    if (words.size() == wordCount && wake->firstWord < words.size()) {
+        const int cutMs = std::max(0, words[wake->firstWord].startMs - kCutBeforeWordMs);
+        transcribeRequest(utterance.mid(qsizetype(cutMs) * 32), wake->command);
+        return;
+    }
+    submit(wake->command);
+}
+
+void VoicePipeline::awaitRequest() {
+    if (speech_) speech_->stop();
+    awaitingCommand_ = true;
+    fromVad_ = true;
+    hold_ = false;
+    heardSpeech_ = false;
+    listenClock_.restart();
+    setState(VoiceState::Listening);
+    applyPauses();          // fromVad_ may have changed while the state did not
+    commandTimer_.start();
 }
 
 void VoicePipeline::submit(const QString &text) {
@@ -434,7 +492,7 @@ void VoicePipeline::applyPauses() {
     // sentences for the name.
     const bool request = state_ == VoiceState::Listening;
     front_->setEndPauseMs(request ? settings_.endPauseMs : kWakePauseMs);
-    front_->setMaxUtteranceMs(request ? kMaxListenMs : kWakeUtteranceMs);
+    front_->setMaxUtteranceMs(!request ? kWakeUtteranceMs : fromVad_ ? kWakeRequestMaxMs : kMaxListenMs);
 }
 
 void VoicePipeline::updateMicrophone() {
