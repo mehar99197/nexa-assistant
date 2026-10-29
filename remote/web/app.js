@@ -170,7 +170,7 @@ function paintCore(container, mode, nodes) {
 
 const WORDS = {
   idle: ['Ready', 'Say a request, or type one.'],
-  wake: ['Wake word on', 'The PC is listening for “Hey Nexa”.'],
+  wake: ['Wake word on', 'The PC is listening for its name.'],
   listen: ['Listening', 'Let go to send.'],
   stt: ['Transcribing', 'Recognising what you said…'],
   think: ['Thinking', 'Nexa is writing a reply…'],

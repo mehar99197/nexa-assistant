@@ -683,7 +683,7 @@ QString MainWindow::hintFor(CoreMode mode) const {
         if (const QString trouble = voice ? voice->microphoneTrouble() : QString(); !trouble.isEmpty()) {
             return trouble.section(u". "_s, 0, 0) + u'.';
         }
-        return tr("Say “Hey Nexa” and your request, type one, or hold Talk.");
+        return tr("Say “Hey %1” and your request, type one, or hold Talk.").arg(controller_->config().voice.wakeName);
     case CoreMode::Listening:
         return tr("Speak now. Let go of Talk, or pause, to send.");
     case CoreMode::Transcribing:

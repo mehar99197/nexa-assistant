@@ -33,9 +33,14 @@ Not to be confused with Nexa Download Manager: this is a separate program, named
   can see: coordinates are read straight off the screenshot Nexa last took, and land on the exact
   pixel even with fractional scaling.
 - **Talk to it** — hold the Talk button (Ctrl+M in the window, or a global key you assign) and speak.
-  Replies to spoken requests are read back sentence by sentence as they stream in. Optionally it
-  answers to "Hey Nexa", and then only the offline recogniser ever hears the room. Speech uses the
-  provider's models by default, with whisper.cpp and Piper as an offline fallback.
+  Replies to spoken requests are read back sentence by sentence as they stream in, and for a few
+  seconds after one it listens for a follow-up without its name. Optionally it answers to a name you
+  choose ("Hey Nexa" by default, Settings → Voice) — heard the moment it is said, even mid-sentence or
+  over a fan, by an offline keyword spotter, with whisper.cpp as a second net; only offline recognition
+  hears the room, and only the request after the name goes to the cloud recogniser. Recognition and the
+  voice come from the provider you pick in Settings → Voice (Groq's whisper, for example), with
+  whisper.cpp and Piper as the offline fallback. Nexa says when the microphone is overloaded and can
+  lower its input volume for you.
 - **Controls your phone** (over USB or Wi-Fi, no app on the phone) — opens apps, taps, swipes and
   types, takes screenshots and describes them, reads notifications and text messages, starts calls
   and messages, controls music and volume, and copies files both ways. While a phone is connected, a
@@ -83,6 +88,7 @@ scripts/install-desktop-entry.sh             # app grid entry and icon; needed f
 sudo ./packaging/install-helper.sh           # typing, clicking and root commands (asks for your password once per login)
 scripts/download-whisper-model.sh base.en    # offline speech recognition (148 MB), optional
 scripts/download-piper.sh                    # offline voice (26 MB + a 63 MB voice), optional
+scripts/download-sherpa.sh                   # wake-name spotter, voice detection, noise reduction (27 MB), optional
 ```
 
 On first start Nexa offers opencode and agy if they are installed, and installs Playwright — the browser automation that is
@@ -197,6 +203,7 @@ request fits.
 ```bash
 nexa-assistant --ask "open calculator" --ask "volume 50"   # requests, in order, as if typed
 nexa-assistant --say "hello" --voice-file request.wav      # speak; feed a recording in as a spoken request
+nexa-assistant --new-instance --hear room.wav              # play a recording into the microphone, wake word on
 nexa-assistant --pair-phone                                 # pair the Nexa Phone app on the adb-connected phone, no typing
 ```
 

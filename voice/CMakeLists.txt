@@ -7,6 +7,7 @@ add_library(nexa_voice STATIC
     capture/EnergyVad.h capture/EnergyVad.cc
     capture/IAudioInput.h
     capture/MicrophoneCheck.h capture/MicrophoneCheck.cc
+    capture/RecordedAudioInput.h capture/RecordedAudioInput.cc
     listen/AudioRing.h listen/AudioRing.cc
     listen/EnergyVoiceDetector.h listen/EnergyVoiceDetector.cc
     listen/IAudioFilter.h

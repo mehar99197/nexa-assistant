@@ -59,6 +59,7 @@
 #include "voice/Wav.h"
 #include "voice/capture/AudioCapture.h"
 #include "voice/capture/AudioConverter.h"
+#include "voice/capture/RecordedAudioInput.h"
 #include "voice/pipeline/VoicePipeline.h"
 #include "voice/wake/SherpaRuntime.h"
 
@@ -185,6 +186,12 @@ int main(int argc, char *argv[]) {
     parser.addOption(voiceFileOption);
     const QCommandLineOption sayOption(u"say"_s, u"Say <text> aloud on start-up (tests the voice)."_s, u"text"_s);
     parser.addOption(sayOption);
+    const QCommandLineOption hearOption(
+        u"hear"_s,
+        u"Play the WAV <file> into Nexa as if the microphone heard it, with the wake word on (repeatable; this run "
+        "only, in a copy of its own)."_s,
+        u"file"_s);
+    parser.addOption(hearOption);
     const QCommandLineOption newInstanceOption(
         u"new-instance"_s, u"Start even when Nexa is already running (for testing); this copy takes no requests from later ones."_s);
     parser.addOption(newInstanceOption);
@@ -210,7 +217,8 @@ int main(int argc, char *argv[]) {
     // One Nexa per user: a second start hands what it was asked to do to the running one and
     // leaves, before building anything heavy.
     SingleInstance instance(u"nexa-assistant"_s);
-    if (!parser.isSet(newInstanceOption)) {
+    // --hear replaces the microphone, so it never goes to the copy already running.
+    if (!parser.isSet(newInstanceOption) && !parser.isSet(hearOption)) {
         QJsonArray voiceFiles;
         for (const QString &file : parser.values(voiceFileOption)) voiceFiles.append(QFileInfo(file).absoluteFilePath());
         const QJsonObject handOver{{u"say"_s, QJsonArray::fromStringList(parser.values(sayOption))},
@@ -319,9 +327,19 @@ int main(int argc, char *argv[]) {
     // Documents, presentations and spreadsheets as files for LibreOffice.
     registerOfficeTools(tools, OfficeServices{.files = &files, .commands = &commands, .appOpened = appOpened});
 
-    // Voice: microphone → recognition → requests; replies → speech (backends built by AppController)
-    AudioCapture microphone;
-    VoicePipeline voice(&microphone);
+    // Voice: microphone → recognition → requests; replies → speech (backends built by AppController).
+    // With --hear, recordings stand in for the microphone.
+    const QStringList heard = parser.values(hearOption);
+    RecordedAudioInput *recording = nullptr;
+    std::unique_ptr<IAudioInput> microphone;
+    if (heard.isEmpty()) {
+        microphone = std::make_unique<AudioCapture>();
+    } else {
+        auto played = std::make_unique<RecordedAudioInput>();
+        recording = played.get();
+        microphone = std::move(played);
+    }
+    VoicePipeline voice(microphone.get());
     registerVoiceTools(tools, &voice);
     panic.addHandler([&voice] { voice.cancel(); });
 
@@ -499,10 +517,11 @@ int main(int argc, char *argv[]) {
     });
 
     if (!startupWarning.isEmpty()) QMessageBox::warning(&window, QObject::tr("Nexa settings"), startupWarning);
+    if (recording) controller.setWakeWordForced(true);     // --hear: the room is listened to, this run only
     QTimer::singleShot(0, &controller, &AppController::start);
 
-    // Scripted requests (--say, --voice-file, --ask, from this start or handed over by a later
-    // one): one step at a time, each once Nexa is idle again — reply finished and spoken.
+    // Scripted requests (--say, --voice-file, --ask, --hear, from this start or handed over by a later
+    // one): one step at a time, each once Nexa is idle again — reply finished and spoken, recording played.
     QList<std::function<void()>> steps;
     // --screenshot: once everything queued is done and Nexa is idle again, a picture of the
     // window (it also works offscreen: QT_QPA_PLATFORM=offscreen), then quit.
@@ -517,8 +536,9 @@ int main(int argc, char *argv[]) {
             QCoreApplication::quit();
         });
     };
-    std::function<void()> runNext = [&controller, &voice, &steps, takeScreenshot] {
+    std::function<void()> runNext = [&controller, &voice, &steps, takeScreenshot, recording] {
         if (controller.isBusy() || voice.state() != VoiceState::Idle) return;
+        if (recording && recording->playing()) return;
         if (!steps.isEmpty()) {
             steps.takeFirst()();
         } else {
@@ -532,6 +552,7 @@ int main(int argc, char *argv[]) {
     QObject::connect(&voice, &VoicePipeline::stateChanged, &controller, [later](VoiceState state) {
         if (state == VoiceState::Idle) later();
     });
+    if (recording) QObject::connect(recording, &RecordedAudioInput::drained, &controller, later);
     const auto queue = [&](const QStringList &say, const QStringList &voiceFiles, const QStringList &ask, int delayMs) {
         for (const QString &text : say) steps.append([&voice, text] { voice.speak(text); });
         for (const QString &file : voiceFiles) {
@@ -549,6 +570,18 @@ int main(int argc, char *argv[]) {
         if (!steps.isEmpty()) QTimer::singleShot(delayMs, runNext);
     };
     queue(parser.values(sayOption), parser.values(voiceFileOption), parser.values(askOption), 800);
+    // --hear: each recording played into the microphone, as if the room said it.
+    for (const QString &file : heard) {
+        steps.append([recording, &window, file] {
+            const Result<QByteArray> pcm = loadRecording(file);
+            if (pcm) {
+                recording->play(pcm.value());
+            } else {
+                QMessageBox::warning(&window, QObject::tr("Nexa"), QObject::tr("Cannot read %1: %2").arg(file, pcm.error().message));
+            }
+        });
+    }
+    if (!heard.isEmpty()) QTimer::singleShot(1500, runNext);
     if (steps.isEmpty() && !screenshotPath.isEmpty()) QTimer::singleShot(1500, runNext);
     if (parser.isSet(settingsShotsOption)) {
         const QString directory = parser.value(settingsShotsOption);

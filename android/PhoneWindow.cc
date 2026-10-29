@@ -358,7 +358,7 @@ void PhoneWindow::showCore() {
     QString hint;
     switch (mode) {
     case CoreMode::Idle: hint = tr("Say a request, or type one."); break;
-    case CoreMode::WakeWord: hint = tr("The PC is listening for “Hey Nexa”."); break;
+    case CoreMode::WakeWord: hint = tr("The PC is listening for its name."); break;
     case CoreMode::Listening: hint = tapRecording_ ? tr("Tap again, or pause, to send.") : tr("Let go to send."); break;
     case CoreMode::Transcribing: hint = tr("Recognising what you said…"); break;
     case CoreMode::Thinking: hint = tr("Nexa is writing a reply…"); break;

@@ -52,10 +52,17 @@ find, and GNOME insists on a reverse-DNS one). GNOME then wants the keys assigne
 Keyboard; inspect the result with `dconf dump /org/gnome/settings-daemon/global-shortcuts/`.
 To inspect the GUI from a script, run it on XWayland (`QT_QPA_PLATFORM=xcb`) and capture with `xwd -id <window>`; do **not** drive it with `xdotool type` — under Wayland, synthetic keystrokes only reach whichever X11 window has focus.
 
-Voice engines (optional, no sudo): `scripts/download-whisper-model.sh base.en` for offline recognition and
-`scripts/download-piper.sh` for the offline voice, both into `~/.local/share/nexa`. Without them Nexa uses the
-first-choice provider's speech models when it has any (agy and opencode have none). Local recognition is compiled in only with
+Voice engines (optional, no sudo): `scripts/download-whisper-model.sh base.en` for offline recognition,
+`scripts/download-piper.sh` for the offline voice, and `scripts/download-sherpa.sh` for sherpa-onnx 2.0.1 and its
+models (`~/.local/share/nexa/sherpa`: the keyword spotter that hears the wake name, Silero voice detection, GTCRN
+noise reduction — loaded at run time with `QLibrary` against the vendored `voice/wake/sherpa/c-api.h`, nothing
+linked; without it the energy VAD and the whisper second net work alone), all into `~/.local/share/nexa`. The
+cloud recogniser and voice are the provider chosen in Settings → Voice, or automatically the first choice and then
+every provider with a speech model (agy and opencode have none). Local recognition is compiled in only with
 `-DNEXA_BUILD_WHISPER=ON` (on in the release and debug presets; whisper.cpp is fetched at configure time).
+`--hear <wav>` (with `--new-instance` implied) plays a recording into the microphone with the wake word on, so the
+whole wake → request → reply → follow-up path runs as if the room had said it; with
+`QT_LOGGING_RULES="nexa.voice.debug=true"` the log says what the spotter heard and why it was taken or ignored.
 
 Root helper (needs sudo — **the user runs it**, as `! sudo ./packaging/install-helper.sh`): installs
 `nexa-helper` so Nexa can run commands as root and type/click on Wayland. The script self-checks with
@@ -154,11 +161,20 @@ text-only model refuses images with a 400; the `Agent` then resends without them
 - `tests/` — Catch2 v3 (custom `TestMain.cc` with a QCoreApplication), one `<Class>Test.cc` per tested
   class; `FakeHttpServer.h` for provider tests; `AgentTest.cc` uses a scripted fake model.
 - `voice/` — microphone to speech and back: `capture/` (AudioCapture, AudioConverter → 16 kHz mono Int16,
-  EnergyVad), `stt/` (ISpeechRecognizer; CloudRecognizer for the provider, WhisperRecognizer for offline,
-  RecognizerChain tries them in order, Transcript cleans the text), `tts/` (ITextToSpeech; CloudSynthesizer and
-  PiperSynthesizer produce PCM, SynthesizedSpeech chains them and PcmPlayer plays it, SpeechdTtsBackend is the
-  fallback, SentenceChunker splits a streamed reply into speakable sentences), `pipeline/` (VoicePipeline state
-  machine + WakeWordDetector), `VoiceBackends` builds what Settings → Voice asks for, `VoiceTools` adds `speak`.
+  EnergyVad, MicrophoneCheck = clipped or drowned sound and the steps of "Lower it", RecordedAudioInput for
+  `--hear`), `listen/` (what hears speech and the name: `ListeningFront` = the Facade that runs a noise filter, a
+  voice detector and the spotter inline or on a worker thread and reports sample positions; `AudioRing` = the raw
+  audio requests are cut from; `IVoiceDetector` → EnergyVoiceDetector / SileroVoiceDetector; `IAudioFilter` →
+  NoiseReducer), `wake/` (WordPieces = a name in the spotter's SentencePiece pieces, WakePhrases = spellings,
+  keyword lines, tuning and the name check, `IWakeSpotter` → KeywordSpotter, SherpaRuntime + the vendored
+  `sherpa/c-api.h`), `stt/` (ISpeechRecognizer with word times; CloudRecognizer for the provider, WhisperRecognizer
+  for offline, RecognizerChain tries them in order, Transcript cleans the text), `tts/` (ITextToSpeech;
+  CloudSynthesizer and PiperSynthesizer produce PCM, SynthesizedSpeech chains them and PcmPlayer plays it,
+  SpeechdTtsBackend is the fallback, SentenceChunker splits a streamed reply into speakable sentences, CloudVoices
+  = which models hear or speak and their voices), `pipeline/` (VoicePipeline state machine: the spotter's hits, the
+  whisper second net, requests, follow-ups; WakeWordDetector = any name, anywhere in a sentence), `VoiceBackends`
+  builds what Settings → Voice asks for (one choice of cloud voice for the PC, the phone app and the web remote,
+  and the listening front), `VoiceTools` adds `speak`.
 - `proto/` — the contract with the root helper: `org.nexa.Helper.xml` (generates the client proxy *and* the
   service adaptor, so they cannot drift), `HelperTypes.h` (bus names, the polkit action id, error names),
   `KeyMap` (characters and key names → Linux key codes; US layout, pure, heavily tested).
@@ -219,7 +235,8 @@ text-only model refuses images with a 400; the `Agent` then resends without them
   0600), `~/.local/share/nexa/models/` (whisper), `~/.local/share/nexa/piper/` (Piper and its voices),
   `~/.local/share/nexa/memory.json` (what Nexa remembers, 0600), `~/.local/share/nexa/skills/` (the user's
   skills), `~/.local/share/nexa/playwright/` (Playwright, its output and its Chromium if any),
-  `~/.local/share/nexa/browser-profile/` (Nexa's own Chrome profile, for when the extension is not set up).
+  `~/.local/share/nexa/browser-profile/` (Nexa's own Chrome profile, for when the extension is not set up),
+  `~/.local/share/nexa/sherpa/` (sherpa-onnx, the wake-name spotter's, Silero's and the noise reducer's models).
 
 ## Conventions
 
@@ -271,9 +288,12 @@ text-only model refuses images with a 400; the `Agent` then resends without them
   the one at the screen.
 - Keep the fast path's arguments matching the tool's schema; a mismatch there fails only at runtime, so
   `tests/IntentRouterTest.cc` asserts the argument shapes.
-- Nothing listens to the microphone unless the user asked: `VoicePipeline` opens it for a press of Talk, and
-  continuously only while the wake word is on — and then only a **local** recogniser sees the audio
-  (`ISpeechRecognizer::isLocal()`), so room sound never reaches a server.
+- Nothing listens to the microphone unless the user asked: `VoicePipeline` opens it for a press of Talk, for the
+  follow-up window after a spoken reply (when that setting is on), and continuously while the wake word is on —
+  and then **only offline recognition hears the room** (the spotter and the local recogniser,
+  `ISpeechRecognizer::isLocal()`). Audio goes to a cloud recogniser only when it is addressed to Nexa: the request
+  said with the name, cut from just before the name (never the speech before it), a follow-up in the window, and
+  push-to-talk. Nexa changes the system's input volume only when the owner presses Lower it.
 - Spoken requests carry the source `"voice"`; `AppController` prefixes them with `[voice]` so the model answers
   in short plain sentences that read well aloud.
 - New fast-path phrases go into an `IIntentHandler`; they must not swallow ordinary chat (test negatives too).

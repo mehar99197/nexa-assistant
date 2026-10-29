@@ -6,6 +6,7 @@
 #include "voice/Wav.h"
 #include "voice/capture/AudioConverter.h"
 #include "voice/capture/EnergyVad.h"
+#include "voice/capture/RecordedAudioInput.h"
 #include "voice/pipeline/WakeWordDetector.h"
 #include "voice/stt/CloudRecognizer.h"
 #include "voice/stt/ISpeechRecognizer.h"
@@ -17,6 +18,8 @@
 #include "VoiceTestAudio.h"
 
 #include <QJsonArray>
+#include <QSignalSpy>
+#include <QTest>
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QtEndian>
@@ -357,6 +360,24 @@ TEST_CASE("A recogniser without word times still answers transcribeWords") {
     REQUIRE(failed);
     REQUIRE_FALSE(failed->isOk());
     CHECK(failed->error().code == ErrorCode::Network);
+}
+
+TEST_CASE("RecordedAudioInput plays in real time, then silence") {
+    RecordedAudioInput recording;
+    QList<QByteArray> chunks;
+    QObject::connect(&recording, &IAudioInput::audio, &recording, [&chunks](const QByteArray &pcm) { chunks.append(pcm); });
+    QSignalSpy drained(&recording, &RecordedAudioInput::drained);
+    REQUIRE(recording.start().isOk());
+    recording.play(testaudio::speech(1000));
+    CHECK(recording.playing());
+    QTest::qWait(1250);
+    REQUIRE(chunks.size() >= 11);
+    for (int i = 0; i < 10; ++i) CHECK(chunks[i] == testaudio::speech(1000).mid(i * 3200, 3200));
+    CHECK(chunks[10] == QByteArray(3200, '\0'));         // the recording is over: silence
+    REQUIRE(drained.wait(6000));
+    CHECK_FALSE(recording.playing());
+    recording.stop();
+    CHECK_FALSE(recording.isActive());
 }
 
 TEST_CASE("cleanTranscript drops non-speech annotations") {

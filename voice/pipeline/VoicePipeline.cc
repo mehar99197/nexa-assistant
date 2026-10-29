@@ -358,16 +358,25 @@ void VoicePipeline::onSpeechEnded(qint64 start, qint64 end) {
 }
 
 void VoicePipeline::onWakeHeard(const QString &label, qint64 phraseStart, qint64 heardAt) {
-    Q_UNUSED(heardAt)
-    if (!wakeWordActive() || state_ == VoiceState::Listening || state_ == VoiceState::Transcribing) return;
+    const auto ignored = [&](const char *why) {
+        qCDebug(lcVoice).nospace() << "spotter heard " << label << " at " << phraseStart / 16 << " ms: ignored, " << why;
+    };
+    if (!wakeWordActive() || state_ == VoiceState::Listening || state_ == VoiceState::Transcribing) {
+        ignored("busy");
+        return;
+    }
     // Nexa hearing itself say its name.
     if ((state_ == VoiceState::Speaking && replySaysName_) || (selfGuard_.isValid() && selfGuard_.elapsed() < kSelfGuardMs)) {
+        ignored("Nexa's own voice");
         return;
     }
     // The bare name counts where it opens what is being said ("Nexa, …"), not inside a sentence ("I love Nexa").
     if (!WakePhrases::isGreeted(label) && (lastSpeechStart_ < 0 || std::abs(phraseStart - lastSpeechStart_) > kBareNameWindow)) {
+        ignored("the bare name inside a sentence");
         return;
     }
+    qCDebug(lcVoice).nospace() << "spotter heard " << label << " at " << phraseStart / 16 << " ms (noticed at "
+                               << heardAt / 16 << " ms): listening for the request";
     // The second net may be checking the same sentence: this hit is first.
     ++generation_;
     if (wakeRecognizer_) wakeRecognizer_->cancel();
@@ -522,6 +531,7 @@ void VoicePipeline::handleWakeTranscript(const QByteArray &utterance, const Time
     const QString heard = cleanTranscript(transcript.text);
     const std::optional<WakeWordDetector::Match> wake = wake_.find(heard);
     if (!wake) return;
+    qCDebug(lcVoice) << "second net heard the name in" << heard;
     pendingUtterance_.clear();
     if (speech_) speech_->stop();
     if (wake->command.isEmpty()) {
