@@ -28,6 +28,9 @@ public:
     // → ""); a transcript that does not start with them comes back as it is.
     QString commandOf(const QString &transcript) const;
 
+    // Whether the text says the name at all, anywhere — as Nexa may in its own replies.
+    bool mentions(const QString &text) const;
+
     // Initial prompt for the recogniser: biases it towards the right spelling of the name.
     QString recognizerPrompt() const;
     QString name() const { return name_; }

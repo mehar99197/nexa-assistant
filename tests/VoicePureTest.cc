@@ -318,6 +318,11 @@ TEST_CASE("WakeWordDetector finds any name anywhere") {
     CHECK(WakeWordDetector::soundKey(u"Jarvis"_s) == u"jrvs"_s);
     CHECK(nexa.recognizerPrompt() == u"Hey Nexa."_s);
     CHECK(jarvis.name() == u"Jarvis"_s);
+
+    // Saying the name at all, as Nexa may in its own replies.
+    CHECK(nexa.mentions(u"I am Nexa, your assistant."_s));
+    CHECK(nexa.mentions(u"I'm Necksa."_s));
+    CHECK_FALSE(nexa.mentions(u"The weather is fine today."_s));
 }
 
 namespace {

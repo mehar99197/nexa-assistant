@@ -9,6 +9,7 @@
 #include "voice/stt/ISpeechRecognizer.h"
 #include "voice/stt/Transcript.h"
 #include "voice/tts/ITextToSpeech.h"
+#include "voice/wake/WakePhrases.h"
 
 #include <algorithm>
 
@@ -27,6 +28,9 @@ constexpr int kWakePauseMs = 700;               // between sentences checked for
 constexpr int kWakeUtteranceMs = 8'000;         // longer room speech is checked in pieces
 constexpr int kWakeRequestMaxMs = 15'000;       // a request after the name: a TV can keep the room from going quiet
 constexpr int kCutBeforeWordMs = 200;           // the request starts this long before the name's first word
+constexpr qint64 kCutBeforePhrase = 16'000 * 3 / 10;    // …and 0.3 s before the spotter's phrase
+constexpr qint64 kBareNameWindow = 16'000 / 2;  // the bare name must open what is being said: within 0.5 s of it
+constexpr int kSelfGuardMs = 3'000;             // after Nexa said its own name
 
 EnergyVad::Settings vadSettings() {
     EnergyVad::Settings settings;
@@ -45,8 +49,8 @@ VoicePipeline::VoicePipeline(IAudioInput *input, QObject *parent)
     connect(input_, &IAudioInput::failed, this, [this](const Error &error) {
         emit notice(error.message, true);
         // What was heard so far is cut off: no utterance of it may end later.
-        ring_.reset();
-        front_->reset();
+        resetHearing();
+        capturing_ = false;
         if (state_ == VoiceState::Listening) {
             recording_.clear();
             setState(VoiceState::Idle);
@@ -60,6 +64,10 @@ VoicePipeline::VoicePipeline(IAudioInput *input, QObject *parent)
             return;
         }
         const qint64 elapsed = listenClock_.elapsed();
+        if (capturing_) {
+            if (elapsed >= kWakeRequestMaxMs) finishCapture(ring_.end());
+            return;
+        }
         const bool silent = !hold_ && !fromVad_ && !heardSpeech_ && elapsed >= kNoSpeechTimeoutMs;
         if (elapsed >= kMaxListenMs || silent) finishListening();
     });
@@ -106,8 +114,11 @@ void VoicePipeline::setListeningFront(std::unique_ptr<ListeningFront> front) {
     front_ = std::move(front);      // the old front goes, with whatever it had not reported yet
     connect(front_.get(), &ListeningFront::speechStarted, this, &VoicePipeline::onSpeechStarted);
     connect(front_.get(), &ListeningFront::speechEnded, this, &VoicePipeline::onSpeechEnded);
+    connect(front_.get(), &ListeningFront::wakeHeard, this, &VoicePipeline::onWakeHeard);
     applyPauses();
     ring_.reset();                  // the ring and the front count positions from the same sample
+    lastSpeechStart_ = -1;
+    capturing_ = false;
 }
 
 void VoicePipeline::setTextToSpeech(std::unique_ptr<ITextToSpeech> speech) {
@@ -187,8 +198,8 @@ void VoicePipeline::startListening(bool hold) {
     recording_.clear();
     hold_ = hold;
     fromVad_ = false;
-    ring_.reset();
-    front_->reset();
+    capturing_ = false;             // the key wins over a request the name had started
+    resetHearing();
     heardSpeech_ = false;
     listenClock_.restart();
     setState(VoiceState::Listening);
@@ -217,8 +228,10 @@ void VoicePipeline::cancel() {
     recording_.clear();
     hold_ = false;
     fromVad_ = false;
+    capturing_ = false;
     awaitingCommand_ = false;
     wakeBusy_ = false;
+    replySaysName_ = false;
     if (recognizer_) recognizer_->cancel();
     if (wakeRecognizer_) wakeRecognizer_->cancel();
     if (speech_) speech_->stop();
@@ -253,7 +266,7 @@ void VoicePipeline::onAudio(const QByteArray &pcm) {
 }
 
 void VoicePipeline::onSpeechStarted(qint64 start) {
-    Q_UNUSED(start)
+    lastSpeechStart_ = start;
     heardSpeech_ = true;
     if (awaitingCommand_) commandTimer_.stop();     // the request has begun: it ends at the pause
     if (state_ != VoiceState::Speaking || !settings_.bargeIn) return;
@@ -270,6 +283,10 @@ void VoicePipeline::onSpeechStarted(qint64 start) {
 }
 
 void VoicePipeline::onSpeechEnded(qint64 start, qint64 end) {
+    if (capturing_) {
+        finishCapture(end);                 // the request after the name ends at the owner's pause
+        return;
+    }
     if (state_ == VoiceState::Listening && !fromVad_) {
         if (!hold_) finishListening();      // toggle mode: the pause ends the request
         return;
@@ -291,6 +308,52 @@ void VoicePipeline::onSpeechEnded(qint64 start, qint64 end) {
     if (wakeWordActive() && state_ != VoiceState::Listening && state_ != VoiceState::Transcribing) {
         checkWakeWord(utterance);
     }
+}
+
+void VoicePipeline::onWakeHeard(const QString &label, qint64 phraseStart, qint64 heardAt) {
+    Q_UNUSED(heardAt)
+    if (!wakeWordActive() || state_ == VoiceState::Listening || state_ == VoiceState::Transcribing) return;
+    // Nexa hearing itself say its name.
+    if ((state_ == VoiceState::Speaking && replySaysName_) || (selfGuard_.isValid() && selfGuard_.elapsed() < kSelfGuardMs)) {
+        return;
+    }
+    // The bare name counts where it opens what is being said ("Nexa, …"), not inside a sentence ("I love Nexa").
+    if (!WakePhrases::isGreeted(label) && (lastSpeechStart_ < 0 || std::abs(phraseStart - lastSpeechStart_) > kBareNameWindow)) {
+        return;
+    }
+    // The second net may be checking the same sentence: this hit is first.
+    ++generation_;
+    if (wakeRecognizer_) wakeRecognizer_->cancel();
+    pendingUtterance_.clear();
+    if (speech_) speech_->stop();
+    chunker_.reset();
+    speakReply_ = false;
+    awaitingCommand_ = false;
+    commandTimer_.stop();
+    // The request: from just before the name — where the spotter is precise — to the pause after it. Nothing
+    // said before the name goes with it.
+    capturing_ = true;
+    captureStart_ = std::max(ring_.begin(), phraseStart - kCutBeforePhrase);
+    fromVad_ = true;
+    hold_ = false;
+    listenClock_.restart();
+    setState(VoiceState::Listening);
+    applyPauses();
+    listenTimer_.start();
+    if (replyActive_) emit interruptRequested();
+}
+
+void VoicePipeline::finishCapture(qint64 end) {
+    capturing_ = false;
+    fromVad_ = false;
+    listenTimer_.stop();
+    transcribeRequest(ring_.slice(captureStart_, end), QString());
+}
+
+void VoicePipeline::resetHearing() {
+    ring_.reset();
+    front_->reset();
+    lastSpeechStart_ = -1;
 }
 
 void VoicePipeline::finishListening() {
@@ -468,6 +531,7 @@ void VoicePipeline::onReplyFailed(const QString &message) {
 
 void VoicePipeline::say(const QString &sentence) {
     if (!speech_ || sentence.trimmed().isEmpty()) return;
+    if (wake_.mentions(sentence)) replySaysName_ = true;    // the spotter will hear it: not the owner
     speech_->speak(sentence);
     spokeReply_ = true;
     setState(VoiceState::Speaking);
@@ -475,6 +539,7 @@ void VoicePipeline::say(const QString &sentence) {
 
 void VoicePipeline::onSpeechFinished() {
     if (state_ != VoiceState::Speaking) return;
+    if (std::exchange(replySaysName_, false)) selfGuard_.restart();     // its echo may still be heard
     // More of the reply may still come: wait for it (thinking), else done.
     setState(replyActive_ && speakReply_ ? VoiceState::Thinking : VoiceState::Idle);
 }
@@ -504,8 +569,7 @@ void VoicePipeline::updateMicrophone() {
         emit levelChanged(0.0);
         return;
     }
-    ring_.reset();
-    front_->reset();
+    resetHearing();
     if (const Result<void> started = input_->start(); !started) {
         emit notice(started.error().message, true);
         if (state_ == VoiceState::Listening) {

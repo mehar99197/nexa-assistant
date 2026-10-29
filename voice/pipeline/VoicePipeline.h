@@ -93,6 +93,9 @@ private:
     void onAudio(const QByteArray &pcm);
     void onSpeechStarted(qint64 start);
     void onSpeechEnded(qint64 start, qint64 end);
+    void onWakeHeard(const QString &label, qint64 phraseStart, qint64 heardAt);
+    void finishCapture(qint64 end);     // the request after the spotter's hit, up to `end` in the ring
+    void resetHearing();                // the ring and the front start counting again
     void finishListening();
     void transcribe(const QByteArray &pcm);
     // A request said to Nexa, through the request recogniser; `fallback` (the offline text after the name) is
@@ -118,6 +121,11 @@ private:
     AudioRing ring_;
     std::unique_ptr<ListeningFront> front_;
     bool heardSpeech_{false};           // since listening began
+    qint64 lastSpeechStart_{-1};        // where the voice detector last heard speech begin
+    bool capturing_{false};             // a request after the spotter heard the name
+    qint64 captureStart_{0};            // its start in the ring: just before the name
+    bool replySaysName_{false};         // the speech playing says the name: Nexa would hear itself
+    QElapsedTimer selfGuard_;           // since such speech ended
     QByteArray recording_;
     bool hold_{false};
     bool fromVad_{false};               // this utterance is the VAD's (barge-in), not a key press

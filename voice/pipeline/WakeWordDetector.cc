@@ -137,6 +137,20 @@ std::optional<WakeWordDetector::Match> WakeWordDetector::find(const QString &tra
     return std::nullopt;
 }
 
+bool WakeWordDetector::mentions(const QString &text) const {
+    const std::vector<Token> words = tokens(text);
+    for (size_t i = 0; i + size_t(nameWords_) <= words.size(); ++i) {
+        QStringList said;
+        QString letters;
+        for (size_t k = i; k < i + size_t(nameWords_); ++k) {
+            said.append(words[k].letters);
+            letters += words[k].letters;
+        }
+        if (spellings_.contains(said.join(u' ')) || soundKey(letters) == nameKey_) return true;
+    }
+    return false;
+}
+
 QString WakeWordDetector::commandOf(const QString &transcript) const {
     const std::optional<Match> match = find(transcript);
     return match && match->firstWord == 0 ? match->command : transcript.trimmed();

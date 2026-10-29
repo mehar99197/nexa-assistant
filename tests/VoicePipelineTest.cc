@@ -8,6 +8,7 @@
 #include "voice/listen/ListeningFront.h"
 #include "voice/pipeline/VoicePipeline.h"
 #include "voice/stt/ISpeechRecognizer.h"
+#include "voice/wake/IWakeSpotter.h"
 #include "voice/tts/ITextToSpeech.h"
 
 #include "QtStringMakers.h"
@@ -491,6 +492,123 @@ TEST_CASE("A request started by the name ends at 15 s when the room never goes q
     const qint64 ms = rig.recognizer->audio.size() / 32;
     CHECK(ms >= 14800);
     CHECK(ms <= 15600);
+}
+
+namespace {
+
+// Hears a phrase that began at `hitAt` (a sample position), once — half a second later, as the real spotter
+// notices the name only after it has been said.
+class ScriptedSpotter : public IWakeSpotter {
+public:
+    ScriptedSpotter(QString label, qint64 hitAt) : label_(std::move(label)), hitAt_(hitAt) {}
+    QList<Hit> feed(QByteArrayView pcm16k) override {
+        seen_ += pcm16k.size() / 2;
+        if (fired_ || seen_ <= hitAt_ + 8000) return {};
+        fired_ = true;
+        return {Hit{.label = label_, .phraseStart = hitAt_, .heardAt = seen_}};
+    }
+    void reset() override {
+        seen_ = 0;
+        fired_ = false;
+    }
+
+private:
+    QString label_;
+    qint64 hitAt_;
+    qint64 seen_{0};
+    bool fired_{false};
+};
+
+std::unique_ptr<ListeningFront> spottingFront(const QString &label, qint64 hitAt,
+                                              ListeningFront::Threading threading = ListeningFront::Threading::Inline) {
+    ListeningFront::Parts parts;
+    parts.detector = std::make_unique<EnergyVoiceDetector>();
+    parts.spotter = std::make_unique<ScriptedSpotter>(label, hitAt);
+    return std::make_unique<ListeningFront>(std::move(parts), threading);
+}
+
+// A rig listening for the name with a spotter that hears it at `hitAt`.
+struct SpotterRig : WakeRig {
+    SpotterRig(const QString &label, qint64 hitAt) { pipeline.setListeningFront(spottingFront(label, hitAt)); }
+};
+
+constexpr qint64 kSecond = 16'000;
+
+// Speech as people talk: words of 400 ms with 100 ms between them (a gapless tone becomes the energy
+// detector's idea of the room after 1.5 s).
+QByteArray talking(int ms) {
+    QByteArray pcm;
+    for (int at = 0; at < ms; at += 500) pcm += testaudio::speech(400, std::uint32_t(at / 500 + 7)) + testaudio::quiet(100);
+    return pcm;
+}
+
+} // namespace
+
+TEST_CASE("A spotter hit mid-speech: Listening at once; the request from 0.3 s before the phrase") {
+    SpotterRig rig(u"HEY_NEXA"_s, 2 * kSecond);
+    rig.microphone.play(testaudio::quiet(1000) + talking(2000));
+    CHECK(rig.pipeline.state() == VoiceState::Listening);      // before the speech has ended
+    rig.microphone.play(talking(1000) + testaudio::quiet(1600));
+    REQUIRE(rig.recognizer->pending());
+    // From 1.7 s to the end of the speech (3.9 s) plus the 200 ms kept after it.
+    CHECK(std::abs(rig.recognizer->audio.size() / 2 - (41 * kSecond / 10 - 17 * kSecond / 10)) <= 320);
+    CHECK(rig.local->requests == 0);       // the sentence with the name is not the second net's
+    rig.recognizer->answer(u"Hey Nexa, open YouTube"_s);
+    CHECK(rig.requests == QStringList{u"open YouTube"_s});
+}
+
+TEST_CASE("A bare-name hit counts only when the name opens the utterance") {
+    SpotterRig inside(u"NEXA"_s, 25 * kSecond / 10);         // 1.5 s into what is being said
+    inside.microphone.play(testaudio::quiet(1000) + testaudio::speech(3000));
+    CHECK(inside.pipeline.state() == VoiceState::Idle);
+
+    SpotterRig opening(u"NEXA"_s, 11 * kSecond / 10);         // as the speech begins
+    opening.microphone.play(testaudio::quiet(1000) + testaudio::speech(1500));
+    CHECK(opening.pipeline.state() == VoiceState::Listening);
+}
+
+TEST_CASE("A hit while speaking stops the speech; Nexa's own name in its speech is ignored") {
+    SpotterRig rig(u"HEY_NEXA"_s, 15 * kSecond / 10);
+    rig.pipeline.onReplyStarted(u"voice"_s);
+    rig.pipeline.onReplyDelta(u"The weather is fine today. It is"_s);
+    REQUIRE(rig.pipeline.state() == VoiceState::Speaking);
+    rig.microphone.play(testaudio::quiet(1000) + testaudio::speech(1200));
+    CHECK(rig.pipeline.state() == VoiceState::Listening);
+    CHECK(rig.voice->stops >= 1);
+    CHECK(rig.interrupts == 1);
+
+    SpotterRig own(u"HEY_NEXA"_s, 15 * kSecond / 10);
+    own.pipeline.onReplyStarted(u"voice"_s);
+    own.pipeline.onReplyDelta(u"I am Nexa, your assistant. How"_s);
+    REQUIRE(own.pipeline.state() == VoiceState::Speaking);
+    own.microphone.play(testaudio::quiet(1000) + testaudio::speech(1200));
+    CHECK(own.pipeline.state() == VoiceState::Speaking);
+}
+
+TEST_CASE("A hit from a replaced listening front is ignored") {
+    WakeRig rig;
+    rig.pipeline.setListeningFront(spottingFront(u"HEY_NEXA"_s, kSecond / 2, ListeningFront::Threading::Worker));
+    rig.microphone.play(testaudio::quiet(500) + testaudio::speech(1000));
+    // The name is chosen again before the old front's hit is delivered.
+    ListeningFront::Parts parts;
+    parts.detector = std::make_unique<EnergyVoiceDetector>();
+    rig.pipeline.setListeningFront(std::make_unique<ListeningFront>(std::move(parts), ListeningFront::Threading::Inline));
+    QTest::qWait(300);
+    CHECK(rig.pipeline.state() == VoiceState::Idle);
+}
+
+TEST_CASE("Talk while capturing a request after the name: one request, from the key") {
+    SpotterRig rig(u"HEY_NEXA"_s, 15 * kSecond / 10);
+    rig.microphone.play(testaudio::quiet(1000) + testaudio::speech(1200));
+    REQUIRE(rig.pipeline.state() == VoiceState::Listening);
+    rig.pipeline.startListening(true);
+    rig.microphone.play(testaudio::quiet(300) + testaudio::speech(600) + testaudio::quiet(300));
+    rig.pipeline.stopListening();
+    CHECK(rig.recognizer->requests == 1);
+    rig.recognizer->answer(u"open files"_s);
+    rig.microphone.play(testaudio::quiet(1600));
+    CHECK(rig.recognizer->requests == 1);
+    CHECK(rig.requests == QStringList{u"open files"_s});
 }
 
 TEST_CASE("The wake word refuses a cloud recogniser") {
