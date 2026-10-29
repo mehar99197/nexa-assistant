@@ -92,6 +92,11 @@ private:
     void testConnection();
     void showTestResult(const QString &text, bool ok);
     void storeVoice();
+    void refreshVoiceProviders();       // the provider lists, from the providers as they are now
+    void showCloudProvider(bool recognition);
+    void keepCloudModels();             // the shown provider's model (and voice) back into its settings
+    void listCloudModels(bool recognition);
+    void updateUsingLines();
     void updateVoiceStatus();
     void testVoice();
     QString uniqueId(const QString &base) const;
@@ -117,9 +122,6 @@ private:
     QFormLayout *providerFormLayout_{nullptr};
     QHBoxLayout *keyRow_{nullptr};
     QLineEdit *modelEdit_{nullptr};
-    QLineEdit *sttModelEdit_{nullptr};
-    QLineEdit *ttsModelEdit_{nullptr};
-    QLineEdit *ttsVoiceEdit_{nullptr};
     QCheckBox *textToolsCheck_{nullptr};
     QPushButton *testButton_{nullptr};
     QLabel *testResult_{nullptr};
@@ -134,6 +136,28 @@ private:
     QComboBox *speakCombo_{nullptr};
     QCheckBox *wakeCheck_{nullptr};
     QCheckBox *bargeInCheck_{nullptr};
+    // Settings → Voice: the cloud voice, chosen from the providers there are.
+    QComboBox *sttProviderCombo_{nullptr};
+    QComboBox *sttModelCombo_{nullptr};
+    QLabel *sttUsing_{nullptr};
+    QComboBox *ttsProviderCombo_{nullptr};
+    QComboBox *ttsModelCombo_{nullptr};
+    QComboBox *ttsVoiceCombo_{nullptr};
+    QLabel *ttsUsing_{nullptr};
+    QString sttShownFor_;               // the provider whose recognition model the Model list shows
+    QString ttsShownFor_;
+    std::unique_ptr<IAiProvider> sttLister_;
+    std::unique_ptr<IAiProvider> ttsLister_;
+    // …the wake name and how Nexa listens.
+    QWidget *voicePage_{nullptr};
+    QLineEdit *wakeNameEdit_{nullptr};
+    QLabel *wakeNameError_{nullptr};
+    QComboBox *sensitivityCombo_{nullptr};
+    QComboBox *endPauseCombo_{nullptr};
+    QCheckBox *followUpsCheck_{nullptr};
+    QCheckBox *noiseCheck_{nullptr};
+    QLabel *spotterStatus_{nullptr};
+    QLabel *micStatus_{nullptr};
     QLabel *voiceTestResult_{nullptr};
     QLabel *helperState_{nullptr};
     QLabel *inputState_{nullptr};

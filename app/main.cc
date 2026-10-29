@@ -471,7 +471,15 @@ int main(int argc, char *argv[]) {
                                    .shortcuts = &shortcuts,
                                    .browser = &browser,
                                    .memory = &memory,
-                                   .skills = &skills},
+                                   .skills = &skills,
+                                   .sherpa = &sherpa,
+                                   .microphoneSummary =
+                                       [&voice] {
+                                           const QString trouble = voice.microphoneTrouble();
+                                           return trouble.isEmpty() ? QObject::tr("fine")
+                                                                    : trouble.section(u". "_s, 0, 0) + u'.';
+                                       },
+                                   .lowerMicrophone = [&controller] { controller.lowerMicrophone(); }},
                       AuditLog::defaultPath());
     if (!runDesign.isEmpty() || !runPalette.isEmpty()) window.wear(runPalette, runDesign);
     window.show();

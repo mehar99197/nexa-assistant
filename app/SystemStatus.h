@@ -17,6 +17,7 @@ class MemoryStore;
 class PairingManager;
 class PhoneLink;
 class RemoteServer;
+class SherpaRuntime;
 class SkillCatalog;
 
 // What the GUI needs to show about the parts of Nexa that live outside it: the root helper,
@@ -37,6 +38,9 @@ struct SystemStatus {
     BrowserService *browser{nullptr};       // Playwright: installed? which browser? (status bar, Settings → Browser)
     MemoryStore *memory{nullptr};           // Settings → Memory
     SkillCatalog *skills{nullptr};          // Settings → Skills
+    SherpaRuntime *sherpa{nullptr};         // instant spotting installed? (Settings → Voice)
+    std::function<QString()> microphoneSummary;     // "fine", or what is wrong with its sound
+    std::function<void()> lowerMicrophone;          // Settings → Voice → Lower it
 };
 
 } // namespace nexa

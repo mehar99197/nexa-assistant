@@ -18,8 +18,11 @@
 #include "ui/NexaDesigns.h"
 #include "ui/NexaThemes.h"
 #include "voice/VoiceBackends.h"
+#include "voice/tts/CloudVoices.h"
 #include "voice/tts/ITextToSpeech.h"
 #include "voice/tts/SpeechdTtsBackend.h"
+#include "voice/wake/SherpaRuntime.h"
+#include "voice/wake/WakePhrases.h"
 
 #include <QCheckBox>
 #include <QComboBox>
@@ -40,6 +43,8 @@
 #include <QFileInfo>
 #include <QPushButton>
 #include <QSignalBlocker>
+#include <QScrollArea>
+#include <QStandardItemModel>
 #include <QPixmap>
 #include <QSlider>
 #include <QSpinBox>
@@ -84,7 +89,8 @@ SettingsDialog::SettingsDialog(Config config, ProviderRegistry *registry, HttpCl
 
     tabs_ = new QTabWidget(this);
     tabs_->addTab(buildProvidersTab(), tr("Providers"));
-    tabs_->addTab(buildVoiceTab(), tr("Voice"));
+    voicePage_ = buildVoiceTab();
+    tabs_->addTab(voicePage_, tr("Voice"));
     tabs_->addTab(buildHelperTab(), tr("Helper"));
     tabs_->addTab(buildAndroidTab(), tr("Android"));
     tabs_->addTab(buildRemoteTab(), tr("Remote"));
@@ -140,6 +146,15 @@ void SettingsDialog::accept() {
     if (const QListWidgetItem *theme = themeGallery_->currentItem()) config_.ui.theme = theme->data(Qt::UserRole).toString();
     if (const QListWidgetItem *design = designGallery_->currentItem()) config_.ui.design = design->data(Qt::UserRole).toString();
     storeConnector();
+    if (const QString name = wakeNameEdit_->text().trimmed(); !name.isEmpty()) {
+        if (const Result<void> checked = WakePhrases::check(name); !checked) {
+            tabs_->setCurrentWidget(voicePage_);
+            wakeNameError_->setText(checked.error().message);
+            wakeNameError_->show();
+            wakeNameEdit_->setFocus();
+            return;
+        }
+    }
     storeVoice();
     config_.android.autoReconnect = phoneReconnect_->isChecked();
     config_.remote.enabled = remoteEnabled_->isChecked();
@@ -217,14 +232,6 @@ QWidget *SettingsDialog::buildProvidersTab() {
     keyRow->addWidget(showKeyCheck_);
     modelEdit_ = new QLineEdit(providerForm_);
     modelEdit_->setPlaceholderText(tr("pick it from the model list in the toolbar"));
-    sttModelEdit_ = new QLineEdit(providerForm_);
-    sttModelEdit_->setPlaceholderText(tr("none — e.g. whisper-1, or an audio-capable chat model"));
-    sttModelEdit_->setToolTip(tr("Transcription models (whisper…) use /audio/transcriptions; any other model gets "
-                                 "the recording as chat input."));
-    ttsModelEdit_ = new QLineEdit(providerForm_);
-    ttsModelEdit_->setPlaceholderText(tr("none — e.g. tts-1"));
-    ttsVoiceEdit_ = new QLineEdit(providerForm_);
-    ttsVoiceEdit_->setPlaceholderText(tr("e.g. alloy (a language code such as en for gtts/default)"));
     textToolsCheck_ = new QCheckBox(tr("This model cannot call tools — describe them in the prompt instead"),
                                     providerForm_);
     textToolsCheck_->setToolTip(tr("For models without function calling, such as many small local ones: Nexa "
@@ -244,9 +251,6 @@ QWidget *SettingsDialog::buildProvidersTab() {
     form->addRow(tr("Base URL:"), baseUrlEdit_);
     form->addRow(tr("API key:"), keyRow);
     form->addRow(tr("Model:"), modelEdit_);
-    form->addRow(tr("Speech recognition:"), sttModelEdit_);
-    form->addRow(tr("Speech output:"), ttsModelEdit_);
-    form->addRow(tr("Voice:"), ttsVoiceEdit_);
     form->addRow(QString(), textToolsCheck_);
     form->addRow(QString(), fallbackCheck_);
     form->addRow(testButton_, testResult_);
@@ -271,11 +275,19 @@ QWidget *SettingsDialog::buildVoiceTab() {
     auto *page = new QWidget(this);
     const VoiceConfig &voice = config_.voice;
 
+    // Recognition: the mode, then the cloud part — a provider that has it, its model.
     sttCombo_ = new QComboBox(page);
-    sttCombo_->addItem(tr("Automatic — the provider's model, local whisper.cpp if it fails"), u"auto"_s);
-    sttCombo_->addItem(tr("Cloud only — the active provider's speech recognition model"), u"cloud"_s);
+    sttCombo_->addItem(tr("Automatic — the cloud provider below, local whisper.cpp if it fails"), u"auto"_s);
+    sttCombo_->addItem(tr("Cloud only — the cloud provider below"), u"cloud"_s);
     sttCombo_->addItem(tr("Local only — whisper.cpp, offline"), u"whisper"_s);
     selectData(sttCombo_, voice.sttBackend);
+    sttProviderCombo_ = new QComboBox(page);
+    sttModelCombo_ = new QComboBox(page);
+    sttModelCombo_->setEditable(true);
+    sttModelCombo_->setToolTip(tr("Transcription models (whisper…) use /audio/transcriptions; any other model gets "
+                                  "the recording as chat input."));
+    sttUsing_ = new QLabel(page);
+    sttUsing_->setWordWrap(true);
     whisperCombo_ = new QComboBox(page);
     whisperCombo_->setEditable(true);
     QStringList models = installedWhisperModels();
@@ -289,15 +301,31 @@ QWidget *SettingsDialog::buildVoiceTab() {
     whisperStatus_->setWordWrap(true);
     whisperStatus_->setTextInteractionFlags(Qt::TextSelectableByMouse);
     languageEdit_ = new QLineEdit(voice.language, page);
-    languageEdit_->setPlaceholderText(tr("en, de, ur, … or auto"));
+    languageEdit_->setPlaceholderText(tr("en, ur, … or auto (Urdu and English)"));
 
+    // Speech output: the mode, the cloud provider, its model and voice, and the local voices.
     ttsCombo_ = new QComboBox(page);
-    ttsCombo_->addItem(tr("Automatic — the provider's voice, Piper if it fails"), u"auto"_s);
-    ttsCombo_->addItem(tr("Cloud only — the active provider's speech model"), u"cloud"_s);
+    ttsCombo_->addItem(tr("Automatic — the cloud voice below, Piper if it fails"), u"auto"_s);
+    ttsCombo_->addItem(tr("Cloud only — the cloud voice below"), u"cloud"_s);
     ttsCombo_->addItem(tr("Piper — local neural voice"), u"piper"_s);
     ttsCombo_->addItem(tr("Speech Dispatcher — local, robotic"), u"speechd"_s);
     ttsCombo_->addItem(tr("Off — never speak"), u"off"_s);
     selectData(ttsCombo_, voice.ttsBackend);
+    ttsProviderCombo_ = new QComboBox(page);
+    ttsModelCombo_ = new QComboBox(page);
+    ttsModelCombo_->setEditable(true);
+    ttsVoiceCombo_ = new QComboBox(page);
+    ttsVoiceCombo_->setEditable(true);
+    ttsVoiceCombo_->setToolTip(tr("The voice's name; for gtts/default a language code such as en"));
+    ttsUsing_ = new QLabel(page);
+    ttsUsing_->setWordWrap(true);
+    connect(ttsModelCombo_, &QComboBox::currentTextChanged, this, [this](const QString &model) {
+        const QString voiceName = ttsVoiceCombo_->currentText();
+        const QSignalBlocker blocker(ttsVoiceCombo_);
+        ttsVoiceCombo_->clear();
+        ttsVoiceCombo_->addItems(CloudVoices::voicesFor(model));
+        ttsVoiceCombo_->setEditText(voiceName);
+    });
     piperCombo_ = new QComboBox(page);
     piperCombo_->addItems(VoiceBackends::piperVoices());
     if (!voice.piperVoice.isEmpty()) piperCombo_->setCurrentText(voice.piperVoice);
@@ -319,42 +347,222 @@ QWidget *SettingsDialog::buildVoiceTab() {
     voiceTestResult_ = new QLabel(page);
     voiceTestResult_->setWordWrap(true);
 
-    wakeCheck_ = new QCheckBox(tr("Listen for “Hey Nexa” — the microphone stays on; only local recognition hears it"),
-                               page);
+    // The wake name and how Nexa listens.
+    wakeCheck_ = new QCheckBox(tr("Listen for my wake name — the microphone stays on; only offline recognition hears "
+                                  "the room"), page);
     wakeCheck_->setChecked(voice.wakeWord);
+    wakeNameEdit_ = new QLineEdit(voice.wakeName, page);
+    wakeNameEdit_->setPlaceholderText(u"Nexa"_s);
+    wakeNameEdit_->setMaxLength(24);
+    auto *wakeNameHint = new QLabel(tr("A distinctive name of two or three syllables is heard best."), page);
+    wakeNameHint->setWordWrap(true);
+    wakeNameError_ = new QLabel(page);
+    wakeNameError_->setObjectName(u"settingsError"_s);
+    wakeNameError_->setStyleSheet(u"color: #e5534b;"_s);
+    wakeNameError_->hide();
+    connect(wakeNameEdit_, &QLineEdit::textEdited, wakeNameError_, &QLabel::hide);
+    sensitivityCombo_ = new QComboBox(page);
+    sensitivityCombo_->addItem(tr("Low — wakes only when sure"), u"low"_s);
+    sensitivityCombo_->addItem(tr("Normal"), u"normal"_s);
+    sensitivityCombo_->addItem(tr("High — wakes more easily"), u"high"_s);
+    selectData(sensitivityCombo_, voice.wakeSensitivity);
+    endPauseCombo_ = new QComboBox(page);
+    endPauseCombo_->addItem(tr("Short — 0.9 s"), u"short"_s);
+    endPauseCombo_->addItem(tr("Normal — 1.4 s"), u"normal"_s);
+    endPauseCombo_->addItem(tr("Long — 2 s"), u"long"_s);
+    selectData(endPauseCombo_, voice.endPause);
+    followUpsCheck_ = new QCheckBox(tr("Keep listening for a follow-up after a spoken reply"), page);
+    followUpsCheck_->setChecked(voice.followUps);
+    noiseCheck_ = new QCheckBox(tr("Reduce background noise (uses about a fifth of one CPU core while listening)"), page);
+    noiseCheck_->setChecked(voice.noiseReduction);
+    spotterStatus_ = new QLabel(page);
+    spotterStatus_->setWordWrap(true);
+    spotterStatus_->setTextInteractionFlags(Qt::TextSelectableByMouse);
+    if (status_.sherpa && status_.sherpa->load()) {
+        spotterStatus_->setText(tr("Instant spotting: installed"));
+    } else {
+        spotterStatus_->setText(tr("Instant spotting: not installed — run scripts/download-sherpa.sh"));
+        if (status_.sherpa) spotterStatus_->setToolTip(status_.sherpa->problem());
+    }
+    micStatus_ = new QLabel(page);
+    micStatus_->setWordWrap(true);
+    micStatus_->setText(tr("Microphone: %1").arg(status_.microphoneSummary ? status_.microphoneSummary() : tr("fine")));
+    auto *lowerMicButton = new QPushButton(tr("Lower it"), page);
+    lowerMicButton->setToolTip(tr("Lower the microphone's input volume until its sound is no longer clipped"));
+    lowerMicButton->setEnabled(bool(status_.lowerMicrophone));
+    connect(lowerMicButton, &QPushButton::clicked, this, [this] {
+        if (status_.lowerMicrophone) status_.lowerMicrophone();
+        micStatus_->setText(tr("Microphone: lowering its input volume — the result appears in the status bar."));
+    });
     bargeInCheck_ = new QCheckBox(tr("Stop speaking when I start talking (use headphones, or Nexa hears itself)"), page);
     bargeInCheck_->setChecked(voice.bargeIn);
 
     auto *listening = new QFormLayout;
     listening->addRow(tr("Speech recognition:"), sttCombo_);
+    listening->addRow(tr("Cloud provider:"), sttProviderCombo_);
+    listening->addRow(tr("Model:"), sttModelCombo_);
+    listening->addRow(QString(), sttUsing_);
     listening->addRow(tr("Local model:"), whisperCombo_);
     listening->addRow(QString(), whisperStatus_);
     listening->addRow(tr("Language:"), languageEdit_);
     auto *speaking = new QFormLayout;
     speaking->addRow(tr("Speech output:"), ttsCombo_);
+    speaking->addRow(tr("Cloud provider:"), ttsProviderCombo_);
+    speaking->addRow(tr("Model:"), ttsModelCombo_);
+    speaking->addRow(tr("Voice:"), ttsVoiceCombo_);
+    speaking->addRow(QString(), ttsUsing_);
     speaking->addRow(tr("Piper voice:"), piperCombo_);
     speaking->addRow(tr("Speech Dispatcher voice:"), speechdCombo_);
     speaking->addRow(tr("Rate:"), rateSlider_);
     speaking->addRow(tr("Speak:"), speakCombo_);
     speaking->addRow(testVoiceButton, voiceTestResult_);
+    auto *micRow = new QHBoxLayout;
+    micRow->addWidget(micStatus_);
+    micRow->addSpacing(12);
+    micRow->addWidget(lowerMicButton);
+    micRow->addStretch(1);
+    auto *waking = new QFormLayout;
+    waking->addRow(QString(), wakeCheck_);
+    waking->addRow(tr("Wake name:"), wakeNameEdit_);
+    waking->addRow(QString(), wakeNameError_);
+    waking->addRow(QString(), wakeNameHint);
+    waking->addRow(tr("Sensitivity:"), sensitivityCombo_);
+    waking->addRow(tr("Pause before I'm done:"), endPauseCombo_);
+    waking->addRow(QString(), followUpsCheck_);
+    waking->addRow(QString(), noiseCheck_);
+    waking->addRow(QString(), spotterStatus_);
+    waking->addRow(micRow);
+    waking->addRow(QString(), bargeInCheck_);
 
     auto *note = new QLabel(tr("Talk: click the Talk button (the request ends when you pause), hold it to talk, or "
-                               "press Ctrl+M. Esc stops the speech. Cloud models are set per provider on the "
-                               "Providers tab."),
+                               "press Ctrl+M. Esc stops the speech. The cloud voice can be any provider with an "
+                               "OpenAI-style audio API and its key."),
                             page);
     note->setWordWrap(true);
 
     auto *layout = new QVBoxLayout(page);
+    layout->addLayout(waking);
+    layout->addSpacing(8);
     layout->addLayout(listening);
     layout->addSpacing(8);
     layout->addLayout(speaking);
-    layout->addSpacing(8);
-    layout->addWidget(wakeCheck_);
-    layout->addWidget(bargeInCheck_);
     layout->addStretch();
     layout->addWidget(note);
+
+    connect(sttProviderCombo_, &QComboBox::currentIndexChanged, this, [this] { showCloudProvider(true); });
+    connect(ttsProviderCombo_, &QComboBox::currentIndexChanged, this, [this] { showCloudProvider(false); });
+    connect(sttModelCombo_, &QComboBox::currentTextChanged, this, &SettingsDialog::updateUsingLines);
+    connect(ttsModelCombo_, &QComboBox::currentTextChanged, this, &SettingsDialog::updateUsingLines);
+    connect(tabs_, &QTabWidget::currentChanged, this, [this](int index) {
+        if (tabs_->widget(index) == voicePage_) refreshVoiceProviders();
+    });
+    refreshVoiceProviders();
     updateVoiceStatus();
-    return page;
+
+    // The tab is taller than the dialog: it scrolls.
+    auto *scroll = new QScrollArea(this);
+    scroll->setWidget(page);
+    scroll->setWidgetResizable(true);
+    scroll->setFrameShape(QFrame::NoFrame);
+    return scroll;
+}
+
+void SettingsDialog::refreshVoiceProviders() {
+    keepCloudModels();
+    const auto fill = [](QComboBox *combo, const QList<VoiceProviderChoice> &choices, const QString &selected) {
+        const QSignalBlocker blocker(combo);
+        combo->clear();
+        combo->addItem(tr("Automatic — the first provider that has it"), QString());
+        auto *items = qobject_cast<QStandardItemModel *>(combo->model());
+        for (const VoiceProviderChoice &choice : choices) {
+            combo->addItem(choice.usable ? choice.name : tr("%1 — %2").arg(choice.name, choice.reason), choice.id);
+            if (!choice.usable && items) items->item(combo->count() - 1)->setEnabled(false);
+        }
+        const int index = combo->findData(selected);
+        combo->setCurrentIndex(index >= 0 ? index : 0);
+    };
+    const QString stt = sttProviderCombo_->count() > 0 ? sttProviderCombo_->currentData().toString() : config_.voice.sttProvider;
+    const QString tts = ttsProviderCombo_->count() > 0 ? ttsProviderCombo_->currentData().toString() : config_.voice.ttsProvider;
+    fill(sttProviderCombo_, VoiceBackends::recognitionChoices(config_), stt);
+    fill(ttsProviderCombo_, VoiceBackends::speechChoices(config_), tts);
+    sttShownFor_.clear();
+    ttsShownFor_.clear();
+    showCloudProvider(true);
+    showCloudProvider(false);
+}
+
+void SettingsDialog::showCloudProvider(bool recognition) {
+    keepCloudModels();
+    QComboBox *providers = recognition ? sttProviderCombo_ : ttsProviderCombo_;
+    QComboBox *models = recognition ? sttModelCombo_ : ttsModelCombo_;
+    const QString id = providers->currentData().toString();
+    (recognition ? sttShownFor_ : ttsShownFor_) = id;
+    const ProviderConfig *provider = config_.provider(id);
+    // Automatic shows what it picks below instead.
+    models->setEnabled(provider != nullptr);
+    if (!recognition) ttsVoiceCombo_->setEnabled(provider != nullptr);
+    {
+        const QSignalBlocker blocker(models);
+        models->clear();
+        models->setEditText(provider ? (recognition ? provider->sttModel : provider->ttsModel) : QString());
+    }
+    if (!recognition) {
+        const QSignalBlocker blocker(ttsVoiceCombo_);
+        ttsVoiceCombo_->clear();
+        ttsVoiceCombo_->addItems(CloudVoices::voicesFor(ttsModelCombo_->currentText()));
+        ttsVoiceCombo_->setEditText(provider ? provider->ttsVoice : QString());
+    }
+    if (provider) listCloudModels(recognition);
+    updateUsingLines();
+}
+
+void SettingsDialog::keepCloudModels() {
+    if (ProviderConfig *provider = config_.provider(sttShownFor_)) provider->sttModel = sttModelCombo_->currentText().trimmed();
+    if (ProviderConfig *provider = config_.provider(ttsShownFor_)) {
+        provider->ttsModel = ttsModelCombo_->currentText().trimmed();
+        provider->ttsVoice = ttsVoiceCombo_->currentText().trimmed();
+    }
+}
+
+void SettingsDialog::listCloudModels(bool recognition) {
+    const QString id = (recognition ? sttProviderCombo_ : ttsProviderCombo_)->currentData().toString();
+    const ProviderConfig *provider = config_.provider(id);
+    if (!provider) return;
+    Result<std::unique_ptr<IAiProvider>> created = registry_->create(*provider);
+    if (!created) return;
+    std::unique_ptr<IAiProvider> &lister = recognition ? sttLister_ : ttsLister_;
+    lister = std::move(created).value();
+    // Dropped if the dialog or this lister goes away first.
+    lister->listModels([this, recognition, id](Result<QStringList> listed) {
+        if (!listed || (recognition ? sttShownFor_ : ttsShownFor_) != id) return;
+        QComboBox *models = recognition ? sttModelCombo_ : ttsModelCombo_;
+        const QString chosen = models->currentText();
+        const QSignalBlocker blocker(models);
+        models->clear();
+        for (const QString &model : listed.value()) {
+            if (recognition ? CloudVoices::isRecognitionModel(model) : CloudVoices::isSpeechModel(model)) models->addItem(model);
+        }
+        models->setEditText(chosen);
+    });
+}
+
+void SettingsDialog::updateUsingLines() {
+    // What Automatic picks with the dialog as it stands.
+    Config trial = config_;
+    trial.activeProvider = activeCombo_ ? activeCombo_->currentData().toString() : config_.activeProvider;
+    if (ProviderConfig *provider = trial.provider(sttShownFor_)) provider->sttModel = sttModelCombo_->currentText().trimmed();
+    if (ProviderConfig *provider = trial.provider(ttsShownFor_)) provider->ttsModel = ttsModelCombo_->currentText().trimmed();
+    trial.voice.sttProvider.clear();
+    trial.voice.ttsProvider.clear();
+    const QList<const ProviderConfig *> recognisers = VoiceBackends::recognitionProviders(trial);
+    sttUsing_->setText(recognisers.isEmpty()
+                           ? tr("No provider has a recognition model: local whisper.cpp is used.")
+                           : tr("Using %1 — %2").arg(recognisers.first()->name, recognisers.first()->sttModel));
+    sttUsing_->setVisible(sttProviderCombo_->currentData().toString().isEmpty());
+    const ProviderConfig *voice = VoiceBackends::speechProvider(trial);
+    ttsUsing_->setText(voice ? tr("Using %1 — %2").arg(voice->name, voice->ttsModel)
+                             : tr("No provider has a speech model: Piper speaks."));
+    ttsUsing_->setVisible(ttsProviderCombo_->currentData().toString().isEmpty());
 }
 
 void SettingsDialog::updateVoiceStatus() {
@@ -373,17 +581,25 @@ void SettingsDialog::updateVoiceStatus() {
 
 void SettingsDialog::storeVoice() {
     VoiceConfig &voice = config_.voice;
+    keepCloudModels();
     voice.sttBackend = sttCombo_->currentData().toString();
+    voice.sttProvider = sttProviderCombo_->currentData().toString();
     voice.whisperModel = whisperCombo_->currentText().trimmed().isEmpty() ? VoiceConfig{}.whisperModel
                                                                          : whisperCombo_->currentText().trimmed();
     voice.language = languageEdit_->text().trimmed().isEmpty() ? u"auto"_s : languageEdit_->text().trimmed();
     voice.ttsBackend = ttsCombo_->currentData().toString();
+    voice.ttsProvider = ttsProviderCombo_->currentData().toString();
     voice.piperVoice = piperCombo_->currentText();
     voice.speechdVoice = speechdCombo_->currentData().toString();
     voice.ttsRate = rateSlider_->value() / 100.0;
     voice.speakReplies = speakCombo_->currentData().toString();
     voice.wakeWord = wakeCheck_->isChecked();
     voice.bargeIn = bargeInCheck_->isChecked();
+    voice.wakeName = wakeNameEdit_->text().trimmed().isEmpty() ? VoiceConfig{}.wakeName : wakeNameEdit_->text().trimmed();
+    voice.wakeSensitivity = sensitivityCombo_->currentData().toString();
+    voice.endPause = endPauseCombo_->currentData().toString();
+    voice.followUps = followUpsCheck_->isChecked();
+    voice.noiseReduction = noiseCheck_->isChecked();
 }
 
 void SettingsDialog::testVoice() {
@@ -1147,9 +1363,6 @@ void SettingsDialog::showProvider(int row) {
     baseUrlEdit_->setText(provider.baseUrl);
     apiKeyEdit_->setText(provider.apiKey);
     modelEdit_->setText(provider.defaultModel);
-    sttModelEdit_->setText(provider.sttModel);
-    ttsModelEdit_->setText(provider.ttsModel);
-    ttsVoiceEdit_->setText(provider.ttsVoice);
     textToolsCheck_->setChecked(provider.textTools);
     fallbackCheck_->setChecked(provider.fallback);
     showKeyCheck_->setChecked(false);
@@ -1164,9 +1377,6 @@ void SettingsDialog::storeProvider() {
     provider.baseUrl = baseUrlEdit_->text().trimmed();
     provider.apiKey = apiKeyEdit_->text().trimmed();
     provider.defaultModel = modelEdit_->text().trimmed();
-    provider.sttModel = sttModelEdit_->text().trimmed();
-    provider.ttsModel = ttsModelEdit_->text().trimmed();
-    provider.ttsVoice = ttsVoiceEdit_->text().trimmed();
     provider.textTools = textToolsCheck_->isChecked();
     provider.fallback = fallbackCheck_->isChecked();
 }
@@ -1187,11 +1397,8 @@ void SettingsDialog::showRowsFor(const QString &kind) {
         label->setText(http ? tr("API key:") : tr("Server password:"));
     }
     apiKeyEdit_->setPlaceholderText(http ? tr("not set") : tr("only for a server you run yourself"));
-    // The programs speak no audio and take Nexa's tools as text whatever the box says.
-    for (QWidget *row : {static_cast<QWidget *>(sttModelEdit_), static_cast<QWidget *>(ttsModelEdit_),
-                         static_cast<QWidget *>(ttsVoiceEdit_), static_cast<QWidget *>(textToolsCheck_)}) {
-        form->setRowVisible(row, http);
-    }
+    // The programs take Nexa's tools as text whatever the box says.
+    form->setRowVisible(textToolsCheck_, http);
 }
 
 void SettingsDialog::moveProvider(int by) {
