@@ -38,6 +38,7 @@ public:
         bool wakeWord{false};
         bool bargeIn{false};
         QString wakeName{QStringLiteral("Nexa")};
+        int endPauseMs{1400};       // this much quiet ends a request (Settings → Voice → Pause before I'm done)
     };
 
     explicit VoicePipeline(IAudioInput *input, QObject *parent = nullptr);
@@ -97,6 +98,7 @@ private:
     void onSpeechFinished();
     void setState(VoiceState state);
     void updateMicrophone();
+    void applyPauses();             // the front's pause and longest utterance for what is being listened for
 
     IAudioInput *input_;
     std::unique_ptr<ISpeechRecognizer> recognizer_;

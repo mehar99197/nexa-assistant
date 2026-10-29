@@ -23,6 +23,8 @@ constexpr int kMaxListenMs = 60'000;
 constexpr int kCommandTimeoutMs = 6'000;        // after a bare "Hey Nexa"
 constexpr int kTapMs = 350;                     // pressed shorter than this: a tap, not a hold
 constexpr qsizetype kMinUtteranceBytes = 16'000 * 2 * 3 / 10;     // 300 ms
+constexpr int kWakePauseMs = 700;               // between sentences checked for the name
+constexpr int kWakeUtteranceMs = 8'000;         // longer room speech is checked in pieces
 
 EnergyVad::Settings vadSettings() {
     EnergyVad::Settings settings;
@@ -102,7 +104,7 @@ void VoicePipeline::setListeningFront(std::unique_ptr<ListeningFront> front) {
     front_ = std::move(front);      // the old front goes, with whatever it had not reported yet
     connect(front_.get(), &ListeningFront::speechStarted, this, &VoicePipeline::onSpeechStarted);
     connect(front_.get(), &ListeningFront::speechEnded, this, &VoicePipeline::onSpeechEnded);
-    front_->setEndPauseMs(vadSettings().hangoverMs);
+    applyPauses();
     ring_.reset();                  // the ring and the front count positions from the same sample
 }
 
@@ -121,6 +123,7 @@ void VoicePipeline::setTextToSpeech(std::unique_ptr<ITextToSpeech> speech) {
 void VoicePipeline::setSettings(Settings settings) {
     settings_ = settings;
     wake_ = WakeWordDetector(settings_.wakeName);
+    applyPauses();
     awaitingCommand_ = false;
     if (wakeWordActive()) wakeRecognizer_->warmUp();
     updateMicrophone();
@@ -421,8 +424,17 @@ void VoicePipeline::onSpeechFinished() {
 void VoicePipeline::setState(VoiceState state) {
     if (state_ == state) return;
     state_ = state;
+    applyPauses();
     updateMicrophone();
     emit stateChanged(state_);
+}
+
+void VoicePipeline::applyPauses() {
+    // A request ends at the owner's pause (push-to-talk is capped by its own timer); room speech is cut into
+    // sentences for the name.
+    const bool request = state_ == VoiceState::Listening;
+    front_->setEndPauseMs(request ? settings_.endPauseMs : kWakePauseMs);
+    front_->setMaxUtteranceMs(request ? kMaxListenMs : kWakeUtteranceMs);
 }
 
 void VoicePipeline::updateMicrophone() {

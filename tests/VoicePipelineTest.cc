@@ -150,8 +150,8 @@ TEST_CASE("Releasing the key: a hold ends the request, a tap keeps listening") {
     tapped.pipeline.startListening(true);
     tapped.pipeline.releaseHold();                      // let go at once: a tap
     CHECK(tapped.pipeline.state() == VoiceState::Listening);
-    tapped.microphone.play(testaudio::quiet(400) + testaudio::speech(600) + testaudio::quiet(1200));
-    CHECK(tapped.pipeline.state() == VoiceState::Transcribing);      // the pause ended it
+    tapped.microphone.play(testaudio::quiet(400) + testaudio::speech(600) + testaudio::quiet(1600));
+    CHECK(tapped.pipeline.state() == VoiceState::Transcribing);      // the pause (1.4 s) ended it
     CHECK(tapped.recognizer->requests == 1);
 
     Rig held;
@@ -168,7 +168,7 @@ TEST_CASE("Toggle mode ends the request at the pause; silence ends it unheard") 
     Rig rig;
     QSignalSpy notices(&rig.pipeline, &VoicePipeline::notice);
     rig.pipeline.toggleListening();
-    rig.microphone.play(testaudio::quiet(500) + testaudio::speech(800) + testaudio::quiet(1200));
+    rig.microphone.play(testaudio::quiet(500) + testaudio::speech(800) + testaudio::quiet(1600));
     CHECK(rig.pipeline.state() == VoiceState::Transcribing);
     CHECK(rig.recognizer->requests == 1);
     rig.recognizer->answer(u"[BLANK_AUDIO]"_s);
@@ -183,6 +183,25 @@ TEST_CASE("Toggle mode ends the request at the pause; silence ends it unheard") 
     CHECK(rig.recognizer->requests == 1);
     CHECK(rig.pipeline.state() == VoiceState::Idle);
     CHECK(notices.size() == 2);
+}
+
+TEST_CASE("A pause shorter than the setting does not end the request") {
+    const QByteArray said = testaudio::quiet(300) + testaudio::speech(600) + testaudio::quiet(1200)
+                          + testaudio::speech(600) + testaudio::quiet(1600);
+    Rig normal;
+    normal.pipeline.setSettings({.endPauseMs = 1400});
+    normal.pipeline.startListening(false);      // a tap: hands-free until the pause
+    normal.microphone.play(said);
+    CHECK(normal.pipeline.state() == VoiceState::Transcribing);
+    CHECK(normal.recognizer->requests == 1);
+    CHECK(normal.recognizer->audio.size() / 32 >= 2400);    // both stretches of speech
+
+    Rig quick;
+    quick.pipeline.setSettings({.endPauseMs = 900});
+    quick.pipeline.startListening(false);
+    quick.microphone.play(said);
+    CHECK(quick.recognizer->requests == 1);
+    CHECK(quick.recognizer->audio.size() / 32 < 1400);      // only the first
 }
 
 TEST_CASE("A direct action is confirmed aloud; typed requests stay silent unless asked") {
@@ -282,7 +301,7 @@ TEST_CASE("Wake word: only utterances that start with it become requests") {
     rig.microphone.play(testaudio::speech(500) + testaudio::quiet(1200));
     local->answer(u"Hey Nexa."_s);
     CHECK(rig.pipeline.state() == VoiceState::Listening);
-    rig.microphone.play(testaudio::speech(900) + testaudio::quiet(1200));
+    rig.microphone.play(testaudio::speech(900) + testaudio::quiet(1600));     // a request: the 1.4 s pause
     local->answer(u"Open the calculator."_s);
     CHECK(rig.requests.last() == u"Open the calculator."_s);
 
