@@ -128,6 +128,19 @@
   notice for minutes; the first 80 characters are held to catch it) and a model agy does not have (NotFound, so the
   chain moves on). Measured through opencode with a picture: `antigravity-gemini-3-flash` saw it in 1.2 s,
   `antigravity-gemini-3-pro` is retired, `antigravity-gemini-3.8-flash` did not answer in 140 s.
+- M15 (the owner's DeepSeek V4.1 Flash and Gemini 3.1 Pro, 2026-10-29): **opencode's free models** are served only to
+  requests that carry opencode's own `read` tool ("Free usage exceeded, subscribe to Go" otherwise; bash, glob or
+  todowrite alone do not do; `opencode run` worked all along because its agent has the tools). So free models get
+  `read` — denied by Nexa's opencode server, which refuses the call and reads nothing (canary checked) — plus a line
+  in the system prompt saying that tool is off and Nexa's tools are real, because DeepSeek otherwise took its native
+  list for the whole truth; a tool it still calls natively that opencode does not have is handed to Nexa as a
+  `<tool_call>` (`ToolExecutor`, audit) and opencode is stopped, the next prompt waiting for that stop to settle.
+  Nexa's opencode server also disconnects the user's MCP servers (18 here: mail, drive, a shell, databases…), whose
+  resource tools opencode offered whatever the prompt's tools said — names from `/config`, since `/mcp` waits for
+  every server to connect (7 s to over 25 s). Verified live: `opencode/deepseek-v4.1-flash-free` answered, ran Nexa's
+  tools and described the phone's screen. **Gemini 3.1 Pro** is refused to the owner's Google account on every route —
+  agy lists only its six models (it knows `gemini-3.1-pro[-low|-high]` but offers it with a Gemini API key sign-in),
+  opencode's Antigravity and Gemini CLI routes answer 403 "no valid license" — so it needs a Gemini API key.
 - M15: a test copy on private `XDG_*` folders sees none of the user's opencode providers unless `~/.config/opencode` and
   `~/.local/share/opencode` are linked into them (9 models instead of 497), and a scripted `--ask` waits forever while
   the wake word is on (it waits for an idle voice).
