@@ -118,6 +118,25 @@ TEST_CASE("Upgrading a version 2 config adds the pipelines to an empty list, onc
     CHECK(config.providers.isEmpty());
 }
 
+TEST_CASE("Upgrading a version 3 config lifts the old cap of 20 tool rounds and keeps a number the user chose") {
+    Config config;
+    config.version = 3;
+    config.agent.maxToolRounds = 20;
+    ProviderRegistry::upgrade(config, installedOnly({}));
+    CHECK(config.agent.maxToolRounds == 200);
+
+    Config chosen;
+    chosen.version = 3;
+    chosen.agent.maxToolRounds = 35;
+    ProviderRegistry::upgrade(chosen, installedOnly({}));
+    CHECK(chosen.agent.maxToolRounds == 35);
+
+    Config current;
+    current.agent.maxToolRounds = 20;
+    ProviderRegistry::upgrade(current, installedOnly({}));
+    CHECK(current.agent.maxToolRounds == 20);
+}
+
 TEST_CASE("Upgrading keeps an existing omniroute entry as it is") {
     Config config;
     config.version = 2;

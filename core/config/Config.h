@@ -82,10 +82,11 @@ struct RemoteConfig {
     bool operator==(const RemoteConfig &) const = default;
 };
 
-// The agent loop. Driving a phone by screenshot and tap takes a dozen rounds for one request, so
-// the cap is generous; it only stops a model that is going in circles.
+// The agent loop. Driving a phone by screenshot and tap takes a dozen rounds for one request, and a
+// longer task many dozens, so the cap is generous; it only stops a model that is going in circles.
 struct AgentConfig {
-    int maxToolRounds{20};
+    static constexpr int kMaxToolRounds = 1000;
+    int maxToolRounds{200};
 
     QJsonObject toJson() const;
     static AgentConfig fromJson(const QJsonObject &json);
@@ -175,7 +176,8 @@ struct SkillsConfig {
 struct Config {
     // 2: providers carry speech models (sttModel, ttsModel, ttsVoice).
     // 3: providers carry fallback and modelsUrl; an empty list gets the installed agy and opencode once.
-    static constexpr int kVersion = 3;
+    // 4: the agent's old default of 20 tool rounds becomes the new default.
+    static constexpr int kVersion = 4;
 
     int version{kVersion};
     QList<ProviderConfig> providers;

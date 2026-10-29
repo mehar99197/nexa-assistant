@@ -149,7 +149,7 @@ QJsonObject AgentConfig::toJson() const {
 
 AgentConfig AgentConfig::fromJson(const QJsonObject &json) {
     AgentConfig config;
-    config.maxToolRounds = std::clamp(json.value(u"maxToolRounds"_s).toInt(config.maxToolRounds), 1, 200);
+    config.maxToolRounds = std::clamp(json.value(u"maxToolRounds"_s).toInt(config.maxToolRounds), 1, kMaxToolRounds);
     return config;
 }
 

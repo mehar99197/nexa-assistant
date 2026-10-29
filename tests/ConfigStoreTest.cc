@@ -148,6 +148,14 @@ TEST_CASE("A phone remembered before Nexa understood the section is still rememb
     CHECK_FALSE(config.extra.contains(u"android"_s));
 }
 
+TEST_CASE("The agent allows 200 tool rounds by default and up to 1000") {
+    CHECK(AgentConfig{}.maxToolRounds == 200);
+    CHECK(AgentConfig::fromJson(QJsonObject{}).maxToolRounds == 200);
+    CHECK(AgentConfig::fromJson(QJsonObject{{u"maxToolRounds"_s, 500}}).maxToolRounds == 500);
+    CHECK(AgentConfig::fromJson(QJsonObject{{u"maxToolRounds"_s, 5000}}).maxToolRounds == 1000);
+    CHECK(AgentConfig::fromJson(QJsonObject{{u"maxToolRounds"_s, 0}}).maxToolRounds == 1);
+}
+
 TEST_CASE("ConfigStore keeps the file and its directory private") {
     QTemporaryDir dir;
     REQUIRE(dir.isValid());

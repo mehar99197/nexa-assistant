@@ -177,6 +177,10 @@ void ProviderRegistry::upgrade(Config &config, const std::function<bool(const QS
         config.providers = defaultProviders(installed);
         if (!config.providers.isEmpty()) config.activeProvider = config.providers.first().id;
     }
+    // 20 was the default until version 4 and stopped long tasks halfway; a number the user chose stays.
+    if (config.version < 4 && config.agent.maxToolRounds == 20) {
+        config.agent.maxToolRounds = AgentConfig{}.maxToolRounds;
+    }
     config.version = Config::kVersion;
 }
 
