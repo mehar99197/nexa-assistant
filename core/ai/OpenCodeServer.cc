@@ -5,6 +5,8 @@
 
 #include <QDir>
 #include <QFile>
+#include <QJsonDocument>
+#include <QJsonObject>
 #include <QNetworkReply>
 #include <QPointer>
 #include <QProcessEnvironment>
@@ -22,6 +24,8 @@ namespace {
 
 constexpr int kHealthPollMs = 250;
 constexpr int kHealthTimeoutMs = 2'000;
+// opencode answers GET /mcp once the user's MCP servers have connected: 7 s measured on a fresh start.
+constexpr int kMcpListTimeoutMs = 25'000;
 constexpr int kEventsIdleMs = 60'000;      // opencode sends a heartbeat every 10 s
 constexpr int kReopenEventsMs = 1'000;
 constexpr qsizetype kStderrKept = 4'096;
@@ -29,8 +33,11 @@ constexpr qsizetype kStderrKept = 4'096;
 constexpr auto kProcessFlags = QProcess::UnixProcessFlag::CreateNewSession
     | QProcess::UnixProcessFlag::ResetSignalHandlers | QProcess::UnixProcessFlag::CloseFileDescriptors;
 
-// opencode's own permissions, denied as a second lock: every prompt switches its tools off anyway.
-const QString kConfig = uR"({"permission":{"edit":"deny","bash":"deny","webfetch":"deny"}})"_s;
+// opencode's own permissions, denied as a second lock: every prompt switches its tools off — all but
+// `read` for opencode's free models, whose service refuses a request without it; denied here, it is
+// offered and never used (a call to it is refused, measured).
+const QString kConfig =
+    uR"({"permission":{"edit":"deny","bash":"deny","webfetch":"deny","read":"deny","external_directory":"deny"}})"_s;
 
 QString freshPassword() {
     QByteArray bytes(32, Qt::Uninitialized);
@@ -188,11 +195,12 @@ void OpenCodeServer::openEvents() {
     // The stream is open once its headers arrive: from then on no event of a new turn is missed.
     connect(events, &QNetworkReply::metaDataChanged, this, [this, events] {
         if (events != events_ || state_ != State::Starting) return;
-        if (HttpClient::httpStatus(events) == 200) {
-            state_ = State::Ready;
-            deadline_.stop();
-            qCInfo(lcAi) << "opencode's server is ready";
-            finishStart(Result<void>{});
+        if (HttpClient::httpStatus(events) != 200) return;
+        // A server the user runs is theirs to configure; Nexa's own leaves their MCP servers out.
+        if (attachUrl_.isValid()) {
+            becomeReady();
+        } else {
+            leaveMcpOut([this] { becomeReady(); });
         }
     });
     connect(events, &QNetworkReply::readyRead, this, &OpenCodeServer::readEvents);
@@ -213,6 +221,54 @@ void OpenCodeServer::openEvents() {
                                u"opencode's server at %1 went away"_s.arg(base_.toDisplayString())});
         }
     });
+}
+
+void OpenCodeServer::becomeReady() {
+    if (state_ != State::Starting) return;
+    state_ = State::Ready;
+    deadline_.stop();
+    qCInfo(lcAi) << "opencode's server is ready";
+    finishStart(Result<void>{});
+}
+
+// The user's opencode connects their MCP servers (mail, drive, …), and opencode offers their resources to
+// the model whatever a prompt's tools say. Disconnecting them here holds for this process only: the
+// user's own opencode and its config keep them (measured: the config file is not touched). The names come
+// from the configuration, which answers at once (GET /mcp waits until every server has connected: 7 s to
+// over 25 s measured); a later look at /mcp disconnects any that connected after all.
+void OpenCodeServer::leaveMcpOut(std::function<void()> done) {
+    http_->get(request(u"/config"_s), kHealthTimeoutMs * 5, this, [this, done](Result<QByteArray> body) {
+        if (!body) qCWarning(lcAi) << "could not read opencode's configuration:" << body.error().message;
+        const QJsonObject servers =
+            body ? QJsonDocument::fromJson(body.value()).object().value(u"mcp"_s).toObject() : QJsonObject();
+        disconnectMcp(servers.keys(), done);
+        QTimer::singleShot(0, this, [this] {
+            http_->get(request(u"/mcp"_s), kMcpListTimeoutMs * 4, this, [this](Result<QByteArray> listed) {
+                if (!listed) return;
+                QStringList connected;
+                const QJsonObject servers = QJsonDocument::fromJson(listed.value()).object();
+                for (auto it = servers.begin(); it != servers.end(); ++it) {
+                    if (it.value().toObject().value(u"status"_s).toString() == u"connected") connected.append(it.key());
+                }
+                if (!connected.isEmpty()) disconnectMcp(connected, [] {});
+            });
+        });
+    });
+}
+
+void OpenCodeServer::disconnectMcp(const QStringList &names, std::function<void()> done) {
+    if (names.isEmpty()) {
+        done();
+        return;
+    }
+    qCInfo(lcAi) << "leaving out of Nexa's opencode:" << names.size() << "MCP servers of the user's";
+    auto left = std::make_shared<qsizetype>(names.size());
+    for (const QString &name : names) {
+        http_->post(request(u"/mcp/%1/disconnect"_s.arg(QString::fromUtf8(QUrl::toPercentEncoding(name)))), "{}",
+                    kHealthTimeoutMs * 5, this, [left, done](Result<QByteArray>) {
+            if (--*left == 0) done();
+        });
+    }
 }
 
 void OpenCodeServer::readEvents() {

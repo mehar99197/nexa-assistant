@@ -6,11 +6,18 @@ request needs basic auth as "opencode" with $OPENCODE_SERVER_PASSWORD. Routes: G
 /config, /config/providers, /event (SSE); POST /session, /session/<id>/prompt_async,
 /session/<id>/abort; DELETE /session/<id>. Each prompt plays the next entry of the JSON list in
 $FAKE_OPENCODE_SCRIPT on the event stream:
-  {"text": "..."}                    busy, the text in two deltas, idle
+  {"text": "...", "delay": s}        busy, (after s seconds, 0 if absent) the text in two deltas, idle
   {"reasoning": "...", "text": "..."}  the same, after a reasoning part streamed the way opencode does
   {"retry": "...", "reason": "..."}  busy, then a retry status (and nothing more)
   {"autherror": "..."}               busy, a ProviderAuthError, idle
   {"apierror": "...", "status": N}   busy, an APIError with that HTTP status (as opencode passes a provider's on), idle
+  {"native": [{"name": .., "arguments": {..}}, ..], "then": "..."}
+                                     the model calls tools natively that opencode does not have (as DeepSeek does when
+                                     opencode's read tool is offered): each a tool part pending, running, error; then a
+                                     step-finish and, unless the session was aborted, a second step answering "then"
+It also has one MCP server ("fakemcp"), connected until POST /mcp/fakemcp/disconnect; GET /mcp answers
+after $FAKE_OPENCODE_MCP_DELAY seconds (opencode waits for the servers to connect: 7 s measured). An
+abort is reported the way opencode does, a MessageAbortedError 0.5 s later.
   {"hang": true}                     busy, and nothing more
 Requests other than health and events go to $FAKE_OPENCODE_LOG as {"method", "path", "body"}; the
 start goes there as {"pid", "argv", "cwd", "config"}.
@@ -29,6 +36,8 @@ PASSWORD = os.environ.get("OPENCODE_SERVER_PASSWORD", "")
 LOCK = threading.Lock()
 LISTENERS = []
 SESSIONS = [0]
+ABORTED = set()
+MCP = {"fakemcp": {"status": "connected"}}
 
 
 def parent_death_signal():
@@ -81,6 +90,23 @@ def play(session, entry):
         return
     if "hang" in entry:
         return
+    if "native" in entry:
+        for i, called in enumerate(entry["native"]):
+            part = {"id": "prt_t%d" % i, "messageID": "msg_1", "sessionID": session, "type": "tool",
+                    "tool": called["name"], "callID": "call_%d" % i}
+            for status in ("pending", "running", "error"):
+                state = {"status": status, "input": called.get("arguments", {})}
+                if status == "error":
+                    state["error"] = "Model tried to call unavailable tool 'invalid'. Available tools: read"
+                broadcast("message.part.updated", sessionID=session, part=dict(part, state=state))
+        broadcast("message.part.updated", sessionID=session,
+                  part={"id": "prt_sf", "messageID": "msg_1", "sessionID": session, "type": "step-finish"})
+        time.sleep(0.3)
+        if session in ABORTED:
+            broadcast("session.status", sessionID=session, status={"type": "idle"})
+            broadcast("session.idle", sessionID=session)
+            return
+        entry = {"text": entry.get("then", "I don't have that tool.")}
     if "autherror" in entry:
         broadcast("session.error", sessionID=session,
                   error={"name": "ProviderAuthError", "data": {"providerID": "fake", "message": entry["autherror"]}})
@@ -98,6 +124,7 @@ def play(session, entry):
                       field="text", delta=entry["reasoning"])
         broadcast("message.part.updated", sessionID=session,
                   part={"id": "prt_1", "messageID": "msg_1", "sessionID": session, "type": "text", "text": ""})
+        time.sleep(entry.get("delay", 0))
         text = entry["text"]
         half = len(text) // 2
         for piece in (text[:half], text[half:]):
@@ -145,8 +172,11 @@ class Handler(BaseHTTPRequestHandler):
         if self.path == "/event":
             return self.events()
         log({"method": "GET", "path": self.path, "body": None})
+        if self.path == "/mcp":
+            time.sleep(float(os.environ.get("FAKE_OPENCODE_MCP_DELAY", "0")))
+            return self.reply(200, MCP)
         if self.path == "/config":
-            return self.reply(200, {"model": "fake/smart"})
+            return self.reply(200, {"model": "fake/smart", "mcp": {"fakemcp": {"type": "local", "enabled": True}}})
         if self.path == "/config/providers":
             # Capabilities as opencode reports them: fast takes images, smart does not, one does not say.
             seeing = {"capabilities": {"toolcall": True, "input": {"text": True, "image": True}}}
@@ -192,7 +222,16 @@ class Handler(BaseHTTPRequestHandler):
             self.reply(204)
             threading.Thread(target=play, args=(prompt.group(1), next_entry()), daemon=True).start()
             return
-        if re.fullmatch(r"/session/([^/]+)/abort", self.path):
+        aborted = re.fullmatch(r"/session/([^/]+)/abort", self.path)
+        if aborted:
+            ABORTED.add(aborted.group(1))
+            threading.Timer(0.5, broadcast, args=("session.error",),
+                            kwargs={"sessionID": aborted.group(1),
+                                    "error": {"name": "MessageAbortedError", "data": {"message": "Aborted"}}}).start()
+            return self.reply(200, True)
+        disconnect = re.fullmatch(r"/mcp/([^/]+)/disconnect", self.path)
+        if disconnect:
+            MCP[disconnect.group(1)] = {"status": "disabled"}
             return self.reply(200, True)
         self.reply(404, {"error": "no such route"})
 

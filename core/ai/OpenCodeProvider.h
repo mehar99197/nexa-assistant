@@ -50,6 +50,9 @@ private:
     void finishTurn(std::optional<Error> error);
     void abortSession();
     void showText(const QString &text);
+    void noteToolPart(const OpenCodeEvent &event);
+    void handOverNativeCalls();
+    void sendDeferredPrompt();
     bool failIfRetired();               // the held text is a "no longer available" notice: fail the turn
     QString modelName() const;
 
@@ -66,6 +69,14 @@ private:
     // plugin repeats as the reply for minutes).
     QString held_;
     bool holding_{true};
+    // Tools the model called natively that opencode does not have — Nexa's, which DeepSeek reaches for
+    // when opencode's read tool is offered: by part, name and arguments, handed over at the step's end.
+    QList<std::pair<QString, std::pair<QString, QString>>> nativeCalls_;
+    // After Nexa stopped a step to run the tools it called, opencode still reports that step's end (idle,
+    // an abort error) — late, and it would end the next step. The next prompt waits for it (5 s at most).
+    bool settling_{false};
+    std::optional<std::pair<QString, QJsonObject>> deferredPrompt_;
+    QTimer settleTimer_;
     QHash<QString, bool> images_;           // "provider/model" → takes images, from the last model list
     QTimer retryLimit_;
     QTimer turnTimer_;

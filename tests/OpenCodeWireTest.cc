@@ -8,6 +8,7 @@
 #include "QtStringMakers.h"
 
 #include <QJsonArray>
+#include <QJsonDocument>
 #include <QJsonObject>
 #include <QNetworkReply>
 #include <QTest>
@@ -45,6 +46,29 @@ TEST_CASE("promptBody carries Nexa's system prompt with opencode's tools off") {
     CHECK(file.value(u"type"_s).toString() == u"file"_s);
     CHECK(file.value(u"mime"_s).toString() == u"image/png"_s);
     CHECK(file.value(u"url"_s).toString() == u"data:image/png;base64,"_s + QString::fromLatin1(QByteArray("PNGDATA").toBase64()));
+}
+
+TEST_CASE("opencode's free models get its read tool, which the server denies, and the rest get none") {
+    // Measured 2026-10-29: opencode's free tier refuses a request without opencode's own read tool
+    // ("Free usage exceeded, subscribe to Go") and answers one that has it; bash, glob or todowrite
+    // alone do not do. The server Nexa starts denies read (OpenCodeServer), so it never reads a file.
+    CHECK(OpenCodeWire::promptBody(u"opencode/deepseek-v4.1-flash-free"_s, {}, u"x"_s, {}).value(u"tools"_s).toObject()
+          == QJsonObject{{u"*"_s, false}, {u"read"_s, true}});
+    CHECK(OpenCodeWire::promptBody(u"google/antigravity-gemini-3-flash"_s, {}, u"x"_s, {}).value(u"tools"_s).toObject()
+          == QJsonObject{{u"*"_s, false}});
+    CHECK(OpenCodeWire::promptBody({}, {}, u"x"_s, {}).value(u"tools"_s).toObject() == QJsonObject{{u"*"_s, false}});
+}
+
+TEST_CASE("A free model is told that its one native tool is off and Nexa's tools are real") {
+    // DeepSeek through opencode's free tier, offered opencode's read tool, concluded it had no other tool
+    // ("the volume tool isn't available") and ignored the <tool_call> convention (2026-10-29).
+    const QString system = OpenCodeWire::promptBody(u"opencode/deepseek-v4.1-flash-free"_s, u"S"_s, u"x"_s, {})
+                               .value(u"system"_s).toString();
+    CHECK(system.startsWith(u"S"_s));
+    CHECK(system.contains(u"only `read`"_s));
+    CHECK(system.contains(u"<tool_call>"_s));
+    CHECK(OpenCodeWire::promptBody(u"google/antigravity-gemini-3-flash"_s, u"S"_s, u"x"_s, {}).value(u"system"_s).toString()
+          == u"S"_s);
 }
 
 TEST_CASE("decodeEvent reads deltas, status, idle and errors") {
@@ -101,6 +125,20 @@ TEST_CASE("decodeEvent tells which part a delta belongs to, and what kind each p
         R"({"type":"message.part.delta","properties":{"sessionID":"ses_1","messageID":"msg_1","partID":"prt_r","field":"text","delta":"The user wants"}})");
     CHECK(delta.kind == OpenCodeEvent::Kind::TextDelta);
     CHECK(delta.partId == u"prt_r"_s);
+}
+
+TEST_CASE("decodeEvent reads a tool the model called, with its arguments") {
+    // DeepSeek V4.1 Flash through opencode 1.19.3, 2026-10-29, calling a Nexa tool natively.
+    const OpenCodeEvent event = OpenCodeWire::decodeEvent(
+        R"({"type":"message.part.updated","properties":{"sessionID":"ses_1","part":{"id":"prt_t0","messageID":"msg_1","sessionID":"ses_1","type":"tool","tool":"set_volume","callID":"c0","state":{"status":"error","input":{"percent":50},"error":"Model tried to call unavailable tool 'invalid'."}}}})");
+    CHECK(event.kind == OpenCodeEvent::Kind::PartType);
+    CHECK(event.partType == u"tool"_s);
+    CHECK(event.toolName == u"set_volume"_s);
+    CHECK(event.toolStatus == u"error"_s);
+    CHECK(QJsonDocument::fromJson(event.toolInput.toUtf8()).object() == QJsonObject{{u"percent"_s, 50}});
+    CHECK(OpenCodeWire::isOwnTool(u"read"_s));
+    CHECK(OpenCodeWire::isOwnTool(u"list_mcp_resources"_s));
+    CHECK_FALSE(OpenCodeWire::isOwnTool(u"set_volume"_s));
 }
 
 TEST_CASE("parseModels lists every provider's models with the default first") {

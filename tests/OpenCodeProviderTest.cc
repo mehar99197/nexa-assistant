@@ -133,6 +133,8 @@ TEST_CASE("Nexa starts its own opencode server with a password and lists its mod
         QJsonDocument::fromJson(start.value(u"config"_s).toString().toUtf8()).object().value(u"permission"_s).toObject();
     CHECK(permission.value(u"bash"_s).toString() == u"deny"_s);
     CHECK(permission.value(u"edit"_s).toString() == u"deny"_s);
+    CHECK(permission.value(u"read"_s).toString() == u"deny"_s);       // present for the free tier, never used
+    CHECK(permission.value(u"external_directory"_s).toString() == u"deny"_s);
 }
 
 TEST_CASE("A request streams the reply with Nexa's system prompt and opencode's tools off") {
@@ -393,4 +395,60 @@ TEST_CASE("A provider out of credits or without the plan counts as unable to ans
     CHECK(plan.error->code == ErrorCode::Unauthorized);
     CHECK(plan.error->message.contains(u"fake/fast"_s));
     CHECK(plan.error->message.contains(u"not subscribed"_s));
+}
+
+TEST_CASE("A tool the model calls natively becomes a Nexa tool call, and opencode stops there") {
+    OpenCodeRig rig({QJsonObject{{u"native"_s, QJsonArray{QJsonObject{{u"name"_s, u"get_volume"_s},
+                                                                      {u"arguments"_s, QJsonObject{}}},
+                                                          QJsonObject{{u"name"_s, u"set_volume"_s},
+                                                                      {u"arguments"_s, QJsonObject{{u"percent"_s, 50}}}}}},
+                                 {u"then"_s, u"I don't have that tool."_s}}});
+    OpenCodeProvider provider(config(), &rig.http, rig.server());
+    const Outcome outcome = run(provider, ask({u(u"set the volume to 50 and tell me what it was"_s)}));
+    REQUIRE_FALSE(outcome.error);
+    CHECK(outcome.finish == FinishReason::Stop);
+    CHECK(outcome.text.contains(u"<tool_call>{\"arguments\":{},\"name\":\"get_volume\"}</tool_call>"_s));
+    CHECK(outcome.text.contains(u"<tool_call>{\"arguments\":{\"percent\":50},\"name\":\"set_volume\"}</tool_call>"_s));
+    CHECK_FALSE(outcome.text.contains(u"don't have"_s));        // opencode's own next step never reached the chat
+    CHECK(QTest::qWaitFor([&] { return !rig.requests(u"POST"_s, u"/abort"_s).isEmpty(); }, kWaitMs));
+}
+
+TEST_CASE("Nexa's opencode server leaves the user's MCP servers out") {
+    // The user's opencode connects their MCP servers (mail, drive, …), whose resource tools a prompt's
+    // tools map does not switch off; Nexa's own server disconnects them before its first turn.
+    OpenCodeRig rig({QJsonObject{{u"text"_s, u"ok"_s}}});
+    OpenCodeProvider provider(config(), &rig.http, rig.server());
+    REQUIRE_FALSE(run(provider, ask({u(u"hello"_s)})).error);
+    const QList<QJsonObject> log = rig.log();
+    qsizetype disconnected = -1, prompted = -1;
+    for (qsizetype i = 0; i < log.size(); ++i) {
+        const QString path = log.at(i).value(u"path"_s).toString();
+        if (path == u"/mcp/fakemcp/disconnect"_s && disconnected < 0) disconnected = i;
+        if (path.endsWith(u"/prompt_async"_s) && prompted < 0) prompted = i;
+    }
+    REQUIRE(disconnected >= 0);
+    CHECK(disconnected < prompted);
+}
+
+TEST_CASE("The stop after a handed-over call is not taken for a failure of the next step") {
+    // opencode reports the abort Nexa asked for as a MessageAbortedError, late: during the next step.
+    OpenCodeRig rig({QJsonObject{{u"native"_s, QJsonArray{QJsonObject{{u"name"_s, u"get_volume"_s},
+                                                                      {u"arguments"_s, QJsonObject{}}}}}},
+                     QJsonObject{{u"text"_s, u"The volume is 100%."_s}, {u"delay"_s, 1.0}}});
+    OpenCodeProvider provider(config(), &rig.http, rig.server());
+    const Outcome call = run(provider, ask({u(u"what is my volume?"_s)}));
+    REQUIRE_FALSE(call.error);
+    const Outcome answer = run(provider, ask({u(u"what is my volume?"_s), a(call.text),
+                                              u(u"<tool_result name=\"get_volume\">\nVolume 100%\n</tool_result>"_s)}));
+    REQUIRE_FALSE(answer.error);
+    CHECK(answer.text == u"The volume is 100%."_s);
+}
+
+TEST_CASE("The MCP servers are left out even when opencode takes its time to list them") {
+    qputenv("FAKE_OPENCODE_MCP_DELAY", "3");
+    OpenCodeRig rig({QJsonObject{{u"text"_s, u"ok"_s}}});
+    OpenCodeProvider provider(config(), &rig.http, rig.server());
+    REQUIRE_FALSE(run(provider, ask({u(u"hello"_s)})).error);
+    qunsetenv("FAKE_OPENCODE_MCP_DELAY");
+    CHECK_FALSE(rig.requests(u"POST"_s, u"/mcp/fakemcp/disconnect"_s).isEmpty());
 }

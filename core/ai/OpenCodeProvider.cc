@@ -57,6 +57,9 @@ OpenCodeProvider::OpenCodeProvider(ProviderConfig config, HttpClient *http, std:
         abortSession();
         finishTurn(Error{ErrorCode::Http, u"HTTP 429: opencode: still retrying after %1 s"_s.arg(kRetryGiveUpMs / 1000)});
     });
+    settleTimer_.setSingleShot(true);
+    settleTimer_.setInterval(5'000);
+    connect(&settleTimer_, &QTimer::timeout, this, &OpenCodeProvider::sendDeferredPrompt);
     turnTimer_.setSingleShot(true);
     connect(&turnTimer_, &QTimer::timeout, this, [this] {
         abortSession();
@@ -125,6 +128,7 @@ std::shared_ptr<ChatStream> OpenCodeProvider::chat(const ChatRequest &request) {
     partTypes_.clear();
     held_.clear();
     holding_ = true;
+    nativeCalls_.clear();
     stream_ = stream;
     stream->onAbort = [self = QPointer<OpenCodeProvider>(this)] {
         if (!self) return;
@@ -205,6 +209,11 @@ void OpenCodeProvider::sendTurn() {
 }
 
 void OpenCodeProvider::prompt(const QString &session, const QJsonObject &body) {
+    if (settling_ && session == sessionId_) {
+        deferredPrompt_ = std::make_pair(session, body);
+        if (!settleTimer_.isActive()) settleTimer_.start();
+        return;
+    }
     sessionId_ = session;
     sawBusy_ = false;
     partTypes_.clear();
@@ -216,7 +225,15 @@ void OpenCodeProvider::prompt(const QString &session, const QJsonObject &body) {
 }
 
 void OpenCodeProvider::onEvent(const OpenCodeEvent &event) {
-    if (!stream_ || event.sessionId != sessionId_) return;
+    if (event.sessionId != sessionId_) return;
+    if (settling_) {
+        // The stopped step's own end: once it has come, the session takes the next prompt.
+        if (event.kind == OpenCodeEvent::Kind::Idle || (event.kind == OpenCodeEvent::Kind::Error && event.aborted)) {
+            sendDeferredPrompt();
+        }
+        return;
+    }
+    if (!stream_) return;
     if (turnTimer_.isActive()) turnTimer_.start(turnTimeoutMs_);   // a sign of life, reasoning included
     switch (event.kind) {
     case OpenCodeEvent::Kind::Busy:
@@ -232,9 +249,17 @@ void OpenCodeProvider::onEvent(const OpenCodeEvent &event) {
     }
     case OpenCodeEvent::Kind::PartType:
         partTypes_.insert(event.partId, event.partType);
+        if (event.partType == u"tool") noteToolPart(event);
+        // The step that called Nexa's tools is over: hand them over before opencode tells the model they
+        // do not exist and asks it again.
+        if (event.partType == u"step-finish" && !nativeCalls_.isEmpty()) handOverNativeCalls();
         break;
     case OpenCodeEvent::Kind::Idle:
         if (!sawBusy_) break;       // the end of an earlier turn
+        if (!nativeCalls_.isEmpty()) {
+            handOverNativeCalls();
+            break;
+        }
         if (failIfRetired()) break;
         if (!held_.isEmpty()) stream_->text(std::exchange(held_, {}));
         ledger_.commit(pending_);
@@ -250,6 +275,7 @@ void OpenCodeProvider::onEvent(const OpenCodeEvent &event) {
         }
         break;
     case OpenCodeEvent::Kind::Error:
+        if (event.aborted) break;       // the report of an abort Nexa asked for, not a failure
         if (event.authError) {
             finishTurn(Error{ErrorCode::Unauthorized, u"opencode is not signed in for this model — run "
                                                       "`opencode auth login` in a terminal"_s});
@@ -266,6 +292,44 @@ void OpenCodeProvider::onEvent(const OpenCodeEvent &event) {
         break;
     case OpenCodeEvent::Kind::Other:
         break;
+    }
+}
+
+void OpenCodeProvider::noteToolPart(const OpenCodeEvent &event) {
+    if (OpenCodeWire::isOwnTool(event.toolName) || event.toolName.isEmpty()) return;
+    for (auto &call : nativeCalls_) {
+        if (call.first == event.partId) {
+            call.second.second = event.toolInput;       // the arguments are complete once it runs
+            return;
+        }
+    }
+    nativeCalls_.append({event.partId, {event.toolName, event.toolInput}});
+}
+
+void OpenCodeProvider::handOverNativeCalls() {
+    // Written the way the convention has the model write them, so the Agent reads them back out and runs
+    // them through the ToolExecutor like any other call; the session stops here.
+    QStringList written;
+    if (!held_.isEmpty()) written.append(std::exchange(held_, {}));
+    for (const auto &call : std::exchange(nativeCalls_, {})) {
+        const QJsonObject wire{{u"name"_s, call.second.first},
+                               {u"arguments"_s, QJsonDocument::fromJson(call.second.second.toUtf8()).object()}};
+        written.append(u"<tool_call>%1</tool_call>"_s.arg(QString::fromUtf8(QJsonDocument(wire).toJson(QJsonDocument::Compact))));
+    }
+    holding_ = false;
+    stream_->text(written.join(u'\n'));
+    abortSession();
+    settling_ = true;
+    settleTimer_.start();
+    ledger_.commit(pending_);
+    finishTurn(std::nullopt);
+}
+
+void OpenCodeProvider::sendDeferredPrompt() {
+    settleTimer_.stop();
+    settling_ = false;
+    if (auto deferred = std::exchange(deferredPrompt_, std::nullopt); deferred && stream_) {
+        prompt(deferred->first, deferred->second);
     }
 }
 

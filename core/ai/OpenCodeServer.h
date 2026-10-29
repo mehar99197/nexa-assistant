@@ -53,6 +53,9 @@ private:
     void checkHealth();
     void openEvents();
     void readEvents();
+    void leaveMcpOut(std::function<void()> done);
+    void disconnectMcp(const QStringList &names, std::function<void()> done);
+    void becomeReady();
     void finishStart(const Result<void> &result);
     void stopProcess();
 
@@ -70,7 +73,7 @@ private:
     QNetworkReply *events_{nullptr};
     SseParser parser_;
     State state_{State::Idle};
-    int startTimeoutMs_{30'000};
+    int startTimeoutMs_{45'000};      // start, health, the event stream and leaving MCP out (~13 s measured)
     QList<std::function<void(Result<void>)>> waiting_;
 };
 

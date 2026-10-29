@@ -20,12 +20,25 @@ QJsonObject OpenCodeWire::promptBody(const QString &model, const QString &system
             {u"url"_s, u"data:%1;base64,%2"_s.arg(image.mimeType, QString::fromLatin1(image.data.toBase64()))},
         });
     }
-    // Every tool of opencode's own off: Nexa's tools travel in the prompt, and only Nexa acts.
-    QJsonObject body{{u"tools"_s, QJsonObject{{u"*"_s, false}}}, {u"parts"_s, parts}};
+    // Every tool of opencode's own off: Nexa's tools travel in the prompt, and only Nexa acts. opencode's
+    // free models are served only to requests that carry its read tool ("Free usage exceeded"
+    // otherwise, measured 2026-10-29), so they get that one — which the server denies (OpenCodeServer).
+    QJsonObject tools{{u"*"_s, false}};
+    QString instructions = system;
+    if (model.startsWith(u"opencode/"_s)) {
+        tools.insert(u"read"_s, true);
+        // Offered one native tool, a model takes that list for the whole truth and says Nexa's tools are
+        // missing (DeepSeek, measured): tell it otherwise. A native call by name is handed to Nexa too.
+        instructions += u"\n\nAbout your tools: the native tool list you were given holds only `read`, and it is "
+                        "switched off here — do not use it. The tools described above are Nexa's, and they are real "
+                        "and available: call one by writing a <tool_call> line exactly as described (calling it by "
+                        "name as a native tool also works)."_s;
+    }
+    QJsonObject body{{u"tools"_s, tools}, {u"parts"_s, parts}};
     if (const qsizetype slash = model.indexOf(u'/'); slash > 0) {
         body.insert(u"model"_s, QJsonObject{{u"providerID"_s, model.left(slash)}, {u"modelID"_s, model.mid(slash + 1)}});
     }
-    if (!system.isEmpty()) body.insert(u"system"_s, system);
+    if (!instructions.isEmpty()) body.insert(u"system"_s, instructions);
     return body;
 }
 
@@ -47,6 +60,12 @@ OpenCodeEvent OpenCodeWire::decodeEvent(const QByteArray &data) {
         event.kind = OpenCodeEvent::Kind::PartType;
         event.partId = part.value(u"id"_s).toString();
         event.partType = part.value(u"type"_s).toString();
+        if (event.partType == u"tool") {
+            const QJsonObject state = part.value(u"state"_s).toObject();
+            event.toolName = part.value(u"tool"_s).toString();
+            event.toolStatus = state.value(u"status"_s).toString();
+            event.toolInput = QString::fromUtf8(QJsonDocument(state.value(u"input"_s).toObject()).toJson(QJsonDocument::Compact));
+        }
         if (event.sessionId.isEmpty()) event.sessionId = part.value(u"sessionID"_s).toString();
     } else if (type == u"session.status") {
         const QJsonObject status = properties.value(u"status"_s).toObject();
@@ -64,6 +83,7 @@ OpenCodeEvent OpenCodeWire::decodeEvent(const QByteArray &data) {
         const QJsonObject error = properties.value(u"error"_s).toObject();
         event.kind = OpenCodeEvent::Kind::Error;
         event.authError = error.value(u"name"_s).toString() == u"ProviderAuthError";
+        event.aborted = error.value(u"name"_s).toString() == u"MessageAbortedError";
         event.status = error.value(u"data"_s).toObject().value(u"statusCode"_s).toInt();
         event.message = error.value(u"data"_s).toObject().value(u"message"_s).toString();
         if (event.message.isEmpty()) event.message = error.value(u"name"_s).toString();
@@ -113,6 +133,14 @@ QUrl OpenCodeWire::parseListening(const QByteArray &output) {
 
 QString OpenCodeWire::parseSessionId(const QByteArray &body) {
     return QJsonDocument::fromJson(body).object().value(u"id"_s).toString();
+}
+
+bool OpenCodeWire::isOwnTool(const QString &name) {
+    static const QStringList own{u"bash"_s, u"read"_s, u"glob"_s, u"grep"_s, u"list"_s, u"edit"_s, u"write"_s,
+                                 u"apply_patch"_s, u"task"_s, u"webfetch"_s, u"websearch"_s, u"google_search"_s,
+                                 u"todowrite"_s, u"todoread"_s, u"skill"_s, u"question"_s, u"invalid"_s,
+                                 u"list_mcp_resources"_s, u"read_mcp_resource"_s, u"list_mcp_resource_templates"_s};
+    return own.contains(name);
 }
 
 QNetworkRequest OpenCodeWire::request(const QUrl &base, const QString &path, const QString &password) {

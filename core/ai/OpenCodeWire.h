@@ -23,14 +23,19 @@ struct OpenCodeEvent {
     QString message;        // Retry, Error
     QString reason;         // Retry: why, e.g. "free_tier_limit"
     bool authError{false};  // Error: the provider behind the model wants a sign-in
+    bool aborted{false};    // Error: only the report of an abort (MessageAbortedError)
     int status{0};          // Error: the HTTP status the provider answered with, when opencode passes it on
+    QString toolName;       // PartType "tool": the tool the model called
+    QString toolStatus;     // PartType "tool": pending, running, error, completed
+    QString toolInput;      // PartType "tool": its arguments, a JSON object as compact text
 };
 
 // opencode's server API (`opencode serve`), as Nexa uses it (pure): the prompt body — Nexa's system
 // prompt, opencode's own tools off — the events, the model list, and the authenticated request.
 class OpenCodeWire {
 public:
-    // `model` is "provider/model" (split at the first '/'); empty leaves opencode's default.
+    // `model` is "provider/model" (split at the first '/'); empty leaves opencode's default. opencode's
+    // own tools are all off — but `read`, for opencode's free models (see the .cc), which the server denies.
     static QJsonObject promptBody(const QString &model, const QString &system, const QString &text,
                                   const QList<ImageAttachment> &images);
     static OpenCodeEvent decodeEvent(const QByteArray &data);
@@ -46,6 +51,8 @@ public:
     static QString parseSessionId(const QByteArray &body);
     // JSON, and basic authentication as the user "opencode".
     static QNetworkRequest request(const QUrl &base, const QString &path, const QString &password);
+    // opencode's own tools (and the MCP resource tools it adds); a call to any other name is meant for Nexa.
+    static bool isOwnTool(const QString &name);
 };
 
 } // namespace nexa
