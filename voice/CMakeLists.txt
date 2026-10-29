@@ -22,6 +22,7 @@ add_library(nexa_voice STATIC
     tts/SpeechdTtsBackend.h tts/SpeechdTtsBackend.cc
     tts/SynthesizedSpeech.h tts/SynthesizedSpeech.cc
     tts/TtsFileRenderer.h tts/TtsFileRenderer.cc
+    wake/WordPieces.h wake/WordPieces.cc
 )
 
 target_link_libraries(nexa_voice
