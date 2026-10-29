@@ -11,6 +11,8 @@ add_library(nexa_voice STATIC
     listen/IAudioFilter.h
     listen/IVoiceDetector.h
     listen/ListeningFront.h listen/ListeningFront.cc
+    listen/NoiseReducer.h listen/NoiseReducer.cc
+    listen/SileroVoiceDetector.h listen/SileroVoiceDetector.cc
     pipeline/VoicePipeline.h pipeline/VoicePipeline.cc
     pipeline/WakeWordDetector.h pipeline/WakeWordDetector.cc
     stt/CloudRecognizer.h stt/CloudRecognizer.cc
@@ -28,6 +30,9 @@ add_library(nexa_voice STATIC
     tts/SynthesizedSpeech.h tts/SynthesizedSpeech.cc
     tts/TtsFileRenderer.h tts/TtsFileRenderer.cc
     wake/IWakeSpotter.h
+    wake/KeywordSpotter.h wake/KeywordSpotter.cc
+    wake/SherpaRuntime.h wake/SherpaRuntime.cc
+    wake/sherpa/c-api.h
     wake/WakePhrases.h wake/WakePhrases.cc
     wake/WordPieces.h wake/WordPieces.cc
 )
