@@ -267,22 +267,41 @@ TEST_CASE("SentenceChunker skips code blocks and splits long lines") {
     for (const QString &part : parts) CHECK(part.size() <= 330);
 }
 
-TEST_CASE("WakeWordDetector finds the wake phrase and the command after it") {
-    auto command = [](const QString &text) -> std::optional<QString> {
-        const auto match = WakeWordDetector::match(text);
-        return match ? std::optional(match->command) : std::nullopt;
-    };
-    CHECK(command(u"Hey Nexa, open Firefox."_s) == u"open Firefox."_s);
-    CHECK(command(u"hey nexa"_s) == u""_s);
-    CHECK(command(u"OK Nexa. Play some music."_s) == u"Play some music."_s);
-    CHECK(command(u"Hey Nexus, what time is it?"_s) == u"what time is it?"_s);
-    CHECK(command(u"Nexa, stop."_s) == u"stop."_s);
-    CHECK(command(u"Nexa open files"_s) == u"open files"_s);
-    CHECK(command(u"  Hey,  Nexa!"_s) == u""_s);
-    CHECK_FALSE(command(u"Next song please"_s));
-    CHECK_FALSE(command(u"The Nexus phone is great"_s));
-    CHECK_FALSE(command(u"Hey, can you hear me?"_s));
-    CHECK_FALSE(command(u"I told Nexa nothing"_s));
+TEST_CASE("WakeWordDetector finds any name anywhere") {
+    const WakeWordDetector nexa(u"Nexa"_s);
+    const auto mid = nexa.find(u"I was just saying that, hey Nexa, pause the music."_s);
+    REQUIRE(mid);
+    CHECK(mid->command == u"pause the music."_s);
+    CHECK(mid->firstWord == 5);
+    CHECK(mid->greeted);
+    CHECK(nexa.find(u"Hey Nexa, open Firefox."_s)->command == u"open Firefox."_s);
+    CHECK(nexa.find(u"Hey Nexus, what time is it?"_s)->command == u"what time is it?"_s);
+    CHECK(nexa.find(u"heynecks, pause it"_s)->command == u"pause it"_s);
+    CHECK(nexa.find(u"OK Neksa. Play some music."_s)->command == u"Play some music."_s);
+    CHECK(nexa.find(u"That's it. Nexa, stop."_s)->command == u"stop."_s);
+    CHECK(nexa.find(u"Nexa open files"_s)->command == u"open files"_s);
+    CHECK(nexa.find(u"  Hey,  Nexa!"_s)->command.isEmpty());
+    CHECK_FALSE(nexa.find(u"Nexa open files"_s)->greeted);
+    for (const QString &text : {u"Next song please"_s, u"The Nexus phone is really good"_s, u"I need an extra hour"_s,
+                                u"I told Nexa nothing"_s, u"Hey Nick, can you pass the salt?"_s,
+                                u"Hey, can you hear me?"_s}) {
+        INFO(text.toStdString());
+        CHECK_FALSE(nexa.find(text));
+    }
+
+    const WakeWordDetector jarvis(u"Jarvis"_s);
+    CHECK(jarvis.find(u"Hey Jervis, open YouTube"_s)->command == u"open YouTube"_s);
+    CHECK_FALSE(jarvis.find(u"I love Jarvis movies"_s));
+    CHECK(jarvis.commandOf(u"Hey Jarvis."_s).isEmpty());
+    CHECK(jarvis.commandOf(u"Hey Jarvis, open YouTube"_s) == u"open YouTube"_s);
+    CHECK(jarvis.commandOf(u"open YouTube"_s) == u"open YouTube"_s);
+    CHECK(WakeWordDetector(u"Mister Robot"_s).find(u"hey mister robot, lights off"_s)->command == u"lights off"_s);
+
+    CHECK(WakeWordDetector::soundKey(u"Nexa"_s) == u"nks"_s);
+    CHECK(WakeWordDetector::soundKey(u"Necksa"_s) == u"nks"_s);
+    CHECK(WakeWordDetector::soundKey(u"Jarvis"_s) == u"jrvs"_s);
+    CHECK(nexa.recognizerPrompt() == u"Hey Nexa."_s);
+    CHECK(jarvis.name() == u"Jarvis"_s);
 }
 
 TEST_CASE("cleanTranscript drops non-speech annotations") {

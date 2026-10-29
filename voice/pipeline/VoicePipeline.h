@@ -2,6 +2,7 @@
 
 #include "core/ai/ChatStream.h"
 #include "voice/capture/EnergyVad.h"
+#include "voice/pipeline/WakeWordDetector.h"
 #include "voice/tts/SentenceChunker.h"
 
 #include <QElapsedTimer>
@@ -23,7 +24,7 @@ enum class VoiceState { Idle, Listening, Transcribing, Thinking, Speaking };
 // until the speaker pauses. The transcript leaves through request(); the reply comes back through
 // the reply slots and is spoken sentence by sentence as it streams in. Pressing the key again cuts
 // the speech (and, with barge-in, so does talking). With the wake word on, the microphone stays
-// open and only utterances starting with "Hey Nexa" become requests — transcribed by the local
+// open and only utterances with the wake name ("Hey Nexa") become requests — transcribed by the local
 // recogniser only, so room audio never leaves the machine.
 class VoicePipeline : public QObject {
     Q_OBJECT
@@ -34,6 +35,7 @@ public:
         SpeakMode speak{SpeakMode::VoiceRequests};
         bool wakeWord{false};
         bool bargeIn{false};
+        QString wakeName{QStringLiteral("Nexa")};
     };
 
     explicit VoicePipeline(IAudioInput *input, QObject *parent = nullptr);
@@ -105,6 +107,7 @@ private:
     QTimer listenTimer_;                // limits of a listening session
     quint64 generation_{0};             // transcriptions of a cancelled utterance are dropped
 
+    WakeWordDetector wake_;
     bool wakeBusy_{false};
     bool awaitingCommand_{false};       // the wake phrase was said alone: the next utterance is the command
     QTimer commandTimer_;

@@ -102,6 +102,7 @@ void VoicePipeline::setTextToSpeech(std::unique_ptr<ITextToSpeech> speech) {
 
 void VoicePipeline::setSettings(Settings settings) {
     settings_ = settings;
+    wake_ = WakeWordDetector(settings_.wakeName);
     awaitingCommand_ = false;
     if (wakeWordActive()) wakeRecognizer_->warmUp();
     updateMicrophone();
@@ -273,7 +274,7 @@ void VoicePipeline::finishListening() {
 void VoicePipeline::transcribe(const QByteArray &pcm) {
     setState(VoiceState::Transcribing);
     const quint64 generation = ++generation_;
-    recognizer_->transcribe(pcm, WakeWordDetector::recognizerPrompt(), [this, generation](Result<QString> text) {
+    recognizer_->transcribe(pcm, wake_.recognizerPrompt(), [this, generation](Result<QString> text) {
         if (generation != generation_) return;
         if (!text) {
             setState(VoiceState::Idle);
@@ -284,7 +285,7 @@ void VoicePipeline::transcribe(const QByteArray &pcm) {
         }
         QString heard = cleanTranscript(text.value());
         // "Hey Nexa, open Firefox" said while holding the key: the name is not part of the request.
-        if (const auto wake = WakeWordDetector::match(heard); wake && !wake->command.isEmpty()) heard = wake->command;
+        if (const QString command = wake_.commandOf(heard); !command.isEmpty()) heard = command;
         if (heard.isEmpty()) {
             setState(VoiceState::Idle);
             emit notice(tr("I didn't catch that."), false);
@@ -298,7 +299,7 @@ void VoicePipeline::checkWakeWord(const QByteArray &utterance) {
     if (!wakeRecognizer_ || wakeBusy_ || utterance.size() < kMinUtteranceBytes) return;
     wakeBusy_ = true;
     const quint64 generation = generation_;
-    wakeRecognizer_->transcribe(utterance, WakeWordDetector::recognizerPrompt(), [this, generation](Result<QString> text) {
+    wakeRecognizer_->transcribe(utterance, wake_.recognizerPrompt(), [this, generation](Result<QString> text) {
         if (generation != generation_) return;
         wakeBusy_ = false;
         if (!text) return;
@@ -315,7 +316,7 @@ void VoicePipeline::checkWakeWord(const QByteArray &utterance) {
             return;
         }
         // Utterances without the wake phrase are dropped unlogged: they were not meant for Nexa.
-        const std::optional<WakeWordDetector::Match> wake = WakeWordDetector::match(heard);
+        const std::optional<WakeWordDetector::Match> wake = wake_.find(heard);
         if (!wake) return;
         if (speech_) speech_->stop();
         if (wake->command.isEmpty()) {
