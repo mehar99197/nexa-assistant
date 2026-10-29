@@ -10,6 +10,7 @@ $FAKE_OPENCODE_SCRIPT on the event stream:
   {"reasoning": "...", "text": "..."}  the same, after a reasoning part streamed the way opencode does
   {"retry": "...", "reason": "..."}  busy, then a retry status (and nothing more)
   {"autherror": "..."}               busy, a ProviderAuthError, idle
+  {"apierror": "...", "status": N}   busy, an APIError with that HTTP status (as opencode passes a provider's on), idle
   {"hang": true}                     busy, and nothing more
 Requests other than health and events go to $FAKE_OPENCODE_LOG as {"method", "path", "body"}; the
 start goes there as {"pid", "argv", "cwd", "config"}.
@@ -83,6 +84,10 @@ def play(session, entry):
     if "autherror" in entry:
         broadcast("session.error", sessionID=session,
                   error={"name": "ProviderAuthError", "data": {"providerID": "fake", "message": entry["autherror"]}})
+    elif "apierror" in entry:
+        broadcast("session.error", sessionID=session,
+                  error={"name": "APIError", "data": {"message": entry["apierror"], "statusCode": entry["status"],
+                                                       "isRetryable": False}})
     else:
         # Like opencode, each part is announced (with its type) before its deltas, and every delta's
         # field is "text" — a reasoning part's included.

@@ -64,6 +64,7 @@ OpenCodeEvent OpenCodeWire::decodeEvent(const QByteArray &data) {
         const QJsonObject error = properties.value(u"error"_s).toObject();
         event.kind = OpenCodeEvent::Kind::Error;
         event.authError = error.value(u"name"_s).toString() == u"ProviderAuthError";
+        event.status = error.value(u"data"_s).toObject().value(u"statusCode"_s).toInt();
         event.message = error.value(u"data"_s).toObject().value(u"message"_s).toString();
         if (event.message.isEmpty()) event.message = error.value(u"name"_s).toString();
     }

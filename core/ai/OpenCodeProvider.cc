@@ -250,10 +250,19 @@ void OpenCodeProvider::onEvent(const OpenCodeEvent &event) {
         }
         break;
     case OpenCodeEvent::Kind::Error:
-        finishTurn(event.authError
-                       ? Error{ErrorCode::Unauthorized, u"opencode is not signed in for this model — run "
-                                                        "`opencode auth login` in a terminal"_s}
-                       : Error{ErrorCode::Http, u"opencode: "_s + event.message});
+        if (event.authError) {
+            finishTurn(Error{ErrorCode::Unauthorized, u"opencode is not signed in for this model — run "
+                                                      "`opencode auth login` in a terminal"_s});
+        } else if (event.status == 401 || event.status == 403) {
+            // No licence, no plan, no access: this provider cannot answer with this model.
+            finishTurn(Error{ErrorCode::Unauthorized, u"opencode: %1 refused (HTTP %2): %3 — choose another model in the "
+                                                      "toolbar"_s.arg(modelName()).arg(event.status).arg(event.message)});
+        } else if (event.status > 0) {
+            finishTurn(Error{ErrorCode::Http, u"HTTP %1: opencode: %2: %3 — choose another model in the toolbar"_s.arg(
+                                                  event.status).arg(modelName(), event.message)});
+        } else {
+            finishTurn(Error{ErrorCode::Http, u"opencode: "_s + event.message});
+        }
         break;
     case OpenCodeEvent::Kind::Other:
         break;

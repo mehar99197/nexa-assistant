@@ -23,6 +23,7 @@ struct OpenCodeEvent {
     QString message;        // Retry, Error
     QString reason;         // Retry: why, e.g. "free_tier_limit"
     bool authError{false};  // Error: the provider behind the model wants a sign-in
+    int status{0};          // Error: the HTTP status the provider answered with, when opencode passes it on
 };
 
 // opencode's server API (`opencode serve`), as Nexa uses it (pure): the prompt body — Nexa's system

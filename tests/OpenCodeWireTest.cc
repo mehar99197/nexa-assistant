@@ -115,6 +115,15 @@ TEST_CASE("parseModels lists every provider's models with the default first") {
     CHECK(OpenCodeWire::parseDefaultModel(R"({"lsp":true})").isEmpty());
 }
 
+TEST_CASE("decodeEvent keeps the HTTP status a provider answered with") {
+    // Charm Hyper through opencode 1.19.3, 2026-10-29.
+    const OpenCodeEvent event = OpenCodeWire::decodeEvent(
+        R"({"type":"session.error","properties":{"sessionID":"ses_1","error":{"name":"APIError","data":{"message":"You're out of credits. Add more at https://hyper.charm.land","statusCode":402,"isRetryable":false}}}})");
+    CHECK(event.kind == OpenCodeEvent::Kind::Error);
+    CHECK(event.status == 402);
+    CHECK(event.message == u"You're out of credits. Add more at https://hyper.charm.land"_s);
+}
+
 TEST_CASE("parseImageSupport says which models take images, as opencode reports them") {
     // The shape of opencode 1.19.3's /config/providers, capabilities as measured on 2026-10-28.
     const QByteArray providers = R"({"providers":[

@@ -174,7 +174,7 @@ bool ProviderChain::meansUnavailable(const Error &error) {
         const QRegularExpressionMatch match = status.match(error.message);
         if (!match.hasMatch()) return false;
         const int code = match.captured(1).toInt();
-        return code == 429 || code >= 500;
+        return code == 402 || code == 429 || code >= 500;     // out of credits, rate limited, down
     }
     default:
         return false;

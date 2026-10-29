@@ -4,6 +4,7 @@
 #include "core/ai/ChatStream.h"
 #include "core/ai/OpenCodeProvider.h"
 #include "core/ai/OpenCodeServer.h"
+#include "core/ai/ProviderChain.h"
 #include "core/net/HttpClient.h"
 
 #include "QtStringMakers.h"
@@ -373,4 +374,23 @@ TEST_CASE("A short reply is still delivered whole, held back or not") {
     OpenCodeRig rig({QJsonObject{{u"text"_s, u"Yes."_s}}});
     OpenCodeProvider provider(config(), &rig.http, rig.server());
     CHECK(run(provider, ask({u(u"ok?"_s)})).text == u"Yes."_s);
+}
+
+TEST_CASE("A provider out of credits or without the plan counts as unable to answer, with the model named") {
+    OpenCodeRig rig({QJsonObject{{u"apierror"_s, u"You're out of credits. Add more at https://hyper.charm.land"_s},
+                                 {u"status"_s, 402}},
+                     QJsonObject{{u"apierror"_s, u"Error 403: the user is not subscribed to required model plan"_s},
+                                 {u"status"_s, 403}}});
+    OpenCodeProvider provider(config(), &rig.http, rig.server());
+    const Outcome credits = run(provider, ask({u(u"hello"_s)}));
+    REQUIRE(credits.error);
+    CHECK(credits.error->message.startsWith(u"HTTP 402: opencode: fake/fast"_s));
+    CHECK(credits.error->message.contains(u"out of credits"_s));
+    CHECK(ProviderChain::meansUnavailable(*credits.error));
+
+    const Outcome plan = run(provider, ask({u(u"hello again"_s)}));
+    REQUIRE(plan.error);
+    CHECK(plan.error->code == ErrorCode::Unauthorized);
+    CHECK(plan.error->message.contains(u"fake/fast"_s));
+    CHECK(plan.error->message.contains(u"not subscribed"_s));
 }
