@@ -100,6 +100,39 @@ TEST_CASE("ConfigStore round-trips providers, prompt and unknown sections") {
     }
 }
 
+TEST_CASE("Voice settings for the wake name, listening and the cloud voice round-trip") {
+    const VoiceConfig defaults;
+    CHECK(defaults.wakeName == u"Nexa"_s);
+    CHECK(defaults.wakeSensitivity == u"normal"_s);
+    CHECK(defaults.endPause == u"normal"_s);
+    CHECK(defaults.followUps);
+    CHECK(defaults.noiseReduction);
+    CHECK(defaults.sttProvider.isEmpty());
+    CHECK(defaults.ttsProvider.isEmpty());
+
+    QTemporaryDir dir;
+    REQUIRE(dir.isValid());
+    const ConfigStore store(dir.filePath(u"nexa/config.json"_s));
+    Config config = sampleConfig();
+    config.voice.wakeName = u"Jarvis"_s;
+    config.voice.wakeSensitivity = u"high"_s;
+    config.voice.endPause = u"long"_s;
+    config.voice.followUps = false;
+    config.voice.noiseReduction = false;
+    config.voice.sttProvider = u"groq"_s;
+    config.voice.ttsProvider = u"groq"_s;
+    REQUIRE(store.save(config).isOk());
+    const Result<Config> loaded = store.load();
+    REQUIRE(loaded.isOk());
+    CHECK(loaded.value().voice == config.voice);
+
+    const VoiceConfig odd = VoiceConfig::fromJson(QJsonObject{
+        {u"wakeSensitivity"_s, u"loud"_s}, {u"endPause"_s, u"forever"_s}, {u"wakeName"_s, u""_s}});
+    CHECK(odd.wakeSensitivity == u"normal"_s);
+    CHECK(odd.endPause == u"normal"_s);
+    CHECK(odd.wakeName == u"Nexa"_s);
+}
+
 TEST_CASE("ConfigStore round-trips fallback and modelsUrl") {
     QTemporaryDir dir;
     REQUIRE(dir.isValid());

@@ -101,6 +101,13 @@ QJsonObject VoiceConfig::toJson() const {
         {u"speakReplies"_s, speakReplies},
         {u"wakeWord"_s, wakeWord},
         {u"bargeIn"_s, bargeIn},
+        {u"wakeName"_s, wakeName},
+        {u"wakeSensitivity"_s, wakeSensitivity},
+        {u"endPause"_s, endPause},
+        {u"followUps"_s, followUps},
+        {u"noiseReduction"_s, noiseReduction},
+        {u"sttProvider"_s, sttProvider},
+        {u"ttsProvider"_s, ttsProvider},
     };
 }
 
@@ -117,6 +124,17 @@ VoiceConfig VoiceConfig::fromJson(const QJsonObject &json) {
     config.speakReplies = json.value(u"speakReplies"_s).toString(defaults.speakReplies);
     config.wakeWord = json.value(u"wakeWord"_s).toBool(false);
     config.bargeIn = json.value(u"bargeIn"_s).toBool(false);
+    const QString name = json.value(u"wakeName"_s).toString().trimmed();
+    config.wakeName = name.isEmpty() ? defaults.wakeName : name;
+    const QString sensitivity = json.value(u"wakeSensitivity"_s).toString();
+    config.wakeSensitivity = QStringList{u"low"_s, u"normal"_s, u"high"_s}.contains(sensitivity) ? sensitivity
+                                                                                               : defaults.wakeSensitivity;
+    const QString pause = json.value(u"endPause"_s).toString();
+    config.endPause = QStringList{u"short"_s, u"normal"_s, u"long"_s}.contains(pause) ? pause : defaults.endPause;
+    config.followUps = json.value(u"followUps"_s).toBool(defaults.followUps);
+    config.noiseReduction = json.value(u"noiseReduction"_s).toBool(defaults.noiseReduction);
+    config.sttProvider = json.value(u"sttProvider"_s).toString();
+    config.ttsProvider = json.value(u"ttsProvider"_s).toString();
     return config;
 }
 

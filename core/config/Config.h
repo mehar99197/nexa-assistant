@@ -50,8 +50,15 @@ struct VoiceConfig {
     QString speechdVoice;                               // speech-dispatcher voice (empty: its default)
     double ttsRate{0.0};                                // -1 (slow) … 1 (fast)
     QString speakReplies{QStringLiteral("voice")};      // voice (replies to spoken requests) | always | never
-    bool wakeWord{false};                               // listen for "Hey Nexa" (local recognition only)
+    bool wakeWord{false};                               // listen for the wake name (local recognition only)
     bool bargeIn{false};                                // talking interrupts the speech (best with headphones)
+    QString wakeName{QStringLiteral("Nexa")};           // what the owner calls Nexa ("Hey Jarvis")
+    QString wakeSensitivity{QStringLiteral("normal")};  // low | normal | high: how easily the name wakes Nexa
+    QString endPause{QStringLiteral("normal")};         // short (0.9 s) | normal (1.4 s) | long (2 s) of quiet ends a request
+    bool followUps{true};                               // listen a few seconds after a spoken reply, no name needed
+    bool noiseReduction{true};                          // clean the sound for the speech detector and the spotter
+    QString sttProvider;                                // the provider that recognises requests; empty: automatic
+    QString ttsProvider;                                // the provider whose voice speaks; empty: automatic
 
     QJsonObject toJson() const;
     static VoiceConfig fromJson(const QJsonObject &json);
