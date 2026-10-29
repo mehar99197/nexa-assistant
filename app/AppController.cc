@@ -1,6 +1,7 @@
 #include "app/AppController.h"
 
 #include "app/MicrophoneLeveler.h"
+#include "core/agent/VoicePrompt.h"
 #include "core/Logging.h"
 #include "core/agent/Agent.h"
 #include "core/ai/IAiProvider.h"
@@ -13,6 +14,7 @@
 #include "core/skills/SkillCatalog.h"
 #include "core/tools/ToolRegistry.h"
 #include "voice/VoiceBackends.h"
+#include "voice/listen/ListeningFront.h"
 #include "voice/pipeline/VoicePipeline.h"
 #include "voice/stt/ISpeechRecognizer.h"
 #include "voice/tts/ITextToSpeech.h"
@@ -519,8 +521,9 @@ void AppController::applyVoiceConfig() {
     }
 
     // The wake word listens all the time, so it only ever uses the local recogniser.
+    const bool wakeWord = settings.wakeWord || wakeForced_;
     std::unique_ptr<ISpeechRecognizer> wake;
-    if (settings.wakeWord) {
+    if (wakeWord) {
         Result<std::unique_ptr<ISpeechRecognizer>> local = VoiceBackends::createLocalRecognizer(settings);
         if (local) {
             wake = std::move(local).value();
@@ -538,9 +541,19 @@ void AppController::applyVoiceConfig() {
         problems.append(speech.error().message);
     }
 
+    // What hears speech and the name: Silero, noise reduction and the spotter when sherpa-onnx is installed.
+    VoiceBackends::FrontBuild front = VoiceBackends::createListeningFront(settings, services_.sherpa, wakeWord);
+    voice->setListeningFront(std::move(front.front));
+    problems += front.problems;
+
+    const int endPauseMs = settings.endPause == u"short"_s ? 900 : settings.endPause == u"long"_s ? 2000 : 1400;
     voice->setSettings(VoicePipeline::Settings{.speak = VoicePipeline::speakModeFromString(settings.speakReplies),
-                                               .wakeWord = settings.wakeWord,
-                                               .bargeIn = settings.bargeIn});
+                                               .wakeWord = wakeWord,
+                                               .bargeIn = settings.bargeIn,
+                                               .wakeName = settings.wakeName,
+                                               .endPauseMs = endPauseMs,
+                                               .followUps = settings.followUps});
+    if (services_.router) services_.router->setAssistantName(settings.wakeName);
     qCDebug(lcApp) << "voice: recognition" << voice->recognizerName() << "| speech" << voice->speechName();
     if (!problems.isEmpty()) emit statusChanged(problems.join(u' '), true);
 }
@@ -599,6 +612,11 @@ void AppController::rebuildProvider() {
     emit modelsChanged(models_, currentModel());
 }
 
+void AppController::setWakeWordForced(bool on) {
+    wakeForced_ = on;
+    applyVoiceConfig();
+}
+
 void AppController::lowerMicrophone() {
     if (!services_.microphoneVolume || !services_.voice) return;
     if (!leveler_) leveler_ = std::make_unique<MicrophoneLeveler>(services_.microphoneVolume, services_.voice);
@@ -639,10 +657,7 @@ ProviderConfig *AppController::activeProviderConfig() {
 
 QString AppController::systemPrompt(const QString &source) const {
     QString prompt = config_.systemPrompt;
-    if (services_.voice) {
-        prompt += u"\n\nMessages that start with [voice] were spoken, and your reply to them is read aloud: answer "
-                  "in one to three short sentences of plain text, without Markdown, lists or code."_s;
-    }
+    if (services_.voice) prompt += u"\n\n"_s + voicePromptParagraph(config_.voice.wakeName);
     if (!screenShared_) {
         prompt += u"\n\nThe user is not sharing their screen, so you cannot see it and take_screenshot is not "
                   "available. Do what was asked through run_command, open_app and the other tools; only when a "

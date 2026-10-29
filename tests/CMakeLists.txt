@@ -71,6 +71,7 @@ add_executable(nexa_tests
     TurnLedgerTest.cc
     VoiceBackendsTest.cc
     VoicePipelineTest.cc
+    VoicePromptTest.cc
     VoicePureTest.cc
     WakePhrasesTest.cc
     WordPiecesTest.cc

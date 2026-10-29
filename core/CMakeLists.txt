@@ -28,6 +28,7 @@ add_library(nexa_core STATIC
     agent/Agent.h agent/Agent.cc
     agent/AppContext.h agent/AppContext.cc
     agent/Conversation.h agent/Conversation.cc
+    agent/VoicePrompt.h agent/VoicePrompt.cc
     audit/AuditLog.h audit/AuditLog.cc
     intent/IIntentHandler.h
     intent/IntentRouter.h intent/IntentRouter.cc

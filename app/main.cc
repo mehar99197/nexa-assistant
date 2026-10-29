@@ -60,6 +60,7 @@
 #include "voice/capture/AudioCapture.h"
 #include "voice/capture/AudioConverter.h"
 #include "voice/pipeline/VoicePipeline.h"
+#include "voice/wake/SherpaRuntime.h"
 
 #include <QApplication>
 #include <QCommandLineParser>
@@ -261,6 +262,8 @@ int main(int argc, char *argv[]) {
     apps.refresh();
     WpctlAudioController audio;
     WpctlAudioController microphoneVolume(WpctlAudioController::Target::Microphone);   // "Lower it" only
+    // sherpa-onnx (scripts/download-sherpa.sh): the wake-name spotter, Silero and noise reduction, loaded when used.
+    SherpaRuntime sherpa;
     MprisController media;
     FileAccess files;
     ScreenCapture screen;
@@ -370,6 +373,7 @@ int main(int argc, char *argv[]) {
                     .voice = &voice,
                     .http = &http,
                     .microphoneVolume = &microphoneVolume,
+                    .sherpa = &sherpa,
                     .context = &appContext,
                     // Typing goes to the window with the keyboard: when that is Nexa's own, it
                     // must not be done.

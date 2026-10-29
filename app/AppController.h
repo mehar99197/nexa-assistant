@@ -30,6 +30,7 @@ class SkillCatalog;
 class ToolRegistry;
 class VoicePipeline;
 class WpctlAudioController;
+class SherpaRuntime;
 class MicrophoneLeveler;
 
 // Everything the controller coordinates; owned by the composition root (app/main.cc).
@@ -45,6 +46,7 @@ struct AppServices {
     VoicePipeline *voice{nullptr};
     HttpClient *http{nullptr};          // for the cloud voice backends
     WpctlAudioController *microphoneVolume{nullptr};    // the input's volume, for "Lower it" only
+    SherpaRuntime *sherpa{nullptr};     // the spotter, Silero and noise reduction, when installed
     AppContext *context{nullptr};       // the app the user is in (filled by open_app, close_app)
     std::function<bool()> windowActive; // Nexa's own window has the keyboard focus
     std::function<bool()> canType;      // an input backend can type (the helper, or the portal)
@@ -96,6 +98,8 @@ public:
     void cancel();                                  // the current reply and its speech
     void cancelReply();                             // the current reply only
     void lowerMicrophone();                         // "Lower it": step the input volume down until nothing clips
+    // Listen for the wake name whatever the settings say — this run only, never saved (--hear).
+    void setWakeWordForced(bool on);
     void panic();                                   // everything: replies, tools, child processes, voice
     void newConversation();
     bool isBusy() const { return busy_; }
@@ -179,6 +183,7 @@ private:
     CoreActivity activity_;
     CoreMode coreMode_{CoreMode::Idle};
     std::unique_ptr<MicrophoneLeveler> leveler_;
+    bool wakeForced_{false};
     CoreNodes litNodes_{NoNode};
     int runningActions_{0};
     QString offlineReason_;
