@@ -68,6 +68,7 @@ add_executable(nexa_tests
     TurnLedgerTest.cc
     VoicePipelineTest.cc
     VoicePureTest.cc
+    WakePhrasesTest.cc
     WordPiecesTest.cc
     VoiceTestAudio.h
 )
