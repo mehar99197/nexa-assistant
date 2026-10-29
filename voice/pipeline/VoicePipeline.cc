@@ -31,6 +31,8 @@ constexpr int kCutBeforeWordMs = 200;           // the request starts this long 
 constexpr qint64 kCutBeforePhrase = 16'000 * 3 / 10;    // …and 0.3 s before the spotter's phrase
 constexpr qint64 kBareNameWindow = 16'000 / 2;  // the bare name must open what is being said: within 0.5 s of it
 constexpr int kSelfGuardMs = 3'000;             // after Nexa said its own name
+constexpr int kFollowUpDelayMs = 150;           // the follow-up window opens this long after the speech
+constexpr double kFollowUpQuieterDb = 8.0;      // a follow-up quieter than the request by more is someone else
 
 EnergyVad::Settings vadSettings() {
     EnergyVad::Settings settings;
@@ -70,6 +72,13 @@ VoicePipeline::VoicePipeline(IAudioInput *input, QObject *parent)
         }
         const bool silent = !hold_ && !fromVad_ && !heardSpeech_ && elapsed >= kNoSpeechTimeoutMs;
         if (elapsed >= kMaxListenMs || silent) finishListening();
+    });
+    followUpOpener_.setSingleShot(true);
+    followUpOpener_.setInterval(kFollowUpDelayMs);
+    connect(&followUpOpener_, &QTimer::timeout, this, &VoicePipeline::openFollowUp);
+    followUpWindow_.setSingleShot(true);
+    connect(&followUpWindow_, &QTimer::timeout, this, [this] {
+        if (followUp_ && !followUpCounting_) closeFollowUp();      // speech begun in time is heard to its end
     });
     commandTimer_.setSingleShot(true);
     commandTimer_.setInterval(kCommandTimeoutMs);
@@ -199,6 +208,9 @@ void VoicePipeline::startListening(bool hold) {
     hold_ = hold;
     fromVad_ = false;
     capturing_ = false;             // the key wins over a request the name had started
+    followUp_ = false;              // …and over the follow-up window
+    followUpOpener_.stop();
+    followUpWindow_.stop();
     resetHearing();
     heardSpeech_ = false;
     listenClock_.restart();
@@ -229,6 +241,9 @@ void VoicePipeline::cancel() {
     hold_ = false;
     fromVad_ = false;
     capturing_ = false;
+    followUp_ = false;
+    followUpOpener_.stop();
+    followUpWindow_.stop();
     awaitingCommand_ = false;
     wakeBusy_ = false;
     replySaysName_ = false;
@@ -268,6 +283,8 @@ void VoicePipeline::onAudio(const QByteArray &pcm) {
 void VoicePipeline::onSpeechStarted(qint64 start) {
     lastSpeechStart_ = start;
     heardSpeech_ = true;
+    inSpeech_ = true;
+    if (followUp_ && !followUpIgnoring_) followUpCounting_ = true;
     if (awaitingCommand_) commandTimer_.stop();     // the request has begun: it ends at the pause
     if (state_ != VoiceState::Speaking || !settings_.bargeIn) return;
     // Talking over the reply: stop speaking and take what is said as the next request.
@@ -283,8 +300,22 @@ void VoicePipeline::onSpeechStarted(qint64 start) {
 }
 
 void VoicePipeline::onSpeechEnded(qint64 start, qint64 end) {
+    inSpeech_ = false;
     if (capturing_) {
         finishCapture(end);                 // the request after the name ends at the owner's pause
+        return;
+    }
+    if (followUp_) {
+        if (std::exchange(followUpIgnoring_, false) || !std::exchange(followUpCounting_, false)) return;
+        // Someone across the room — a TV — is quieter than the owner at the laptop.
+        if (ring_.levelDb(start, end) < lastRequestLevelDb_ - kFollowUpQuieterDb) {
+            if (!followUpWindow_.isActive()) closeFollowUp();
+            return;
+        }
+        followUp_ = false;
+        followUpWindow_.stop();
+        fromVad_ = false;
+        transcribeRequest(ring_.slice(start, end), QString());     // said to Nexa, without the name
         return;
     }
     if (state_ == VoiceState::Listening && !fromVad_) {
@@ -354,6 +385,32 @@ void VoicePipeline::resetHearing() {
     ring_.reset();
     front_->reset();
     lastSpeechStart_ = -1;
+    inSpeech_ = false;
+}
+
+void VoicePipeline::maybeOpenFollowUp() {
+    if (settings_.followUps && replyFromVoice_ && spokeReply_ && state_ == VoiceState::Idle) followUpOpener_.start();
+}
+
+void VoicePipeline::openFollowUp() {
+    if (state_ != VoiceState::Idle) return;
+    followUp_ = true;
+    followUpCounting_ = false;
+    fromVad_ = true;
+    hold_ = false;
+    listenClock_.restart();
+    setState(VoiceState::Listening);        // opens the microphone if the wake word had not
+    followUpIgnoring_ = inSpeech_;          // speech already going on is not a follow-up
+    followUpWindow_.start(settings_.followUpMs);
+}
+
+void VoicePipeline::closeFollowUp() {
+    followUp_ = false;
+    followUpCounting_ = false;
+    followUpIgnoring_ = false;
+    followUpWindow_.stop();
+    fromVad_ = false;
+    if (state_ == VoiceState::Listening) setState(VoiceState::Idle);
 }
 
 void VoicePipeline::finishListening() {
@@ -381,6 +438,7 @@ void VoicePipeline::transcribeRequest(const QByteArray &pcm, const QString &fall
         return;
     }
     setState(VoiceState::Transcribing);
+    lastRequestLevelDb_ = EnergyVad::rmsDb(reinterpret_cast<const qint16 *>(pcm.constData()), pcm.size() / 2);
     const quint64 generation = ++generation_;
     recognizer_->transcribe(pcm, requestPrompt(settings_.wakeName), [this, generation, fallback](Result<QString> text) {
         if (generation != generation_) return;
@@ -492,6 +550,7 @@ void VoicePipeline::onReplyStarted(const QString &source) {
     chunker_.reset();
     spokeReply_ = false;
     const bool fromVoice = source == u"voice"_s;
+    replyFromVoice_ = fromVoice;
     speakReply_ = speech_ && (settings_.speak == SpeakMode::Always
                               || (settings_.speak == SpeakMode::VoiceRequests && fromVoice));
 }
@@ -516,6 +575,11 @@ void VoicePipeline::onReplyFinished(FinishReason reason, bool empty) {
     for (const QString &sentence : chunker_.finish()) say(sentence);
     // A direct action (no text, or only command output) still gets a spoken confirmation.
     if (!spokeReply_) say(empty ? tr("I got an empty reply.") : tr("Done."));
+    // Everything was said already: the reply is over.
+    if (state_ == VoiceState::Thinking) {
+        setState(VoiceState::Idle);
+        maybeOpenFollowUp();
+    }
 }
 
 void VoicePipeline::onReplyFailed(const QString &message) {
@@ -540,8 +604,10 @@ void VoicePipeline::say(const QString &sentence) {
 void VoicePipeline::onSpeechFinished() {
     if (state_ != VoiceState::Speaking) return;
     if (std::exchange(replySaysName_, false)) selfGuard_.restart();     // its echo may still be heard
-    // More of the reply may still come: wait for it (thinking), else done.
-    setState(replyActive_ && speakReply_ ? VoiceState::Thinking : VoiceState::Idle);
+    // More of the reply may still come: wait for it (thinking), else done — and listen for a follow-up.
+    const bool more = replyActive_ && speakReply_;
+    setState(more ? VoiceState::Thinking : VoiceState::Idle);
+    if (!more) maybeOpenFollowUp();
 }
 
 void VoicePipeline::setState(VoiceState state) {

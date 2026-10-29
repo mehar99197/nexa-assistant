@@ -40,6 +40,8 @@ public:
         bool bargeIn{false};
         QString wakeName{QStringLiteral("Nexa")};
         int endPauseMs{1400};       // this much quiet ends a request (Settings → Voice → Pause before I'm done)
+        bool followUps{true};       // after a spoken reply, listen for a follow-up without the name
+        int followUpMs{8000};       // …for this long
     };
 
     explicit VoicePipeline(IAudioInput *input, QObject *parent = nullptr);
@@ -96,6 +98,9 @@ private:
     void onWakeHeard(const QString &label, qint64 phraseStart, qint64 heardAt);
     void finishCapture(qint64 end);     // the request after the spotter's hit, up to `end` in the ring
     void resetHearing();                // the ring and the front start counting again
+    void maybeOpenFollowUp();           // after the spoken reply to a spoken request
+    void openFollowUp();
+    void closeFollowUp();
     void finishListening();
     void transcribe(const QByteArray &pcm);
     // A request said to Nexa, through the request recogniser; `fallback` (the offline text after the name) is
@@ -126,6 +131,14 @@ private:
     qint64 captureStart_{0};            // its start in the ring: just before the name
     bool replySaysName_{false};         // the speech playing says the name: Nexa would hear itself
     QElapsedTimer selfGuard_;           // since such speech ended
+    bool inSpeech_{false};              // the voice detector heard speech begin and not yet end
+    bool replyFromVoice_{false};        // the reply answers a spoken request
+    bool followUp_{false};              // the window after a spoken reply is open
+    bool followUpIgnoring_{false};      // the speech going on when it opened does not count
+    bool followUpCounting_{false};      // speech that began in the window: heard to its end
+    double lastRequestLevelDb_{-100.0}; // how loud the owner's last request was
+    QTimer followUpOpener_;             // the window opens a moment after the speech
+    QTimer followUpWindow_;
     QByteArray recording_;
     bool hold_{false};
     bool fromVad_{false};               // this utterance is the VAD's (barge-in), not a key press

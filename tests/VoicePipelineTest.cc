@@ -611,6 +611,96 @@ TEST_CASE("Talk while capturing a request after the name: one request, from the 
     CHECK(rig.requests == QStringList{u"open files"_s});
 }
 
+namespace {
+
+// A spoken request answered aloud — what opens the follow-up window.
+void askAndHear(Rig &rig) {
+    rig.pipeline.startListening(false);
+    rig.microphone.play(testaudio::quiet(400) + testaudio::speech(800) + testaudio::quiet(1600));
+    REQUIRE(rig.recognizer->pending());
+    rig.recognizer->answer(u"What's the weather?"_s);
+    rig.reply({u"It is sunny. Twenty"_s, u" degrees today."_s});
+    rig.voice->finishSpeaking();
+}
+
+} // namespace
+
+TEST_CASE("A follow-up in the window after the spoken reply is a request without the name") {
+    Rig rig;
+    rig.pipeline.setSettings({.followUpMs = 2000});
+    askAndHear(rig);
+    QTest::qWait(250);      // the window opens 150 ms after the speech
+    CHECK(rig.pipeline.state() == VoiceState::Listening);
+    rig.microphone.play(testaudio::quiet(500) + testaudio::speech(800) + testaudio::quiet(1600));
+    REQUIRE(rig.recognizer->pending());
+    rig.recognizer->answer(u"And tomorrow?"_s);
+    CHECK(rig.requests == QStringList{u"What's the weather?"_s, u"And tomorrow?"_s});
+}
+
+TEST_CASE("Silence after the reply ends the window") {
+    Rig rig;
+    rig.pipeline.setSettings({.followUpMs = 300});
+    askAndHear(rig);
+    QTest::qWait(250);
+    CHECK(rig.pipeline.state() == VoiceState::Listening);
+    QTest::qWait(400);
+    CHECK(rig.pipeline.state() == VoiceState::Idle);
+    CHECK_FALSE(rig.microphone.active);
+}
+
+TEST_CASE("No follow-up after a typed request or with the setting off") {
+    Rig typed;
+    typed.pipeline.setSettings({.speak = VoicePipeline::SpeakMode::Always, .followUpMs = 2000});
+    typed.pipeline.onReplyStarted(u"gui"_s);
+    typed.pipeline.onReplyDelta(u"Done it. All"_s);
+    typed.pipeline.onReplyFinished(FinishReason::Stop, false);
+    typed.voice->finishSpeaking();
+    QTest::qWait(250);
+    CHECK(typed.pipeline.state() == VoiceState::Idle);
+
+    Rig off;
+    off.pipeline.setSettings({.followUps = false});
+    askAndHear(off);
+    QTest::qWait(250);
+    CHECK(off.pipeline.state() == VoiceState::Idle);
+}
+
+TEST_CASE("Speech already going on, or much quieter than the request, does not count") {
+    WakeRig rig;
+    rig.pipeline.setSettings({.wakeWord = true, .followUpMs = 1500});
+    rig.pipeline.startListening(false);
+    rig.microphone.play(testaudio::quiet(400) + testaudio::speech(800) + testaudio::quiet(1600));
+    rig.recognizer->answer(u"What's the weather?"_s);
+    rig.reply({u"It is sunny. Twenty"_s, u" degrees today."_s});
+    rig.microphone.play(testaudio::quiet(500) + testaudio::speech(500));       // someone starts talking
+    rig.voice->finishSpeaking();
+    QTest::qWait(250);
+    REQUIRE(rig.pipeline.state() == VoiceState::Listening);
+    rig.microphone.play(testaudio::speech(400) + testaudio::quiet(800));       // …and stops: it began before
+    const QByteArray softly = testaudio::make(700, 0.08, 0.006);              // 10 dB below the request
+    rig.microphone.play(testaudio::quiet(300) + softly + testaudio::quiet(1600));
+    CHECK(rig.recognizer->requests == 1);
+    QTest::qWait(1500);
+    CHECK(rig.pipeline.state() == VoiceState::Idle);
+    CHECK(rig.recognizer->requests == 1);
+}
+
+TEST_CASE("Talk in the follow-up window: one request, from the key") {
+    Rig rig;
+    rig.pipeline.setSettings({.followUpMs = 2000});
+    askAndHear(rig);
+    QTest::qWait(250);
+    REQUIRE(rig.pipeline.state() == VoiceState::Listening);
+    rig.pipeline.startListening(true);
+    rig.microphone.play(testaudio::quiet(300) + testaudio::speech(600) + testaudio::quiet(300));
+    rig.pipeline.stopListening();
+    CHECK(rig.recognizer->requests == 2);
+    rig.recognizer->answer(u"open files"_s);
+    rig.microphone.play(testaudio::quiet(1600));
+    CHECK(rig.recognizer->requests == 2);
+    CHECK(rig.requests == QStringList{u"What's the weather?"_s, u"open files"_s});
+}
+
 TEST_CASE("The wake word refuses a cloud recogniser") {
     Rig rig;
     rig.pipeline.setWakeRecognizer(std::make_unique<FakeRecognizer>(false));
