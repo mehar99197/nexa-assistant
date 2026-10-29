@@ -47,6 +47,15 @@ QString toolOf(const IntentRouter &router, const QString &text) {
 
 } // namespace
 
+TEST_CASE("The fast path takes off the name the user chose") {
+    CHECK(IntentRouter::prepare(u"hey jarvis, open firefox"_s, u"Jarvis"_s).text == u"open firefox"_s);
+    CHECK(IntentRouter::prepare(u"Jarvis, open firefox"_s, u"Jarvis"_s).text == u"open firefox"_s);
+    CHECK(IntentRouter::prepare(u"Hey Nexa, could you please open Firefox for me!"_s).text == u"open Firefox"_s);
+    Fixture f;
+    f.router.setAssistantName(u"Jarvis"_s);
+    CHECK(toolOf(f.router, u"hey jarvis, volume 50"_s) == u"set_volume"_s);
+}
+
 TEST_CASE("IntentRouter strips wake words, politeness and punctuation") {
     const IntentInput input = IntentRouter::prepare(u"Hey Nexa, could you please open Firefox for me!"_s);
     CHECK(input.normalized == u"open firefox"_s);
