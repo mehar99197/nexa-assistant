@@ -128,6 +128,43 @@ struct UiConfig {
     bool operator==(const UiConfig &) const = default;
 };
 
+// Settings → Browser: Playwright, which Nexa installs and runs, works in the user's own Chrome (its
+// extension, in the profile chosen) or, until that is set up, in a Chrome with Nexa's own profile.
+struct BrowserConfig {
+    bool enabled{true};
+    QString mode{QStringLiteral("auto")};       // auto | extension | nexa-profile | off
+    QString browser{QStringLiteral("chrome")};  // chrome | msedge | brave | chromium
+    QString profile;                            // "Default", "Profile 1", …; empty: the one used last
+    QString extensionToken;                     // the extension's token: connects without asking. Never logged or shown
+
+    QJsonObject toJson() const;
+    static BrowserConfig fromJson(const QJsonObject &json);
+
+    bool operator==(const BrowserConfig &) const = default;
+};
+
+// Settings → Memory: facts about the user kept between conversations (MemoryStore holds them).
+struct MemoryConfig {
+    bool enabled{true};
+    bool learn{true};       // the model may save what it learns, not only what it is asked to
+
+    QJsonObject toJson() const;
+    static MemoryConfig fromJson(const QJsonObject &json);
+
+    bool operator==(const MemoryConfig &) const = default;
+};
+
+// Settings → Skills: instructions for particular jobs, loaded by the model when one fits.
+struct SkillsConfig {
+    bool enabled{true};
+    QStringList disabled;   // skill names left out
+
+    QJsonObject toJson() const;
+    static SkillsConfig fromJson(const QJsonObject &json);
+
+    bool operator==(const SkillsConfig &) const = default;
+};
+
 // Typed view of ~/.config/nexa/config.json. Sections this build does not know stay in `extra` and
 // are written back unchanged, so no build drops settings it does not understand.
 struct Config {
@@ -145,6 +182,9 @@ struct Config {
     AgentConfig agent;
     UiConfig ui;
     McpConfig mcp;
+    BrowserConfig browser;
+    MemoryConfig memory;
+    SkillsConfig skills;
     QJsonObject extra;
 
     QJsonObject toJson() const;

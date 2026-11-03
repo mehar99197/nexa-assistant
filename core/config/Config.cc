@@ -216,6 +216,56 @@ UiConfig UiConfig::fromJson(const QJsonObject &json) {
     return config;
 }
 
+QJsonObject BrowserConfig::toJson() const {
+    return QJsonObject{{u"enabled"_s, enabled},
+                       {u"mode"_s, mode},
+                       {u"browser"_s, browser},
+                       {u"profile"_s, profile},
+                       {u"extensionToken"_s, extensionToken}};
+}
+
+BrowserConfig BrowserConfig::fromJson(const QJsonObject &json) {
+    BrowserConfig config;
+    config.enabled = json.value(u"enabled"_s).toBool(config.enabled);
+    const QString mode = json.value(u"mode"_s).toString();
+    if (QStringList{u"auto"_s, u"extension"_s, u"nexa-profile"_s, u"off"_s}.contains(mode)) config.mode = mode;
+    static const QRegularExpression browserId(u"^[a-z0-9-]{1,20}$"_s);
+    const QString browser = json.value(u"browser"_s).toString();
+    if (browserId.match(browser).hasMatch()) config.browser = browser;
+    // A path component under the browser's folder: only the names Chrome itself gives profiles.
+    static const QRegularExpression profileDir(u"^(Default|Profile [0-9]{1,4})$"_s);
+    const QString profile = json.value(u"profile"_s).toString();
+    if (profileDir.match(profile).hasMatch()) config.profile = profile;
+    config.extensionToken = json.value(u"extensionToken"_s).toString().trimmed();
+    return config;
+}
+
+QJsonObject MemoryConfig::toJson() const {
+    return QJsonObject{{u"enabled"_s, enabled}, {u"learn"_s, learn}};
+}
+
+MemoryConfig MemoryConfig::fromJson(const QJsonObject &json) {
+    MemoryConfig config;
+    config.enabled = json.value(u"enabled"_s).toBool(config.enabled);
+    config.learn = json.value(u"learn"_s).toBool(config.learn);
+    return config;
+}
+
+QJsonObject SkillsConfig::toJson() const {
+    return QJsonObject{{u"enabled"_s, enabled}, {u"disabled"_s, QJsonArray::fromStringList(disabled)}};
+}
+
+SkillsConfig SkillsConfig::fromJson(const QJsonObject &json) {
+    SkillsConfig config;
+    config.enabled = json.value(u"enabled"_s).toBool(config.enabled);
+    static const QRegularExpression name(u"^[a-z0-9-]{1,64}$"_s);
+    for (const QJsonValue &value : json.value(u"disabled"_s).toArray()) {
+        const QString skill = value.toString();
+        if (name.match(skill).hasMatch() && !config.disabled.contains(skill)) config.disabled.append(skill);
+    }
+    return config;
+}
+
 QJsonObject Config::toJson() const {
     QJsonObject json = extra;
     QJsonArray list;
@@ -231,6 +281,9 @@ QJsonObject Config::toJson() const {
     json.insert(u"agent"_s, agent.toJson());
     json.insert(u"ui"_s, ui.toJson());
     json.insert(u"mcp"_s, mcp.toJson());
+    json.insert(u"browser"_s, browser.toJson());
+    json.insert(u"memory"_s, memory.toJson());
+    json.insert(u"skills"_s, skills.toJson());
     return json;
 }
 
@@ -253,11 +306,14 @@ Config Config::fromJson(const QJsonObject &json) {
     config.agent = AgentConfig::fromJson(json.value(u"agent"_s).toObject());
     config.ui = UiConfig::fromJson(json.value(u"ui"_s).toObject());
     config.mcp = McpConfig::fromJson(json.value(u"mcp"_s).toObject());
+    config.browser = BrowserConfig::fromJson(json.value(u"browser"_s).toObject());
+    config.memory = MemoryConfig::fromJson(json.value(u"memory"_s).toObject());
+    config.skills = SkillsConfig::fromJson(json.value(u"skills"_s).toObject());
 
     config.extra = json;
     for (const QString &key :
          {u"version"_s, u"providers"_s, u"activeProvider"_s, u"systemPrompt"_s, u"policy"_s, u"voice"_s, u"android"_s,
-          u"remote"_s, u"agent"_s, u"ui"_s, u"mcp"_s}) {
+          u"remote"_s, u"agent"_s, u"ui"_s, u"mcp"_s, u"browser"_s, u"memory"_s, u"skills"_s}) {
         config.extra.remove(key);
     }
     return config;

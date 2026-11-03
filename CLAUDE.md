@@ -20,11 +20,15 @@ under a QApplication (offscreen), and Qt's GUI plugins leave allocations behind 
 reports: run with `ASAN_OPTIONS=detect_leaks=0` for the memory-error check, and judge leaks by whether any
 frame is `in nexa::` (`… 2>&1 | grep "in nexa::"`).
 Verbose logs: `QT_LOGGING_RULES="nexa.*.debug=true" ./build/app/nexa-assistant` (categories `nexa.app`,
-`nexa.config`, `nexa.net`, `nexa.ai`, `nexa.voice`).
+`nexa.config`, `nexa.net`, `nexa.ai`, `nexa.voice`, `nexa.mcp`, `nexa.browser`).
 Scripted run: `./build/app/nexa-assistant --ask "open calculator" --ask "volume 50"` — submits each request in
 turn, exactly as if typed. **If Nexa is already running, the requests go to that copy** (single instance, through a
-socket in `$XDG_RUNTIME_DIR`); add `--new-instance` for a separate test copy — it still reads the real config, so
-run it with `QT_QPA_PLATFORM=offscreen` to keep it off the user's screen. `--say "<text>"` speaks, `--voice-file <wav>` feeds a recording in as a spoken
+socket in `$XDG_RUNTIME_DIR`); add `--new-instance` for a separate test copy (to keep a test's memories, skills and
+browser profile out of the real ones, or to try another model, give it a private copy:
+`XDG_CONFIG_HOME=/tmp/x/config XDG_DATA_HOME=/tmp/x/data`, with `playwright`, `models` and `piper` symlinked into
+`/tmp/x/data/nexa`) — it still reads the real config, so
+run it with `QT_QPA_PLATFORM=offscreen` to keep it off the user's screen (it still registers the global Talk hotkey and
+the web remote's port like the real one, so a press of the hotkey during a scripted run goes to the test copy). `--say "<text>"` speaks, `--voice-file <wav>` feeds a recording in as a spoken
 request; the three run in that order, one at a time. **To check the look**, add `--screenshot <file.png>`: once the
 requests are done and Nexa is idle, it saves a picture of the window and quits — it works offscreen, so
 `QT_QPA_PLATFORM=offscreen ./build/app/nexa-assistant --new-instance --theme light --ask "run uname -sr" --screenshot /tmp/nexa.png`
@@ -67,24 +71,43 @@ Build dependencies (one-time, needs sudo — the user runs it):
 
 Runtime: settings in `~/.config/nexa/config.json` (0600, holds API keys). The default provider is
 OmniRoute at `http://localhost:20128/v1` (OpenAI-compatible, needs its API key; prefer concrete
-models over its slow `auto/*` combos).
+models over its slow `auto/*` combos). OmniRoute is a system unit (`omniroute.service`, root to start) that
+runs `/usr/local/bin/omniroute` as the user; without sudo, `nohup /usr/local/bin/omniroute serve &` starts the
+same server (ready when port 20128 answers, about 10 s). A text-only model there (the GLM Flash ones) refuses
+images with a 400; the `Agent` then resends without them and remembers the model as blind.
 
 ## Layout
 
 - `core/` — no Qt Widgets, no syscalls: `Result.h`, `Logging`, `config/`, `net/` (HttpClient, SseParser),
   `ai/` (OpenAiProvider, AnthropicProvider, GeminiProvider — each maps ChatRequest to its own wire format and
   decodes its own events; SseChatStream is the stream all three share; ToolCallAccumulator; the registry),
-  `agent/` (Agent loop, Conversation), `tools/` (ToolSpec, ITool, FunctionTool, ToolRegistry, ToolExecutor =
+  `agent/` (Agent loop, Conversation, AppContext = the app Nexa opened last for the user — its kind from the desktop
+  entry, a sentence for the model, and the fast path's `run <cmd>` typed into a terminal in front), `tools/` (ToolSpec, ITool, FunctionTool, ToolRegistry, ToolExecutor =
   policy → confirm → invoke → audit, TextToolParser for models without native tools), `intent/` (IntentRouter +
   PC and phone fast-path handlers), `policy/` (PolicyEngine, PanicController), `audit/` (AuditLog), `mcp/`
   (MCP connectors — Model Context Protocol: `McpClient` speaks JSON-RPC 2.0 over an `IMcpTransport`, a server
   process on its standard streams or a URL posted to; `McpConnectors` keeps one client per server in
   `config.mcp.servers` and registers each tool it lists as `mcp_<server>_<tool>`, `privileged`, so confirm-risky
-  asks; `tests/fake_mcp_server.py` stands in for a server).
+  asks; a built-in server uses an instance of its own with a `Shaping` — its own tool names, flags and risks, and
+  filters on the arguments and the result; `tests/fake_mcp_server.py` stands in for a server), `memory/`
+  (`MemoryStore` = `~/.local/share/nexa/memory.json`: facts merged when said again, secrets refused by
+  `looksSecret`, `promptSection` for the system prompt, `applyEdits` for Settings; `MemoryTools` = `remember`,
+  `forget`, `search_memory`, added and removed with `config.memory`), `skills/` (`SkillParser` reads Claude's
+  SKILL.md, `SkillCatalog` = Nexa's own skills from the `:/nexa/skills` resource of `nexa_core` plus the user's in
+  `~/.local/share/nexa/skills/<name>/`, the user's replacing Nexa's; `SkillTools` = `use_skill`, `save_skill`
+  (privileged)); `intent/MemoryIntents` is memory's fast path, right after the stops.
 - `system/` — touches the PC: `commands/` (LocalCommandRunner, process groups), `apps/` (DesktopEntry,
   DesktopEntryIndex = IAppCatalog, AppLauncher), `audio/` (wpctl), `media/` (MPRIS), `screen/` (portal
   screenshots), `files/` (FileAccess, confined to home and /tmp), `info/` (SystemInfo); `SystemTools.cc`
-  defines every PC tool the model sees.
+  defines every PC tool the model sees; `office/` (`OdfWriter` builds flat OpenDocument XML — Writer from Markdown,
+  Impress from slides, Calc from rows with A1 formulas; `OfficeTools` = `create_document`, which writes the file under
+  `~/Documents` and opens it in LibreOffice, or has LibreOffice headless convert it to docx/pptx/xlsx/pdf);
+  `browser/` (the browser that is part of Nexa: `PlaywrightInstaller` puts `@playwright/mcp` at the pinned
+  `kVersion` into `~/.local/share/nexa/playwright` with the user's Node and npm, by itself on the first start;
+  `ChromeProfiles` finds the Chrome-family browsers, their profiles by name and where Playwright's extension is;
+  `BrowserService` (Facade) plans extension / Nexa's own profile / bundled Chromium, starts the server through a
+  `McpConnectors` of its own and shapes its tools — an allow-list, `filename` stripped, results capped — so they are
+  `browser_navigate`, `browser_snapshot`, …).
 - `ui/` — the look, shared by the desktop and the phone app, so it depends on Qt Widgets alone (nothing of
   `core/`): `NexaCoreSpec` (pure, tested: the nine states — Idle, Wake word, Listening, Transcribing, Thinking,
   Acting, Speaking, Fast path, Offline — their names, wire keys and colour tokens, the timing table, how the
@@ -181,7 +204,10 @@ models over its slow `auto/*` combos).
 - `packaging/` — `org.nexa.Assistant.desktop`, the helper's polkit policy, D-Bus and systemd files, and
   `install-helper.sh` / `uninstall-helper.sh`; `scripts/` — model and engine downloads, desktop-entry install.
 - Runtime files: `~/.config/nexa/config.json` (settings, 0600), `~/.local/share/nexa/audit.jsonl` (every action,
-  0600), `~/.local/share/nexa/models/` (whisper), `~/.local/share/nexa/piper/` (Piper and its voices).
+  0600), `~/.local/share/nexa/models/` (whisper), `~/.local/share/nexa/piper/` (Piper and its voices),
+  `~/.local/share/nexa/memory.json` (what Nexa remembers, 0600), `~/.local/share/nexa/skills/` (the user's
+  skills), `~/.local/share/nexa/playwright/` (Playwright, its output and its Chromium if any),
+  `~/.local/share/nexa/browser-profile/` (Nexa's own Chrome profile, for when the extension is not set up).
 
 ## Conventions
 
@@ -203,10 +229,29 @@ models over its slow `auto/*` combos).
 - QObjects handed out as `shared_ptr` (e.g. `ChatStream`) use a `deleteLater()` deleter, so they can be released from their own signals.
 - Never log or display API keys/tokens.
 - Every action goes through `ToolExecutor::execute` (fast path and agent alike) — never call a tool directly.
+- The app the user is in is **what Nexa opened last** (`AppContext`), never read from the desktop: GNOME's
+  `org.gnome.Shell.Introspect` is denied to anything but the portals, and the helper is write-only. A command typed
+  into that terminal must always be guarded as `AppContext::redirect` does (Nexa's window not focused, typing
+  available and not asked about first — a confirmation dialog gives Nexa the keyboard —, not from a phone, not
+  destructive, not background, US-keyboard characters only) and shown in the chat as "Into <app>: `cmd`".
+  Documents for LibreOffice are made as files with `create_document`, never typed in; a converted file is made
+  in a scratch folder and renamed into place, so nothing of the user's is ever written over.
 - The model sees the PC screen **only while Share screen is on**: `AppController` withholds `take_screenshot`
   (`ToolRegistry::withhold`) otherwise, so it is in no request and a call to it is refused with the reason; the
   switch is off at every start. The user's own "what's on my screen?" is the one exception (they asked for that
-  picture). Never attach a screenshot to a request on Nexa's own initiative.
+  picture). Never attach a screenshot to a request on Nexa's own initiative. `browser_take_screenshot` is withheld
+  with it.
+- **Browser work: Playwright first, the screen second.** Anything on the web goes through the `browser_*` tools
+  (text snapshots, so models that cannot see manage too), in the user's own Chrome through Playwright's extension —
+  Chrome 136+ refuses remote debugging on the default profile, so never try `--remote-debugging-port` on it — and
+  in Nexa's own profile until that is set up. The screen (Share screen, `take_screenshot`, the input tools) is only
+  for what they cannot reach. The browser tools are an allow-list in `BrowserService`: never register
+  `browser_run_code_unsafe` or a page's WebMCP tools, keep `filename` out of every call (it resolves in the user's
+  home), and keep the network tools out while signed in as the user. The extension's token travels in the
+  server's environment only.
+- Memories and skills reach every system prompt: they are labelled data that never outranks the user, the model
+  may not save what a page or a tool's output told it to, and `save_skill` is privileged. Tools that a setting
+  switches off are **removed** from the registry, not withheld (the fast path and the executor find withheld ones).
 - The helper is the only root-privileged code, and it is **write-only** for input: never add a method that
   reads keystrokes, pointer position or window contents. Authorise against what the *bus* says about the
   caller (uid, unique name), never an identity the caller sent — and against the login it resolves to, so the

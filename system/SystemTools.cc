@@ -139,33 +139,42 @@ void addCommandTools(ToolRegistry &registry, LocalCommandRunner *commands) {
         [commands] { commands->cancelAll(); }));
 }
 
-void addAppTools(ToolRegistry &registry, DesktopEntryIndex *apps) {
+OpenedApp openedApp(const DesktopEntry &entry) {
+    return OpenedApp{entry.name, entry.id, entry.executableName(), entry.categories};
+}
+
+void addAppTools(ToolRegistry &registry, DesktopEntryIndex *apps, const SystemServices &services) {
     registry.add(FunctionTool::sync(
         ToolSpec{u"open_app"_s,
                  u"Open (launch) an installed desktop application by name, e.g. \"firefox\", \"files\", "
                  "\"terminal\", \"text editor\", \"settings\", \"calculator\". Names are matched fuzzily."_s,
                  schema::object({{u"name"_s, schema::string(u"Application name"_s)}}, {u"name"_s})},
-        [apps](const QJsonObject &arguments) -> Result<ToolResult> {
+        [apps, opened = services.appOpened](const QJsonObject &arguments) -> Result<ToolResult> {
             const Result<QString> name = requiredString(arguments, u"name"_s);
             if (!name) return name.error();
             const Result<DesktopEntryIndex::Match> app = findApp(apps, name.value());
             if (!app) return app.error();
             const Result<QString> launched = AppLauncher::launch(app.value().entry);
             if (!launched) return launched.error();
+            // The app the user asked for is the one in front of them now.
+            if (opened) opened(openedApp(app.value().entry));
             return text(launched.value());
         }));
 
     registry.add(FunctionTool::sync(
         ToolSpec{u"close_app"_s, u"Close a running application by name (asks it to quit with SIGTERM)."_s,
                  schema::object({{u"name"_s, schema::string(u"Application name"_s)}}, {u"name"_s})},
-        [apps](const QJsonObject &arguments) -> Result<ToolResult> {
+        [apps, closed = services.appClosed](const QJsonObject &arguments) -> Result<ToolResult> {
             const Result<QString> name = requiredString(arguments, u"name"_s);
             if (!name) return name.error();
             const Result<DesktopEntryIndex::Match> app = findApp(apps, name.value());
             if (!app) return app.error();
-            const Result<QString> closed = AppLauncher::close(app.value().entry);
-            if (!closed) return closed.error();
-            return text(closed.value());
+            // Asked to close it, the user has left it — whether or not the process can be found
+            // (a terminal's launcher hands over to a server process the entry does not name).
+            if (closed) closed(openedApp(app.value().entry));
+            const Result<QString> result = AppLauncher::close(app.value().entry);
+            if (!result) return result.error();
+            return text(result.value());
         }));
 
     registry.add(FunctionTool::sync(
@@ -601,7 +610,7 @@ void addInputTools(ToolRegistry &registry, const InputProvider &input, ScreenCap
 } // namespace
 
 void registerSystemTools(ToolRegistry &registry, const SystemServices &services) {
-    if (services.apps) addAppTools(registry, services.apps);
+    if (services.apps) addAppTools(registry, services.apps, services);
     if (services.commands) addCommandTools(registry, services.commands);
     if (services.rootCommands) addRootCommandTool(registry, services.rootCommands);
     if (services.audio) addAudioTools(registry, services.audio);

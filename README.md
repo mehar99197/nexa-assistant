@@ -13,10 +13,18 @@ Not to be confused with Nexa Download Manager: this is a separate program, named
 - **Acts on the PC** — opens and closes apps, runs shell commands (and, with the helper, root
   commands), sets the volume, controls media players, reads and writes files (home and /tmp only),
   reports system info, and looks at the screen — but only while you let it.
+- **Knows where you are** — say "open terminal" and the commands you ask for next are typed into that
+  terminal, where you see them run (unless Nexa's own window has the keyboard, the policy would ask
+  first, you asked from your phone, or the command is destructive — then it runs through the usual
+  policy, as before). Say "open libreoffice" and "make a presentation
+  about solar energy" becomes an Impress file with real slides, "a budget spreadsheet" a Calc sheet with
+  working formulas, "a letter to…" a Writer document — created as files and opened, not typed. The status
+  bar shows which app Nexa thinks you are in; opening another, closing it, or half an hour of silence moves on.
 - **Looks only when you share** — the Share screen button beside the input box (Ctrl+Shift+S, or say
   "share my screen") is off at every start; until you switch it on, the model is not even offered the
   screenshot tool and works through commands and tools alone. Asking "what's on my screen?" yourself
-  takes one picture either way.
+  takes one picture either way. A model that cannot see images gets the words without the picture and
+  Nexa says so, instead of every later request failing.
 - **Fast path** — common requests ("open firefox", "volume 30", "pause music", "run df -h", "what's on
   my screen?", "on my phone open youtube") run directly in milliseconds, without waiting for a model.
 - **Agent** — anything else goes to the model, which calls the same tools step by step.
@@ -70,8 +78,14 @@ scripts/download-whisper-model.sh base.en    # offline speech recognition (148 M
 scripts/download-piper.sh                    # offline voice (26 MB + a 63 MB voice), optional
 ```
 
-On first start Nexa asks for the OmniRoute API key. Then:
+On first start Nexa asks for the OmniRoute API key, and installs Playwright — the browser automation that is
+part of it — into `~/.local/share/nexa/playwright` by itself (it needs Node.js 18 or newer and npm:
+`sudo apt install nodejs npm` if they are missing). Then:
 
+- **Your own browser** — Settings → Browser: pick the Chrome profile Nexa should work in and press
+  "Install in Google Chrome…"; add the Playwright extension on the store page that opens. The page notices
+  it by itself. Optionally paste the token the extension shows, so it connects without asking. Until then Nexa
+  works in a separate Chrome window with its own profile.
 - **Global hotkeys** — GNOME Settings → Keyboard → Keyboard Shortcuts → Nexa Assistant: give "Talk to
   Nexa" and "Stop everything" a key.
 - **Your phone, controlled from the PC** — on the phone: Settings → About phone → tap Build number seven
@@ -137,6 +151,24 @@ reach Nexa only over adb, so the build refuses to go on without it.
   sites' pages, rate-limits everything, and a revoked phone is disconnected at once.
 - API keys live in `~/.config/nexa/config.json` (readable only by you) and are never logged or shown.
 
+## The browser, memory and skills
+
+**Browser.** Anything on the web — "open github.com/trending and tell me the top repository", "search for
+flights to Lahore", "fill in this form" — goes to Playwright first: it reads pages as text, so it works even
+with models that cannot see the screen, in your own Chrome (signed in as you) once its extension is in the
+profile you chose. Screen sharing is the second approach, only for what Playwright cannot reach. The status
+bar says where it works (`Browser: Chrome · Ahmad`, `Browser: Nexa profile`). Firefox cannot be driven this
+way. In confirm-risky mode Nexa asks before it clicks or types on a page.
+
+**Memory.** "Remember that my office is in Multan", "forget that …", "what do you know about me?" — and,
+unless you switch it off, Nexa also notes lasting facts it learns. Passwords, PINs, keys and card numbers are
+never kept. Settings → Memory shows every fact to correct or delete.
+
+**Skills.** Instructions for particular jobs, in the same SKILL.md format as Claude's skills. Nexa ships one
+(`web-browsing`); ask it to "make a skill for my morning routine: …" and it writes one, or add, import and
+edit them in Settings → Skills. The model sees each skill's name and description and reads the rest when a
+request fits.
+
 ## Where things are
 
 | | |
@@ -146,6 +178,10 @@ reach Nexa only over adb, so the build refuses to go on without it.
 | `~/.config/nexa/tls/` | the web remote's own certificate (key 0600) |
 | `~/.local/share/nexa/audit.jsonl` | every action Nexa took (0600) |
 | `~/.local/share/nexa/models/`, `piper/` | offline speech engines |
+| `~/.local/share/nexa/memory.json` | what Nexa remembers about you (0600) |
+| `~/.local/share/nexa/skills/` | your skills, one folder each |
+| `~/.local/share/nexa/playwright/` | Playwright, installed by Nexa |
+| `~/.local/share/nexa/browser-profile/` | Nexa's own Chrome profile, used until the extension is set up |
 | `~/.local/share/nexa/remote-desktop-token` | lets GNOME skip asking again before Nexa moves the pointer (0600) |
 | `/run/nexa-helper/` | that this login has authorised the helper (root, 0700; gone at reboot) |
 

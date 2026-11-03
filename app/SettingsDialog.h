@@ -29,6 +29,10 @@ class ITextToSpeech;
 // Settings → Providers (endpoints, API keys, chat and speech models, active provider), Voice
 // (recognition and speech engines, wake word), Policy (when to ask before acting) and General
 // (system prompt). Edits a copy of the config; the caller applies config() after accept().
+class BrowserSettingsPage;
+class MemorySettingsPage;
+class SkillsSettingsPage;
+
 class SettingsDialog : public QDialog {
     Q_OBJECT
 public:
@@ -166,6 +170,10 @@ private:
     QLabel *mcpStates_{nullptr};
     int mcpRow_{-1};
     bool loadingConnector_{false};      // the form is being filled, not edited
+
+    BrowserSettingsPage *browserPage_{nullptr};
+    MemorySettingsPage *memoryPage_{nullptr};
+    SkillsSettingsPage *skillsPage_{nullptr};
 };
 
 } // namespace nexa

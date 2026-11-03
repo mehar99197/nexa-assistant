@@ -33,7 +33,8 @@ signals:
 };
 
 // A server run as a child process, messages as one JSON object per line on its standard streams
-// (MCP's stdio transport). Its stderr is logged, never shown as a result.
+// (MCP's stdio transport), started in the user's home folder. Its stderr is logged, never shown
+// as a result; its environment is never part of describe(), so a token in it reaches no log.
 class StdioMcpTransport : public IMcpTransport {
     Q_OBJECT
 public:

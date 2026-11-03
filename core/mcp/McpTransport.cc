@@ -4,6 +4,7 @@
 #include "core/net/HttpClient.h"
 #include "core/net/SseParser.h"
 
+#include <QDir>
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QNetworkReply>
@@ -59,6 +60,7 @@ void StdioMcpTransport::start(std::function<void(Result<void>)> done) {
     process_.setProcessEnvironment(environment);
     process_.setProgram(program_);
     process_.setArguments(arguments_);
+    process_.setWorkingDirectory(QDir::homePath());    // a server's files resolve in the user's home, not Nexa's
     // Started, or failed to: whichever comes first answers once.
     auto answered = std::make_shared<bool>(false);
     connect(&process_, &QProcess::started, this, [done, answered] {

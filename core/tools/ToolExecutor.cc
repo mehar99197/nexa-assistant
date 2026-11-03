@@ -52,8 +52,10 @@ void ToolExecutor::execute(const QString &toolName, const QJsonObject &arguments
     QString question = u"Allow %1?\n\n%2"_s.arg(
         toolName, QString::fromUtf8(QJsonDocument(arguments).toJson(QJsonDocument::Indented)));
     if (!decision.reason.isEmpty()) question += u"\nRisk: %1"_s.arg(decision.reason);
+    // The question may stay open for a while: the tool is looked up again by name once it is
+    // answered, since a connector that went or listed its tools again has deleted the old one.
     const QPointer<ToolExecutor> self(this);
-    confirmer_(question, [self, id, tool, arguments, source, decision, done = std::move(done)](bool allowed) mutable {
+    confirmer_(question, [self, id, toolName, arguments, source, decision, done = std::move(done)](bool allowed) mutable {
         if (!self) return;
         if (!allowed) {
             const Error error{ErrorCode::PermissionDenied, u"The user declined this action"_s};
@@ -61,7 +63,14 @@ void ToolExecutor::execute(const QString &toolName, const QJsonObject &arguments
             done(error);
             return;
         }
-        self->invoke(id, tool, arguments, source, decision.destructive, true, std::move(done));
+        ITool *still = self->registry_->find(toolName);
+        if (!still) {
+            const Error error{ErrorCode::NotSupported, u"\"%1\" is no longer available"_s.arg(toolName)};
+            emit self->actionFinished(id, false, error.message, 0);
+            done(error);
+            return;
+        }
+        self->invoke(id, still, arguments, source, decision.destructive, true, std::move(done));
     });
 }
 

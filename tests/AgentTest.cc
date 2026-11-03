@@ -220,6 +220,92 @@ TEST_CASE("Agent keeps a withheld tool from the model and refuses a call to it w
     CHECK(f.registry.find(u"look"_s) != nullptr);
 }
 
+TEST_CASE("Agent leaves images out for a model that refuses them, and says so") {
+    Fixture f;
+    f.conversation.addUser(u"what is this?"_s, {ImageAttachment{"JPEG", u"image/jpeg"_s}});
+    f.provider.script = {{{}, {}, Error{ErrorCode::Http, u"HTTP 400: messages[1].content[1].type has unsupported value \"image_url\""_s}},
+                         {u"I cannot see images with this model."_s, {}, {}}};
+    QStringList notices;
+    QObject::connect(&f.agent, &Agent::notice, [&notices](const QString &notice) { notices.append(notice); });
+    f.agent.run(&f.provider, &f.conversation, u"m"_s, u"gui"_s);
+    REQUIRE(f.waitDone());
+    CHECK(f.finish == FinishReason::Stop);
+    CHECK_FALSE(f.error.has_value());
+    // The same step went out twice: with the image, then without it and with a note instead.
+    REQUIRE(f.provider.requests.size() == 2);
+    CHECK_FALSE(f.provider.requests[0].messages.last().images.isEmpty());
+    const ChatMessage &retried = f.provider.requests[1].messages.last();
+    CHECK(retried.images.isEmpty());
+    CHECK(retried.text.startsWith(u"what is this?"_s));
+    CHECK(retried.text.contains(u"cannot see images"_s));
+    REQUIRE(notices.size() == 1);
+    CHECK(notices[0].contains(u"m cannot see images"_s));
+    CHECK(f.agent.cannotSeeImages(u"m"_s));
+    CHECK_FALSE(f.agent.cannotSeeImages(u"other"_s));
+    CHECK(f.conversation.messages().last().text == u"I cannot see images with this model."_s);
+
+    // From then on that model's requests go without images from the start, and quietly.
+    f.conversation.addUser(u"and this one?"_s, {ImageAttachment{"JPEG", u"image/jpeg"_s}});
+    f.provider.script = {{u"Still cannot."_s, {}, {}}};
+    f.finish.reset();
+    f.agent.run(&f.provider, &f.conversation, u"m"_s, u"gui"_s);
+    REQUIRE(f.waitDone());
+    REQUIRE(f.provider.requests.size() == 3);
+    CHECK(f.provider.requests[2].messages.last().images.isEmpty());
+    CHECK(notices.size() == 1);
+}
+
+TEST_CASE("Agent reports an error unrelated to images as before, images or not") {
+    Fixture f;
+    f.conversation.addUser(u"look"_s, {ImageAttachment{"JPEG", u"image/jpeg"_s}});
+    f.provider.script = {{{}, {}, Error{ErrorCode::Http, u"HTTP 500: the upstream is down"_s}}};
+    f.agent.run(&f.provider, &f.conversation, u"m"_s, u"gui"_s);
+    REQUIRE(f.waitDone());
+    REQUIRE(f.error.has_value());
+    CHECK(f.error->message.contains(u"upstream"_s));
+    CHECK(f.provider.requests.size() == 1);
+    CHECK_FALSE(f.agent.cannotSeeImages(u"m"_s));
+
+    // A rate limit that names a vision model, or an outage that mentions images, is no refusal.
+    Fixture g;
+    g.conversation.addUser(u"look"_s, {ImageAttachment{"JPEG", u"image/jpeg"_s}});
+    g.provider.script = {{{}, {}, Error{ErrorCode::Http, u"HTTP 429: llama-vision is rate limited"_s}}};
+    g.agent.run(&g.provider, &g.conversation, u"llama-vision"_s, u"gui"_s);
+    REQUIRE(g.waitDone());
+    CHECK(g.error.has_value());
+    CHECK(g.provider.requests.size() == 1);
+    CHECK_FALSE(g.agent.cannotSeeImages(u"llama-vision"_s));
+    Fixture h;
+    h.conversation.addUser(u"look"_s, {ImageAttachment{"JPEG", u"image/jpeg"_s}});
+    h.provider.script = {{{}, {}, Error{ErrorCode::Http, u"HTTP 400: the image exceeds the 5 MB maximum"_s}}};
+    h.agent.run(&h.provider, &h.conversation, u"m"_s, u"gui"_s);
+    REQUIRE(h.waitDone());
+    CHECK(h.provider.requests.size() == 1);     // a refusal of this image, not of images
+    CHECK_FALSE(h.agent.cannotSeeImages(u"m"_s));
+}
+
+TEST_CASE("Agent does not remember a model as blind when the retry without images fails too") {
+    Fixture f;
+    f.conversation.addUser(u"look"_s, {ImageAttachment{"JPEG", u"image/jpeg"_s}});
+    f.provider.script = {{{}, {}, Error{ErrorCode::Http, u"[400]: content[1].type has unsupported value \"image_url\""_s}},
+                         {{}, {}, Error{ErrorCode::Http, u"HTTP 503: capacity is temporarily unavailable"_s}}};
+    f.agent.run(&f.provider, &f.conversation, u"m"_s, u"gui"_s);
+    REQUIRE(f.waitDone());
+    REQUIRE(f.error.has_value());
+    CHECK(f.error->message.contains(u"capacity"_s));
+    REQUIRE(f.provider.requests.size() == 2);
+    CHECK(f.provider.requests[1].messages.last().images.isEmpty());
+    CHECK_FALSE(f.agent.cannotSeeImages(u"m"_s));
+
+    // The next run sends the image again — nothing was learnt.
+    f.provider.script = {{u"fine"_s, {}, {}}};
+    f.error.reset();
+    f.agent.run(&f.provider, &f.conversation, u"m"_s, u"gui"_s);
+    REQUIRE(f.waitDone());
+    REQUIRE(f.provider.requests.size() == 3);
+    CHECK_FALSE(f.provider.requests[2].messages.last().images.isEmpty());
+}
+
 TEST_CASE("Agent::cancel during a tool closes the call and stops") {
     Fixture f;
     f.provider.script = {{{}, {call(u"c1"_s, u"slow"_s, u"{}"_s), call(u"c2"_s, u"echo"_s, u"{}"_s)}, {}}};
@@ -291,6 +377,23 @@ TEST_CASE("ToolExecutor asks for confirmation and honours the answer") {
     f.executor.execute(u"look"_s, {}, u"gui"_s, [&](Result<ToolResult> r) { readOnly = std::move(r); });
     CHECK(readOnly->isOk());
     CHECK(questions.size() == 2);
+}
+
+TEST_CASE("A tool that goes while its question is open is not run when the answer comes") {
+    Fixture f;
+    f.policy.setMode(PolicyMode::ConfirmAll);
+    std::function<void(bool)> pending;
+    f.executor.setConfirmer([&](const QString &, std::function<void(bool)> answer) { pending = std::move(answer); });
+
+    std::optional<Result<ToolResult>> result;
+    f.executor.execute(u"echo"_s, {{u"msg"_s, u"a"_s}}, u"gui"_s, [&](Result<ToolResult> r) { result = std::move(r); });
+    REQUIRE(pending);
+    CHECK_FALSE(result.has_value());
+    f.registry.remove(u"echo"_s);   // e.g. its connector listed its tools again: the old one is deleted
+    pending(true);
+    REQUIRE(result.has_value());
+    REQUIRE_FALSE(result->isOk());
+    CHECK(result->error().message.contains(u"no longer available"_s));
 }
 
 TEST_CASE("A model that cannot call tools is taught the convention, and its calls are read from the text") {

@@ -10,6 +10,7 @@
 #include "core/tools/ToolExecutor.h"
 #include "remote/RemoteServer.h"
 #include "system/android/AndroidDevice.h"
+#include "system/browser/BrowserService.h"
 #include "system/helper/HelperClient.h"
 #include "ui/NexaCoreWidget.h"
 #include "voice/pipeline/VoicePipeline.h"
@@ -454,9 +455,21 @@ void MainWindow::buildStatusBar() {
     statusLabel_->installEventFilter(this);
     statusBar()->addWidget(statusLabel_, 1);
 
+    appLabel_ = new QLabel(this);
+    statusBar()->addPermanentWidget(appLabel_);
+    showAppContext(controller_->appContextName(), controller_->appContextHint());
+
     screenLabel_ = new QLabel(this);
     statusBar()->addPermanentWidget(screenLabel_);
     showScreenSharing(controller_->isScreenShared());
+
+    if (status_.browser) {
+        // Where the browser tools work; installing Playwright or adding the extension changes it.
+        browserLabel_ = new QLabel(this);
+        statusBar()->addPermanentWidget(browserLabel_);
+        showBrowser();
+        connect(status_.browser, &BrowserService::stateChanged, this, &MainWindow::showBrowser);
+    }
 
     helperLabel_ = new QLabel(this);
     statusBar()->addPermanentWidget(helperLabel_);
@@ -531,6 +544,7 @@ void MainWindow::connectController() {
     connect(controller_, &AppController::replyStarted, this, [this] { chatView_->beginAssistantMessage(); });
     connect(controller_, &AppController::replyRoute, chatView_, &ChatView::setReplyRoute);
     connect(controller_, &AppController::replyDelta, chatView_, &ChatView::appendAssistantDelta);
+    connect(controller_, &AppController::replyNotice, chatView_, &ChatView::addNotice);
     connect(controller_, &AppController::replyAction, chatView_, &ChatView::addAction);
     connect(controller_, &AppController::replyFinished, this, [this](FinishReason reason, bool empty) {
         chatView_->endAssistantMessage();
@@ -554,6 +568,7 @@ void MainWindow::connectController() {
     connect(controller_, &AppController::coreModeChanged, this, &MainWindow::showCoreMode);
     connect(controller_, &AppController::litNodesChanged, this, [this](unsigned nodes) { presence_->setLitNodes(nodes); });
     connect(controller_, &AppController::screenSharingChanged, this, &MainWindow::showScreenSharing);
+    connect(controller_, &AppController::appContextChanged, this, &MainWindow::showAppContext);
     connect(phonePanel_, &PhonePanel::phoneChanged, this, &MainWindow::showPhonePanel);
     connect(controller_, &AppController::themeChanged, this,
             [this](const QString &theme) { applyPack(NexaThemes::resolve(theme)); });
@@ -643,6 +658,7 @@ QString MainWindow::hintFor(CoreMode mode) const {
     const bool canListen = voice && voice->canListen();
     switch (mode) {
     case CoreMode::Idle:
+        if (!appHint_.isEmpty()) return appHint_ + (controller_->isScreenShared() ? tr(" Your screen is shared.") : QString());
         return (canListen ? tr("Type a request, or hold Talk and speak.") : tr("Type a request."))
                + (controller_->isScreenShared() ? tr(" Your screen is shared.") : QString());
     case CoreMode::WakeWord:
@@ -761,13 +777,14 @@ void MainWindow::wear(const QString &palette, const QString &design) {
     refreshTheme();
 }
 
-void MainWindow::snapshotSettings(const QString &directory) {
+void MainWindow::snapshotSettings(const QString &directory, std::function<void()> done) {
     auto *dialog = new SettingsDialog(controller_->config(), registry_, http_, status_, this);
     dialog->setAttribute(Qt::WA_DeleteOnClose);
     dialog->show();
-    QTimer::singleShot(600, dialog, [dialog, directory] {
+    QTimer::singleShot(600, dialog, [dialog, directory, done = std::move(done)] {
         dialog->snapshotTabs(directory);
         dialog->close();
+        if (done) done();
     });
 }
 
@@ -872,6 +889,21 @@ void MainWindow::showPhonePanel(bool connected) {
     } else {
         resizeDocks({phonePanel_}, {280}, Qt::Horizontal);
     }
+}
+
+// Where the user is, as far as Nexa knows: the app it opened last for them.
+void MainWindow::showAppContext(const QString &name, const QString &hint) {
+    appHint_ = hint;
+    appLabel_->setVisible(!name.isEmpty());
+    appLabel_->setText(tr("In: %1").arg(name));
+    appLabel_->setToolTip(hint.isEmpty() ? QString()
+                                         : hint + u'\n' + tr("Opening another app, or closing this one, moves on."));
+    showCoreMode(controller_->coreMode());
+}
+
+void MainWindow::showBrowser() {
+    browserLabel_->setText(tr("Browser: %1").arg(status_.browser->summary()));
+    browserLabel_->setToolTip(status_.browser->detail());
 }
 
 void MainWindow::showScreenSharing(bool shared) {

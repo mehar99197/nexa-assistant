@@ -8,6 +8,7 @@
 #include <QJsonObject>
 #include <QList>
 #include <QObject>
+#include <QSet>
 
 #include <memory>
 #include <optional>
@@ -34,6 +35,9 @@ public:
     void cancel();
     bool isRunning() const { return running_; }
     void setMaxSteps(int steps) { maxSteps_ = steps; }
+    // A model that refused a request because of the images in it (a text-only model): from then
+    // on its requests go without images, with a note where each one was.
+    bool cannotSeeImages(const QString &model) const { return blindModels_.contains(model); }
 
 signals:
     void textDelta(const QString &delta);
@@ -41,10 +45,17 @@ signals:
     void toolFinished(const QString &tool, bool ok, const QString &summary, qint64 elapsedMs);
     void finished(nexa::FinishReason reason);
     void failed(const nexa::Error &error);
+    // Something the user should know that is not the end of the reply: the model cannot see
+    // the screenshot, say.
+    void notice(const QString &message);
 
 private:
     void requestStep();
+    void sendStep();                            // the request of the current step (again, after a refusal)
     void onStepFinished(ChatStream *stream, FinishReason reason);
+    bool refusesImages(const Error &error) const;       // a 400-class error refusing image content
+    static bool hasImages(const ChatRequest &request);
+    static void stripImages(ChatRequest &request);      // images out, a note in their place
     void runNextTool();
     // Every tool call the model made needs a result, or the next request is rejected.
     void closeOpenCalls(const QString &text);
@@ -67,6 +78,9 @@ private:
     // The provider cannot call tools natively: they are described in the prompt and read back out
     // of the reply, which is therefore shown once complete rather than as it streams.
     bool textTools_{false};
+    QSet<QString> blindModels_;
+    QString pendingBlind_;          // the model whose image-free retry is on its way
+    bool stepHadImages_{false};     // the request on its way carries images
 };
 
 } // namespace nexa

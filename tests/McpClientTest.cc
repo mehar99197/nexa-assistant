@@ -10,10 +10,13 @@
 #include "FakeHttpServer.h"
 #include "QtStringMakers.h"
 
+#include <QDir>
+#include <QFile>
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QSignalSpy>
 #include <QStandardPaths>
+#include <QTemporaryDir>
 #include <QTest>
 
 #include <catch2/catch_test_macros.hpp>
@@ -73,27 +76,30 @@ TEST_CASE("An MCP server on stdio: initialise, every page of tools, calls, error
     REQUIRE(listed->value().size() == 3);                 // both pages
     CHECK(listed->value().at(0).name == u"echo"_s);
     CHECK(listed->value().at(0).inputSchema.value(u"required"_s).toArray().first().toString() == u"text"_s);
+    CHECK(listed->value().at(0).readOnly());              // its annotations were read
+    CHECK_FALSE(listed->value().at(1).readOnly());
     CHECK(listed->value().at(2).description == u"Always fails"_s);
 
-    std::optional<Result<QString>> echoed;
-    client.callTool(u"echo"_s, QJsonObject{{u"text"_s, u"hi"_s}}, [&echoed](Result<QString> text) { echoed = std::move(text); });
+    std::optional<Result<McpClient::CallResult>> echoed;
+    client.callTool(u"echo"_s, QJsonObject{{u"text"_s, u"hi"_s}}, [&echoed](Result<McpClient::CallResult> text) { echoed = std::move(text); });
     REQUIRE(waitFor(echoed));
     REQUIRE(echoed->isOk());
-    CHECK(echoed->value() == u"echo: hi"_s);
+    CHECK(echoed->value().text == u"echo: hi"_s);
+    CHECK(echoed->value().images.isEmpty());
 
-    std::optional<Result<QString>> sum;
-    client.callTool(u"add"_s, QJsonObject{{u"a"_s, 3}, {u"b"_s, 4}}, [&sum](Result<QString> text) { sum = std::move(text); });
+    std::optional<Result<McpClient::CallResult>> sum;
+    client.callTool(u"add"_s, QJsonObject{{u"a"_s, 3}, {u"b"_s, 4}}, [&sum](Result<McpClient::CallResult> text) { sum = std::move(text); });
     REQUIRE(waitFor(sum));
-    CHECK(sum->value() == u"7"_s);
+    CHECK(sum->value().text == u"7"_s);
 
     // A tool that reports an error, and a tool the server does not have.
-    std::optional<Result<QString>> failed;
-    client.callTool(u"fail"_s, {}, [&failed](Result<QString> text) { failed = std::move(text); });
+    std::optional<Result<McpClient::CallResult>> failed;
+    client.callTool(u"fail"_s, {}, [&failed](Result<McpClient::CallResult> text) { failed = std::move(text); });
     REQUIRE(waitFor(failed));
     REQUIRE_FALSE(failed->isOk());
     CHECK(failed->error().message == u"boom"_s);
-    std::optional<Result<QString>> unknown;
-    client.callTool(u"nothing"_s, {}, [&unknown](Result<QString> text) { unknown = std::move(text); });
+    std::optional<Result<McpClient::CallResult>> unknown;
+    client.callTool(u"nothing"_s, {}, [&unknown](Result<McpClient::CallResult> text) { unknown = std::move(text); });
     REQUIRE(waitFor(unknown));
     REQUIRE_FALSE(unknown->isOk());
     CHECK(unknown->error().code == ErrorCode::InvalidArgument);
@@ -101,8 +107,8 @@ TEST_CASE("An MCP server on stdio: initialise, every page of tools, calls, error
     CHECK(closed.isEmpty());        // its ping was answered, the link held
 
     // The process goes away: the client says so, and a call in flight comes back as an error.
-    std::optional<Result<QString>> gone;
-    client.callTool(u"quit"_s, {}, [&gone](Result<QString> text) { gone = std::move(text); });
+    std::optional<Result<McpClient::CallResult>> gone;
+    client.callTool(u"quit"_s, {}, [&gone](Result<McpClient::CallResult> text) { gone = std::move(text); });
     REQUIRE(waitFor(gone));
     CHECK_FALSE(gone->isOk());
     CHECK(QTest::qWaitFor([&closed] { return !closed.isEmpty(); }, 5000));
@@ -148,16 +154,16 @@ TEST_CASE("Over HTTP every message is a POST; the answer is JSON or a short even
     // The call's answer as an event stream, the way servers that stream progress reply.
     server.respond({200, "text/event-stream",
                     {"event: message\ndata: {\"jsonrpc\":\"2.0\",\"id\":2,", "\"result\":{\"content\":[{\"type\":\"text\",\"text\":\"from the web\"}]}}\n\n"}});
-    std::optional<Result<QString>> answer;
-    client.callTool(u"any"_s, {}, [&answer](Result<QString> text) { answer = std::move(text); });
+    std::optional<Result<McpClient::CallResult>> answer;
+    client.callTool(u"any"_s, {}, [&answer](Result<McpClient::CallResult> text) { answer = std::move(text); });
     REQUIRE(waitFor(answer));
     REQUIRE(answer->isOk());
-    CHECK(answer->value() == u"from the web"_s);
+    CHECK(answer->value().text == u"from the web"_s);
 
     // A server error becomes one of ours.
     server.respond({500, "application/json", {R"({"error":"down"})"}});
-    std::optional<Result<QString>> down;
-    client.callTool(u"any"_s, {}, [&down](Result<QString> text) { down = std::move(text); });
+    std::optional<Result<McpClient::CallResult>> down;
+    client.callTool(u"any"_s, {}, [&down](Result<McpClient::CallResult> text) { down = std::move(text); });
     REQUIRE(waitFor(down));
     CHECK_FALSE(down->isOk());
 
@@ -178,6 +184,20 @@ TEST_CASE("The result text of a call, and the tools in a list, are read as the p
     CHECK(McpClient::resultText(structured).value() == u"{\"ok\":true}"_s);
     const QJsonObject failed{{u"isError"_s, true}, {u"content"_s, QJsonArray{QJsonObject{{u"type"_s, u"text"_s}, {u"text"_s, u"nope"_s}}}}};
     CHECK(McpClient::resultText(failed).error().message == u"nope"_s);
+
+    // The picture itself is kept, decoded, beside its name in the text; one that does not decode is not.
+    const QJsonObject picture{{u"content"_s, QJsonArray{QJsonObject{{u"type"_s, u"image"_s}, {u"mimeType"_s, u"image/png"_s},
+                                                                    {u"data"_s, QString::fromLatin1(QByteArray("PNGDATA").toBase64())}},
+                                                        QJsonObject{{u"type"_s, u"image"_s}, {u"mimeType"_s, u"image/png"_s},
+                                                                    {u"data"_s, u"%%% not base64 %%%"_s}},
+                                                        QJsonObject{{u"type"_s, u"image"_s}, {u"mimeType"_s, u"text/html"_s},
+                                                                    {u"data"_s, QString::fromLatin1(QByteArray("<b>").toBase64())}}}}};
+    const auto call = McpClient::resultOf(picture);
+    REQUIRE(call.isOk());
+    REQUIRE(call.value().images.size() == 1);
+    CHECK(call.value().images.first().data == QByteArray("PNGDATA"));
+    CHECK(call.value().images.first().mimeType == u"image/png"_s);
+    CHECK(call.value().text.startsWith(u"[image: image/png]"_s));
 
     const QJsonObject list{{u"tools"_s, QJsonArray{QJsonObject{{u"name"_s, u"a"_s}, {u"title"_s, u"A tool"_s}},
                                                    QJsonObject{{u"description"_s, u"nameless"_s}}}}};
@@ -232,4 +252,85 @@ TEST_CASE("Connectors register a server's tools as Nexa tools and withdraw them 
     CHECK(connectors.statuses().first().state == u"off"_s);
     connectors.apply({});
     CHECK(connectors.statuses().isEmpty());
+}
+
+TEST_CASE("A shaped connector keeps its tools' own names, sets their flags, and filters what passes") {
+    if (python().isEmpty()) SKIP("python3 is needed for the fake MCP server");
+    ToolRegistry registry;
+    HttpClient http;
+    McpConnectors connectors(&registry, &http);
+    QStringList seen;
+    connectors.setShaping(McpConnectors::Shaping{
+        .spec = [](const McpClient::Tool &tool, ToolSpec defaults) -> std::optional<ToolSpec> {
+            if (tool.name == u"fail"_s) return std::nullopt;
+            defaults.name = tool.name;
+            defaults.description = tool.description;
+            defaults.mutating = !tool.readOnly();
+            defaults.privileged = false;
+            return defaults;
+        },
+        .arguments = [](const QString &, QJsonObject arguments) {
+            arguments.remove(u"filename"_s);
+            return arguments;
+        },
+        .result = [&seen](const QString &tool, ToolResult result) {
+            seen.append(tool);
+            result.text += u" (seen)"_s;
+            return result;
+        },
+    });
+    McpServerConfig config = fakeConfig(u"shaped"_s);
+    config.environment.append(u"FAKE_MCP_EXTRA=1"_s);
+    connectors.apply({config});
+    REQUIRE(QTest::qWaitFor([&registry] { return registry.contains(u"picture"_s); }, 10'000));
+    CHECK(registry.contains(u"echo"_s));
+    CHECK_FALSE(registry.contains(u"fail"_s));             // left out
+    CHECK_FALSE(registry.contains(u"mcp_shaped_echo"_s));
+    CHECK_FALSE(registry.find(u"echo"_s)->spec().mutating);     // read-only, from its annotation
+    CHECK(registry.find(u"add"_s)->spec().mutating);
+    CHECK_FALSE(registry.find(u"add"_s)->spec().privileged);
+    CHECK(connectors.statuses().first().tools.size() == 5);
+
+    const auto run = [&registry](const QString &name, const QJsonObject &arguments) {
+        std::optional<Result<ToolResult>> result;
+        registry.find(name)->invoke(arguments, [&result](Result<ToolResult> r) { result = std::move(r); });
+        REQUIRE(waitFor(result));
+        REQUIRE(result->isOk());
+        return result->value();
+    };
+    // The arguments' filter ran before the call, the result's after it.
+    const ToolResult args = run(u"args"_s, QJsonObject{{u"text"_s, u"hi"_s}, {u"filename"_s, u".bashrc"_s}});
+    CHECK(args.text == u"{\"text\": \"hi\"} (seen)"_s);
+    CHECK(seen == QStringList{u"args"_s});
+    // A picture reaches the tool's result, for a model that can see it.
+    const ToolResult picture = run(u"picture"_s, {});
+    REQUIRE(picture.image.has_value());
+    CHECK(picture.image->mimeType == u"image/png"_s);
+    CHECK(picture.image->data.startsWith("\x89PNG"));
+    CHECK(picture.text.contains(u"a dot"_s));
+    // The server runs in the user's home folder, not Nexa's working directory.
+    CHECK(run(u"cwd"_s, {}).text == QDir::homePath() + u" (seen)"_s);
+}
+
+TEST_CASE("A connector that failed is tried again on the next apply, even with the same settings") {
+    if (python().isEmpty()) SKIP("python3 is needed for the fake MCP server");
+    QTemporaryDir dir;
+    REQUIRE(dir.isValid());
+    const QString flag = dir.filePath(u"ready"_s);
+    ToolRegistry registry;
+    HttpClient http;
+    McpConnectors connectors(&registry, &http);
+    McpServerConfig config = fakeConfig(u"flaky"_s);
+    config.environment.append(u"FAKE_MCP_REQUIRE="_s + flag);
+
+    connectors.apply({config});
+    REQUIRE(QTest::qWaitFor([&connectors] { return connectors.statuses().first().state == u"failed"_s; }, 10'000));
+    CHECK_FALSE(registry.contains(u"mcp_flaky_echo"_s));
+
+    QFile file(flag);
+    REQUIRE(file.open(QIODevice::WriteOnly));
+    file.close();
+    connectors.apply({config});
+    REQUIRE(QTest::qWaitFor([&registry] { return registry.contains(u"mcp_flaky_echo"_s); }, 10'000));
+    CHECK(connectors.statuses().first().state == u"ready"_s);
 }

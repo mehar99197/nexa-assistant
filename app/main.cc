@@ -8,19 +8,26 @@
 #include "app/SystemStatus.h"
 #include "app/UnixSignals.h"
 #include "core/agent/Agent.h"
+#include "core/agent/AppContext.h"
 #include "core/Logging.h"
 #include "core/ai/ProviderRegistry.h"
 #include "core/audit/AuditLog.h"
 #include "core/config/ConfigStore.h"
 #include "core/intent/IntentRouter.h"
+#include "core/intent/MemoryIntents.h"
 #include "core/intent/PcIntents.h"
 #include "core/intent/PhoneIntents.h"
 #include "core/net/HttpClient.h"
 #include "core/policy/PanicController.h"
+#include "core/memory/MemoryStore.h"
+#include "core/memory/MemoryTools.h"
 #include "core/policy/PolicyEngine.h"
+#include "core/skills/SkillCatalog.h"
+#include "core/skills/SkillTools.h"
 #include "core/tools/ToolExecutor.h"
 #include "core/tools/ToolRegistry.h"
 #include "system/SystemTools.h"
+#include "system/office/OfficeTools.h"
 #include "remote/PairingManager.h"
 #include "remote/RemoteServer.h"
 #include "remote/TlsIdentity.h"
@@ -31,6 +38,8 @@
 #include "system/android/AndroidTools.h"
 #include "system/apps/DesktopEntryIndex.h"
 #include "system/audio/WpctlAudioController.h"
+#include "system/browser/BrowserService.h"
+#include "system/browser/PlaywrightInstaller.h"
 #include "system/commands/LocalCommandRunner.h"
 #include "system/commands/RootCommandRunner.h"
 #include "system/helper/HelperClient.h"
@@ -285,6 +294,10 @@ int main(int argc, char *argv[]) {
         phone.withDevice([](Result<AdbDevice>) {});
     });
 
+    // The app the user is in — the one Nexa opened last for them — so the request after goes to
+    // the right place: a command into the terminal, a document into LibreOffice.
+    AppContext appContext;
+    const auto appOpened = [&appContext](const OpenedApp &app) { appContext.noteOpened(app); };
     registerSystemTools(tools, SystemServices{.commands = &commands,
                                               .apps = &apps,
                                               .audio = &audio,
@@ -292,7 +305,11 @@ int main(int argc, char *argv[]) {
                                               .files = &files,
                                               .screen = &screen,
                                               .rootCommands = &rootCommands,
-                                              .input = [&input] { return input.current(); }});
+                                              .input = [&input] { return input.current(); },
+                                              .appOpened = appOpened,
+                                              .appClosed = [&appContext](const OpenedApp &app) { appContext.noteClosed(app); }});
+    // Documents, presentations and spreadsheets as files for LibreOffice.
+    registerOfficeTools(tools, OfficeServices{.files = &files, .commands = &commands, .appOpened = appOpened});
 
     // Voice: microphone → recognition → requests; replies → speech (backends built by AppController)
     AudioCapture microphone;
@@ -305,9 +322,26 @@ int main(int argc, char *argv[]) {
     McpConnectors mcp(&tools, &http);
     mcp.apply(config.mcp.servers);
 
+    // The browser that is part of Nexa: Playwright, installed on first start into
+    // ~/.local/share/nexa/playwright, working in the user's own Chrome through its extension — or
+    // in a Chrome with Nexa's own profile until that is set up (Settings → Browser). Its tools are
+    // browser_navigate, browser_snapshot, …: text, so they work for a model that cannot see.
+    PlaywrightInstaller playwright;
+    BrowserService browser(&tools, &http, &playwright);
+    browser.apply(config.browser);
+
+    // What Nexa remembers about the user, and the skills the model may load (Settings → Memory,
+    // Settings → Skills); both come back in the system prompt.
+    MemoryStore memory;
+    if (const Result<void> loaded = memory.load(); !loaded) qCWarning(lcConfig).noquote() << loaded.error().message;
+    syncMemoryTools(tools, &memory, config.memory);
+    SkillCatalog skills;
+    syncSkillTools(tools, &skills, config.skills);
+
     // Fast path (no model) for common phrases; order = priority
     IntentRouter router([&tools](const QString &tool) { return tools.contains(tool); });
     router.add(std::make_unique<ControlIntent>());
+    router.add(std::make_unique<MemoryIntent>());    // after the stops: "forget it" stays one
     router.add(std::make_unique<PhoneIntent>());     // before the PC's: "open youtube on my phone"
     router.add(std::make_unique<MediaIntent>());
     router.add(std::make_unique<AudioIntent>());
@@ -320,8 +354,26 @@ int main(int argc, char *argv[]) {
     agent.setMaxSteps(config.agent.maxToolRounds);
 
     AppController controller(
-        AppServices{&store, &providers, &tools, &executor, &router, &agent, &panic, &policy, &voice, &http},
+        AppServices{.store = &store,
+                    .providers = &providers,
+                    .tools = &tools,
+                    .executor = &executor,
+                    .router = &router,
+                    .agent = &agent,
+                    .panic = &panic,
+                    .policy = &policy,
+                    .voice = &voice,
+                    .http = &http,
+                    .context = &appContext,
+                    // Typing goes to the window with the keyboard: when that is Nexa's own, it
+                    // must not be done.
+                    .windowActive = [] { return QApplication::activeWindow() != nullptr; },
+                    .canType = [&input] { return input.current() != nullptr; },
+                    .memory = &memory,
+                    .skills = &skills,
+                    .browserTarget = [&browser] { return browser.targetPhrase(); }},
         std::move(config), SystemInfo::summary());
+    QObject::connect(&browser, &BrowserService::notice, &controller, &AppController::notify);
 
     // The web remote: a phone's browser talks to Nexa. Off until Settings → Remote switches it on;
     // then every request it makes goes through the controller like one typed here.
@@ -367,11 +419,14 @@ int main(int argc, char *argv[]) {
     applyRemote(controller.config());
 
     QObject::connect(&controller, &AppController::configChanged, &app,
-                     [applyAndroid, applyRemote, &agent, &mcp](const Config &updated) {
+                     [applyAndroid, applyRemote, &agent, &mcp, &browser, &tools, &memory, &skills](const Config &updated) {
                          agent.setMaxSteps(updated.agent.maxToolRounds);
                          applyAndroid(updated.android);
                          applyRemote(updated);
                          mcp.apply(updated.mcp.servers);
+                         browser.apply(updated.browser);
+                         syncMemoryTools(tools, &memory, updated.memory);
+                         syncSkillTools(tools, &skills, updated.skills);
                      });
 
     // Nexa Phone paired over adb (--pair-phone, Settings → Android): the web remote is switched on
@@ -403,7 +458,10 @@ int main(int argc, char *argv[]) {
                                    .pairing = &pairing,
                                    .phoneLink = &phoneLink,
                                    .mcp = &mcp,
-                                   .shortcuts = &shortcuts},
+                                   .shortcuts = &shortcuts,
+                                   .browser = &browser,
+                                   .memory = &memory,
+                                   .skills = &skills},
                       AuditLog::defaultPath());
     if (!runDesign.isEmpty() || !runPalette.isEmpty()) window.wear(runPalette, runDesign);
     window.show();
@@ -476,8 +534,8 @@ int main(int argc, char *argv[]) {
     if (steps.isEmpty() && !screenshotPath.isEmpty()) QTimer::singleShot(1500, runNext);
     if (parser.isSet(settingsShotsOption)) {
         const QString directory = parser.value(settingsShotsOption);
-        QTimer::singleShot(1500, &window, [&window, directory] { window.snapshotSettings(directory); });
-        QTimer::singleShot(3500, &app, &QCoreApplication::quit);
+        // Quits once the pictures are taken: a slow start (loading a whisper model) must not cut them short.
+        QTimer::singleShot(1500, &window, [&window, directory] { window.snapshotSettings(directory, [] { QCoreApplication::quit(); }); });
     }
     if (parser.isSet(pairPhoneOption)) QTimer::singleShot(2000, &controller, pairPhone);
 

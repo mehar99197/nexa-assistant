@@ -48,7 +48,7 @@ public:
 
     void openSettings(const QString &tab = {});
     // Opens Settings without blocking, saves a picture of each tab into `directory`, closes it.
-    void snapshotSettings(const QString &directory);
+    void snapshotSettings(const QString &directory, std::function<void()> done = {});
     // Wears a palette and a design for this run, without touching the settings (--theme, --design).
     void wear(const QString &palette, const QString &design);
     // Asked when the window is closed: true means "hidden to the tray, keep running".
@@ -90,7 +90,9 @@ private:
     void showPhone(const QString &description);
     void showRemote();
     void showScreenSharing(bool shared);
+    void showBrowser();
     void showPhonePanel(bool connected);
+    void showAppContext(const QString &name, const QString &hint);
     void setBusy(bool busy);
 
     AppController *controller_;
@@ -124,6 +126,9 @@ private:
     QAction *shareScreenAction_{nullptr};
     QLabel *statusLabel_{nullptr};
     QLabel *screenLabel_{nullptr};
+    QLabel *browserLabel_{nullptr};
+    QLabel *appLabel_{nullptr};     // "In: GNOME Terminal" while Nexa knows where the user is
+    QString appHint_;
     QLabel *helperLabel_{nullptr};
     QLabel *sttLabel_{nullptr};
     QLabel *ttsLabel_{nullptr};

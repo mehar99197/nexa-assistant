@@ -8,5 +8,6 @@ Q_LOGGING_CATEGORY(lcNet, "nexa.net")
 Q_LOGGING_CATEGORY(lcAi, "nexa.ai")
 Q_LOGGING_CATEGORY(lcVoice, "nexa.voice")
 Q_LOGGING_CATEGORY(lcMcp, "nexa.mcp")
+Q_LOGGING_CATEGORY(lcBrowser, "nexa.browser")
 
 } // namespace nexa

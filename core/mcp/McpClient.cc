@@ -90,14 +90,14 @@ void McpClient::listPage(const QString &cursor, QList<Tool> sofar, std::function
     });
 }
 
-void McpClient::callTool(const QString &name, const QJsonObject &arguments, std::function<void(Result<QString>)> done) {
+void McpClient::callTool(const QString &name, const QJsonObject &arguments, std::function<void(Result<CallResult>)> done) {
     request(u"tools/call"_s, QJsonObject{{u"name"_s, name}, {u"arguments"_s, arguments}}, kCallTimeoutMs,
             [done](Result<QJsonObject> result) {
         if (!result) {
             done(result.error());
             return;
         }
-        done(resultText(result.value()));
+        done(resultOf(result.value()));
     });
 }
 
@@ -114,7 +114,8 @@ void McpClient::close() {
     }
 }
 
-Result<QString> McpClient::resultText(const QJsonObject &result) {
+Result<McpClient::CallResult> McpClient::resultOf(const QJsonObject &result) {
+    CallResult call;
     QStringList parts;
     for (const QJsonValue &item : result.value(u"content"_s).toArray()) {
         const QJsonObject content = item.toObject();
@@ -122,7 +123,13 @@ Result<QString> McpClient::resultText(const QJsonObject &result) {
         if (type == u"text"_s) {
             parts.append(content.value(u"text"_s).toString());
         } else if (type == u"image"_s || type == u"audio"_s) {
-            parts.append(u"[%1: %2]"_s.arg(type, content.value(u"mimeType"_s).toString()));
+            const QString mimeType = content.value(u"mimeType"_s).toString();
+            parts.append(u"[%1: %2]"_s.arg(type, mimeType));
+            const QByteArray encoded = content.value(u"data"_s).toString().toLatin1();
+            if (type == u"image"_s && mimeType.startsWith(u"image/"_s) && encoded.size() <= kMaxImageBytes / 3 * 4 + 4) {
+                auto decoded = QByteArray::fromBase64Encoding(encoded, QByteArray::AbortOnBase64DecodingErrors);
+                if (decoded && !decoded.decoded.isEmpty()) call.images.append(ImageAttachment{decoded.decoded, mimeType});
+            }
         } else if (type == u"resource"_s || type == u"resource_link"_s) {
             const QJsonObject resource = content.value(u"resource"_s).toObject();
             const QString text = resource.value(u"text"_s).toString();
@@ -137,7 +144,14 @@ Result<QString> McpClient::resultText(const QJsonObject &result) {
     if (text.isEmpty() && result.contains(u"structuredContent"_s)) {
         text = QString::fromUtf8(QJsonDocument(result.value(u"structuredContent"_s).toObject()).toJson(QJsonDocument::Compact));
     }
-    return text.isEmpty() ? u"(the tool returned nothing)"_s : text;
+    call.text = text.isEmpty() ? u"(the tool returned nothing)"_s : text;
+    return call;
+}
+
+Result<QString> McpClient::resultText(const QJsonObject &result) {
+    auto call = resultOf(result);
+    if (!call) return call.error();
+    return call.value().text;
 }
 
 QList<McpClient::Tool> McpClient::toolsIn(const QJsonObject &result) {
@@ -145,7 +159,7 @@ QList<McpClient::Tool> McpClient::toolsIn(const QJsonObject &result) {
     for (const QJsonValue &value : result.value(u"tools"_s).toArray()) {
         const QJsonObject object = value.toObject();
         Tool tool{object.value(u"name"_s).toString(), object.value(u"description"_s).toString(),
-                  object.value(u"inputSchema"_s).toObject()};
+                  object.value(u"inputSchema"_s).toObject(), object.value(u"annotations"_s).toObject()};
         if (tool.description.isEmpty()) tool.description = object.value(u"title"_s).toString();
         if (!tool.name.isEmpty()) tools.append(tool);
     }
