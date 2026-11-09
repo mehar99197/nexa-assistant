@@ -46,6 +46,9 @@ struct Task {
     QString lastError;
 };
 
+// What the model is given of a request: a spoken one (at the PC or into the phone) is marked [voice], so the reply is
+// short plain sentences that read well aloud.
+QString markedForModel(const QString &text, const QString &source);
 // A task's title: its first line, simplified, shortened to 80 characters.
 QString titleFor(const QString &text);
 // An estimate of how far a task is, from what it has done; never 100 before it is done.

@@ -29,6 +29,10 @@ bool isFinished(TaskState state) {
     return state == TaskState::Done || state == TaskState::Failed || state == TaskState::Stopped;
 }
 
+QString markedForModel(const QString &text, const QString &source) {
+    return source == u"voice"_s || source == u"phone-voice"_s ? u"[voice] "_s + text : text;
+}
+
 QString titleFor(const QString &text) {
     constexpr qsizetype kMax = 80;
     QString line;

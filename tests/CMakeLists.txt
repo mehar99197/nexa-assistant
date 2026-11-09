@@ -26,6 +26,8 @@ add_executable(nexa_tests
     RoleClassifierTest.cc
     TaskTest.cc
     TaskTranscriptTest.cc
+    TaskRunnerTest.cc
+    MissionControlTest.cc
     SignInPresenterTest.cc
     ProviderCatalogTest.cc
     AgyProviderTest.cc

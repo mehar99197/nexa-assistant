@@ -44,9 +44,12 @@ add_library(nexa_core STATIC
     agent/VoicePrompt.h agent/VoicePrompt.cc
     mission/ActivityFeed.h mission/ActivityFeed.cc
     mission/AgentRole.h mission/AgentRole.cc
+    mission/DelegateTool.h mission/DelegateTool.cc
+    mission/MissionControl.h mission/MissionControl.cc
     mission/ModelFit.h mission/ModelFit.cc
     mission/RoleClassifier.h mission/RoleClassifier.cc
     mission/Task.h mission/Task.cc
+    mission/TaskRunner.h mission/TaskRunner.cc
     mission/TaskTranscript.h mission/TaskTranscript.cc
     audit/AuditLog.h audit/AuditLog.cc
     intent/IIntentHandler.h
