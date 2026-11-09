@@ -57,6 +57,7 @@ public:
         requests.append(request);
         auto stream = std::make_shared<ScriptedStream>();
         lastStream = stream.get();
+        streams.append(stream);     // kept, so a test can look at a stream its agent has let go of
         if (!script.isEmpty()) {
             const Reply reply = script.takeFirst();
             stream->play(reply.text, reply.calls, reply.error, reply.chunks, reply.route);
@@ -73,6 +74,7 @@ public:
     std::optional<bool> images;     // what takesImages() answers
     QList<ChatRequest> requests;
     ScriptedStream *lastStream{nullptr};
+    QList<std::shared_ptr<ScriptedStream>> streams;
 };
 
 } // namespace nexa::test

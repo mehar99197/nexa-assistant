@@ -18,8 +18,9 @@ enum class WindowLayout {
     Orb,        // voice first: a huge core in the middle, the state in large type
     Dashboard,  // every part a card
     Bottom,     // the header as a band, Actions along the bottom
+    MissionControl,     // a control room: the agents on the left, the board in the middle, live activity on the right
 };
-inline constexpr int kWindowLayoutCount = 7;
+inline constexpr int kWindowLayoutCount = 8;
 
 // What the transcript draws around what you said.
 enum class BubbleStyle { Bubbles, Lines, Cards };

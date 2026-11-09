@@ -1815,6 +1815,18 @@ QPixmap designSwatch(const DesignSpec &design) {
         corePlace = QPointF(14, 11);
         coreSize = 12;
         break;
+    case WindowLayout::MissionControl:
+        // The agents' rail, the core and the board in the middle, the live activity on the right.
+        panel(QRectF(4, 4, 24, 64));
+        lines(QRectF(4, 6, 24, 60), 6);
+        panel(QRectF(32, 4, 48, 20));
+        panel(QRectF(32, 28, 48, 40));
+        lines(QRectF(32, 30, 48, 36), 6);
+        panel(QRectF(84, 4, 24, 64));
+        lines(QRectF(84, 18, 24, 50), 7);
+        corePlace = QPointF(42, 14);
+        coreSize = 14;
+        break;
     }
 
     NexaCoreWidget core;

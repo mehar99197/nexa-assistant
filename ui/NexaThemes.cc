@@ -44,6 +44,7 @@ constexpr Family kFamilies[] = {
     {"Graphite", 0, 0.0, CoreStyle::Minimal},
     {"Lavender", 258, 0.55, CoreStyle::Classic},
     {"Plum", 300, 0.55, CoreStyle::Orbit},
+    {"Mission", 268, 0.9, CoreStyle::Comet},
 };
 
 QColor hsl(double hue, double saturation, double lightness) {
@@ -120,6 +121,33 @@ ThemeTokens tokensAround(double hue, double sat, ThemeScheme scheme) {
     return t;
 }
 
+// Mission Control's dark scheme as the owner's mock-up draws it: violet on near-black, green for "online", amber for
+// what needs the user. Passed through the same contrast check as every generated pack.
+ThemeTokens missionTokens() {
+    ThemeTokens t;
+    t.ground = QColor(0x0B, 0x0D, 0x12);
+    t.panel = QColor(0x12, 0x14, 0x1B);
+    t.panelRaised = QColor(0x19, 0x1C, 0x25);
+    t.line = QColor(0x23, 0x27, 0x36);
+    t.text = QColor(0xE7, 0xE9, 0xF2);
+    t.muted = QColor(0x8A, 0x90, 0xA6);
+    t.idle = QColor(0xA8, 0x55, 0xF7);
+    t.wake = QColor(0x22, 0xC5, 0x5E);
+    t.listen = QColor(0xC0, 0x84, 0xFC);
+    t.stt = QColor(0x38, 0xBD, 0xF8);
+    t.think = QColor(0x81, 0x8C, 0xF8);
+    t.act = QColor(0xF5, 0x9E, 0x0B);
+    t.speak = QColor(0xE8, 0x79, 0xF9);
+    t.fast = QColor(0xF5, 0xF3, 0xFF);
+    t.error = QColor(0xF8, 0x71, 0x71);
+    t.onAccent = QColor(0x0B, 0x0D, 0x12);
+    t.muted = standingOut(t.muted, t.ground, 3.5, ThemeScheme::Dark);
+    for (QColor *state : {&t.idle, &t.wake, &t.listen, &t.stt, &t.think, &t.act, &t.speak, &t.fast, &t.error}) {
+        *state = standingOut(*state, t.ground, 3.0, ThemeScheme::Dark);
+    }
+    return t;
+}
+
 QList<ThemePack> generate() {
     QList<ThemePack> packs;
     for (const Family &family : kFamilies) {
@@ -130,7 +158,13 @@ QList<ThemePack> generate() {
             pack.style = family.style;
             pack.id = pack.family.toLower() + u'-' + NexaTheme::schemeKey(scheme);
             pack.name = u"%1 · %2"_s.arg(pack.family, scheme == ThemeScheme::Dark ? u"Dark"_s : u"Light"_s);
-            pack.tokens = pack.family == u"Nexa"_s ? NexaTheme::tokens(scheme) : tokensAround(family.hue, family.saturation, scheme);
+            if (pack.family == u"Nexa"_s) {
+                pack.tokens = NexaTheme::tokens(scheme);
+            } else if (pack.family == u"Mission"_s && scheme == ThemeScheme::Dark) {
+                pack.tokens = missionTokens();
+            } else {
+                pack.tokens = tokensAround(family.hue, family.saturation, scheme);
+            }
             packs.append(pack);
         }
     }

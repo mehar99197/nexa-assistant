@@ -36,6 +36,10 @@ const QList<DesignSpec> &NexaDesigns::all() {
                    u"An arc gauge with a needle and a VU meter for the microphone; Actions along the bottom."_s,
                    WindowLayout::Bottom, CoreShape::Arc, CoreStyle::Aurora, BubbleStyle::Bubbles, FontFace::Mono, 0, 4,
                    u"amber-dark"_s},
+        DesignSpec{u"mission"_s, u"Mission Control"_s,
+                   u"A control room: the agents on the left, the mission board in the middle, live activity on the right."_s,
+                   WindowLayout::MissionControl, CoreShape::Ring, CoreStyle::Comet, BubbleStyle::Cards, FontFace::Sans, 0, 10,
+                   u"mission-dark"_s},
         DesignSpec{u"paper"_s, u"Paper"_s,
                    u"Light and flat: a serif face, a plain dot for a core, ruled lines instead of bubbles."_s,
                    WindowLayout::Studio, CoreShape::Dot, CoreStyle::Minimal, BubbleStyle::Lines, FontFace::Serif, 1, 2,
@@ -65,6 +69,7 @@ QString NexaDesigns::layoutName(WindowLayout layout) {
     case WindowLayout::Orb: return u"Orb"_s;
     case WindowLayout::Dashboard: return u"Dashboard"_s;
     case WindowLayout::Bottom: return u"Bottom"_s;
+    case WindowLayout::MissionControl: return u"Mission Control"_s;
     }
     return {};
 }

@@ -116,3 +116,13 @@ TEST_CASE("Each motion style bends the frames its own way") {
         }
     }
 }
+
+TEST_CASE("The Mission palette is the mock-up's: violet on near-black, green online, amber for the user") {
+    const std::optional<ThemePack> pack = NexaThemes::find(u"mission-dark"_s);
+    REQUIRE(pack.has_value());
+    CHECK(pack->tokens.ground == QColor(0x0B, 0x0D, 0x12));
+    CHECK(pack->tokens.idle == QColor(0xA8, 0x55, 0xF7));
+    CHECK(pack->tokens.wake == QColor(0x22, 0xC5, 0x5E));
+    CHECK(pack->tokens.act == QColor(0xF5, 0x9E, 0x0B));
+    CHECK(NexaThemes::find(u"mission-light"_s).has_value());
+}

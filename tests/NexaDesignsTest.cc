@@ -1,6 +1,7 @@
 // ui/NexaDesigns: the designs — each a different arrangement and core, not another colour — and
 // what each one asks of the stylesheet.
 
+#include "core/config/Config.h"
 #include "ui/NexaDesigns.h"
 #include "ui/NexaTheme.h"
 #include "ui/NexaThemes.h"
@@ -56,4 +57,13 @@ TEST_CASE("A design is found by id, and the type faces resolve") {
     CHECK_FALSE(NexaDesigns::fontFamily(FontFace::Sans).isEmpty());
     CHECK(NexaDesigns::fontFamily(FontFace::Serif) == u"serif"_s);
     for (int i = 0; i < kWindowLayoutCount; ++i) CHECK_FALSE(NexaDesigns::layoutName(static_cast<WindowLayout>(i)).isEmpty());
+}
+
+TEST_CASE("Mission Control is a design of its own, in the mock-up's palette, and the default for new settings") {
+    const std::optional<DesignSpec> mission = NexaDesigns::find(u"mission"_s);
+    REQUIRE(mission.has_value());
+    CHECK(mission->layout == WindowLayout::MissionControl);
+    CHECK(mission->palette == u"mission-dark"_s);
+    CHECK(NexaDesigns::layoutName(WindowLayout::MissionControl) == u"Mission Control"_s);
+    CHECK(Config{}.ui.design == mission->id);
 }

@@ -371,6 +371,7 @@ void MainWindow::rebuildCentral() {
     switch (layout) {
     case WindowLayout::Studio:
     case WindowLayout::Bottom:
+    case WindowLayout::MissionControl:
         column->addWidget(header_);
         column->addWidget(chatView_, 1);
         column->addWidget(inputBar_);

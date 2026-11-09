@@ -128,6 +128,53 @@ void NexaIcons::paint(QPainter &p, Kind kind, const QRectF &box, const QColor &c
         p.setBrush(colour);
         for (int i = -1; i <= 1; ++i) p.drawEllipse(QPointF(0, 0.26 * s * i), 0.07 * s, 0.07 * s);
         break;
+    case Kind::Pause:
+        p.setPen(Qt::NoPen);
+        p.setBrush(colour);
+        p.drawRoundedRect(QRectF(-0.26 * s, -0.3 * s, 0.17 * s, 0.6 * s), 0.04 * s, 0.04 * s);
+        p.drawRoundedRect(QRectF(0.09 * s, -0.3 * s, 0.17 * s, 0.6 * s), 0.04 * s, 0.04 * s);
+        break;
+    case Kind::Play: {
+        QPainterPath play;
+        play.moveTo(-0.2 * s, -0.32 * s);
+        play.lineTo(0.32 * s, 0);
+        play.lineTo(-0.2 * s, 0.32 * s);
+        play.closeSubpath();
+        p.setBrush(colour);
+        p.drawPath(play);
+        break;
+    }
+    case Kind::Check:
+        p.drawPolyline(QPolygonF{QPointF(-0.3 * s, 0.02 * s), QPointF(-0.08 * s, 0.24 * s), QPointF(0.32 * s, -0.22 * s)});
+        break;
+    case Kind::Cross:
+        p.drawLine(QPointF(-0.24 * s, -0.24 * s), QPointF(0.24 * s, 0.24 * s));
+        p.drawLine(QPointF(0.24 * s, -0.24 * s), QPointF(-0.24 * s, 0.24 * s));
+        break;
+    case Kind::Globe:
+        p.drawEllipse(QPointF(0, 0), 0.36 * s, 0.36 * s);
+        p.drawEllipse(QPointF(0, 0), 0.15 * s, 0.36 * s);
+        p.drawLine(QPointF(-0.36 * s, 0), QPointF(0.36 * s, 0));
+        break;
+    case Kind::Code:
+        p.drawPolyline(QPolygonF{QPointF(-0.12 * s, -0.26 * s), QPointF(-0.36 * s, 0), QPointF(-0.12 * s, 0.26 * s)});
+        p.drawPolyline(QPolygonF{QPointF(0.12 * s, -0.26 * s), QPointF(0.36 * s, 0), QPointF(0.12 * s, 0.26 * s)});
+        p.drawLine(QPointF(0.06 * s, -0.32 * s), QPointF(-0.06 * s, 0.32 * s));
+        break;
+    case Kind::Screen:
+        p.drawRoundedRect(QRectF(-0.38 * s, -0.3 * s, 0.76 * s, 0.48 * s), 0.06 * s, 0.06 * s);
+        p.drawLine(QPointF(-0.16 * s, 0.34 * s), QPointF(0.16 * s, 0.34 * s));
+        break;
+    case Kind::Queue:
+        for (int i = -1; i <= 1; ++i) {
+            const double y = 0.22 * s * i;
+            p.drawLine(QPointF(-0.34 * s, y), QPointF(0.34 * s, y));
+        }
+        break;
+    case Kind::Plus:
+        p.drawLine(QPointF(-0.28 * s, 0), QPointF(0.28 * s, 0));
+        p.drawLine(QPointF(0, -0.28 * s), QPointF(0, 0.28 * s));
+        break;
     }
     p.restore();
 }

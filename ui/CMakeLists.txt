@@ -9,6 +9,7 @@ qt_add_library(nexa_ui STATIC
     NexaIcons.h NexaIcons.cc
     NexaTheme.h NexaTheme.cc
     NexaThemes.h NexaThemes.cc
+    Sparkline.h Sparkline.cc
 )
 
 # The stylesheet and its two pictures, built in; NexaTheme fills the tokens in at run time.
