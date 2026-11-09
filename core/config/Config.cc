@@ -288,6 +288,36 @@ SkillsConfig SkillsConfig::fromJson(const QJsonObject &json) {
     return config;
 }
 
+QJsonObject ModelChoice::toJson() const {
+    QJsonObject json{{u"provider"_s, provider}};
+    if (!model.isEmpty()) json.insert(u"model"_s, model);
+    return json;
+}
+
+ModelChoice ModelChoice::fromJson(const QJsonObject &json) {
+    return ModelChoice{json.value(u"provider"_s).toString().trimmed(), json.value(u"model"_s).toString().trimmed()};
+}
+
+QJsonObject MissionConfig::toJson() const {
+    QJsonObject roles;
+    for (auto it = roleModels.cbegin(); it != roleModels.cend(); ++it) {
+        if (!it.value().isAuto()) roles.insert(it.key(), it.value().toJson());
+    }
+    return QJsonObject{{u"maxConcurrent"_s, maxConcurrent}, {u"roleModels"_s, roles}};
+}
+
+MissionConfig MissionConfig::fromJson(const QJsonObject &json) {
+    MissionConfig config;
+    config.maxConcurrent = std::clamp(json.value(u"maxConcurrent"_s).toInt(config.maxConcurrent), 1, kMaxSlots);
+    static const QRegularExpression key(u"^[a-z]{1,20}$"_s);
+    const QJsonObject roles = json.value(u"roleModels"_s).toObject();
+    for (auto it = roles.begin(); it != roles.end(); ++it) {
+        const ModelChoice choice = ModelChoice::fromJson(it.value().toObject());
+        if (key.match(it.key()).hasMatch() && !choice.isAuto()) config.roleModels.insert(it.key(), choice);
+    }
+    return config;
+}
+
 QJsonObject Config::toJson() const {
     QJsonObject json = extra;
     QJsonArray list;
@@ -306,6 +336,7 @@ QJsonObject Config::toJson() const {
     json.insert(u"browser"_s, browser.toJson());
     json.insert(u"memory"_s, memory.toJson());
     json.insert(u"skills"_s, skills.toJson());
+    json.insert(u"mission"_s, mission.toJson());
     return json;
 }
 
@@ -331,11 +362,12 @@ Config Config::fromJson(const QJsonObject &json) {
     config.browser = BrowserConfig::fromJson(json.value(u"browser"_s).toObject());
     config.memory = MemoryConfig::fromJson(json.value(u"memory"_s).toObject());
     config.skills = SkillsConfig::fromJson(json.value(u"skills"_s).toObject());
+    config.mission = MissionConfig::fromJson(json.value(u"mission"_s).toObject());
 
     config.extra = json;
     for (const QString &key :
          {u"version"_s, u"providers"_s, u"activeProvider"_s, u"systemPrompt"_s, u"policy"_s, u"voice"_s, u"android"_s,
-          u"remote"_s, u"agent"_s, u"ui"_s, u"mcp"_s, u"browser"_s, u"memory"_s, u"skills"_s}) {
+          u"remote"_s, u"agent"_s, u"ui"_s, u"mcp"_s, u"browser"_s, u"memory"_s, u"skills"_s, u"mission"_s}) {
         config.extra.remove(key);
     }
     return config;

@@ -432,3 +432,20 @@ TEST_CASE("The Add menu's groups: the programs first, every preset once, strays 
     CHECK(some.at(1).title == u"Other"_s);
     CHECK(some.at(1).indices == QList<int>{0, 2});
 }
+
+TEST_CASE("Upgrading a version 4 config moves the old default design to Mission Control and keeps a chosen one") {
+    Config old;
+    old.version = 4;
+    old.ui.design = u"studio"_s;
+    ProviderRegistry::upgrade(old, installedOnly({}));
+    CHECK(old.ui.design == u"mission"_s);
+    CHECK(old.version == 5);
+
+    Config chosen;
+    chosen.version = 4;
+    chosen.ui.design = u"focus"_s;
+    ProviderRegistry::upgrade(chosen, installedOnly({}));
+    CHECK(chosen.ui.design == u"focus"_s);
+
+    CHECK(Config{}.ui.design == u"mission"_s);
+}

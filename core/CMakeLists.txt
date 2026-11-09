@@ -42,6 +42,12 @@ add_library(nexa_core STATIC
     agent/AppContext.h agent/AppContext.cc
     agent/Conversation.h agent/Conversation.cc
     agent/VoicePrompt.h agent/VoicePrompt.cc
+    mission/ActivityFeed.h mission/ActivityFeed.cc
+    mission/AgentRole.h mission/AgentRole.cc
+    mission/ModelFit.h mission/ModelFit.cc
+    mission/RoleClassifier.h mission/RoleClassifier.cc
+    mission/Task.h mission/Task.cc
+    mission/TaskTranscript.h mission/TaskTranscript.cc
     audit/AuditLog.h audit/AuditLog.cc
     intent/IIntentHandler.h
     intent/IntentRouter.h intent/IntentRouter.cc

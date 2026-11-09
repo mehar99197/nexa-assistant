@@ -275,6 +275,8 @@ void ProviderRegistry::upgrade(Config &config, const std::function<bool(const QS
     if (config.version < 4 && config.agent.maxToolRounds == 20) {
         config.agent.maxToolRounds = AgentConfig{}.maxToolRounds;
     }
+    // Mission Control is the new default design; a design the user chose stays.
+    if (config.version < 5 && config.ui.design == u"studio"_s) config.ui.design = UiConfig{}.design;
     config.version = Config::kVersion;
 }
 

@@ -291,3 +291,28 @@ TEST_CASE("A save that removes providers keeps the settings from before it, priv
     REQUIRE(store.save(later).isOk());
     CHECK(idsIn(ConfigStore(store.previousPath()).load().value()) == QStringList{u"opencode"_s, u"agy"_s, u"codex"_s});
 }
+
+TEST_CASE("The mission section round-trips, keeps slots in range and drops what it cannot use") {
+    QTemporaryDir dir;
+    REQUIRE(dir.isValid());
+    const ConfigStore store(dir.filePath(u"nexa/config.json"_s));
+    Config config;
+    config.mission.maxConcurrent = 6;
+    config.mission.roleModels.insert(u"code"_s, ModelChoice{u"codex"_s, u"gpt-6-luna"_s});
+    config.mission.roleModels.insert(u"screen"_s, ModelChoice{u"gemini"_s, {}});
+    REQUIRE(store.save(config).isOk());
+    const Result<Config> loaded = store.load();
+    REQUIRE(loaded.isOk());
+    CHECK(loaded.value().mission == config.mission);
+    CHECK_FALSE(loaded.value().extra.contains(u"mission"_s));
+
+    const MissionConfig odd = MissionConfig::fromJson(QJsonObject{
+        {u"maxConcurrent"_s, 40},
+        {u"roleModels"_s, QJsonObject{{u"web"_s, QJsonObject{{u"provider"_s, u""_s}}},
+                                      {u"Bad Key"_s, QJsonObject{{u"provider"_s, u"x"_s}}},
+                                      {u"phone"_s, QJsonObject{{u"provider"_s, u"opencode"_s}}}}}});
+    CHECK(odd.maxConcurrent == MissionConfig::kMaxSlots);
+    CHECK(odd.roleModels.keys() == QStringList{u"phone"_s});
+    CHECK(MissionConfig::fromJson(QJsonObject{{u"maxConcurrent"_s, 0}}).maxConcurrent == 1);
+    CHECK(MissionConfig{}.maxConcurrent == 3);
+}

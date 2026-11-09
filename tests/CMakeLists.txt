@@ -20,6 +20,12 @@ add_executable(nexa_tests
     PresetFilterTest.cc
     ProgramLookupTest.cc
     ToolExecutorTest.cc
+    ActivityFeedTest.cc
+    AgentRoleTest.cc
+    ModelFitTest.cc
+    RoleClassifierTest.cc
+    TaskTest.cc
+    TaskTranscriptTest.cc
     SignInPresenterTest.cc
     ProviderCatalogTest.cc
     AgyProviderTest.cc

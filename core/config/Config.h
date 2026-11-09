@@ -2,6 +2,7 @@
 
 #include <QJsonObject>
 #include <QList>
+#include <QMap>
 #include <QString>
 #include <QStringList>
 
@@ -130,11 +131,36 @@ struct McpConfig {
     bool operator==(const McpConfig &) const = default;
 };
 
+// Which provider and model a task, or a role's agent, runs on. Auto (no provider): the first choice and its chain.
+struct ModelChoice {
+    QString provider;       // a provider's id
+    QString model;          // empty: that provider's own default model
+    bool isAuto() const { return provider.isEmpty(); }
+
+    QJsonObject toJson() const;
+    static ModelChoice fromJson(const QJsonObject &json);
+
+    bool operator==(const ModelChoice &) const = default;
+};
+
+// Settings → Mission: how many tasks run at once (the rest wait in the queue), and the model of each kind of agent
+// (keys: AgentRole's keys — web, code, screen, phone, general; a role left out is Auto).
+struct MissionConfig {
+    static constexpr int kMaxSlots = 8;
+    int maxConcurrent{3};
+    QMap<QString, ModelChoice> roleModels;
+
+    QJsonObject toJson() const;
+    static MissionConfig fromJson(const QJsonObject &json);
+
+    bool operator==(const MissionConfig &) const = default;
+};
+
 // Settings → General → Appearance, and the toolbar's theme toggle. "system" follows the desktop's
 // own light or dark setting.
 struct UiConfig {
     QString theme{QStringLiteral("system")};    // system | dark | light | a palette's id
-    QString design{QStringLiteral("studio")};   // one of ui/NexaDesigns: the shape of everything else
+    QString design{QStringLiteral("mission")};  // one of ui/NexaDesigns: the shape of everything else
 
     QJsonObject toJson() const;
     static UiConfig fromJson(const QJsonObject &json);
@@ -185,7 +211,8 @@ struct Config {
     // 2: providers carry speech models (sttModel, ttsModel, ttsVoice).
     // 3: providers carry fallback and modelsUrl; an empty list gets the installed agy and opencode once.
     // 4: the agent's old default of 20 tool rounds becomes the new default.
-    static constexpr int kVersion = 4;
+    // 5: Mission Control — the mission section; the old default design (studio) becomes the new one (mission).
+    static constexpr int kVersion = 5;
 
     int version{kVersion};
     QList<ProviderConfig> providers;
@@ -201,6 +228,7 @@ struct Config {
     BrowserConfig browser;
     MemoryConfig memory;
     SkillsConfig skills;
+    MissionConfig mission;
     QJsonObject extra;
 
     QJsonObject toJson() const;
