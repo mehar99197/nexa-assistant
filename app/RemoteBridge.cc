@@ -40,7 +40,8 @@ void RemoteBridge::build() const {
 }
 
 bool RemoteBridge::isBusy() const {
-    return controller_->isBusy();
+    // Requests are never refused for another one running: each is a task, and waits for a slot on the board.
+    return false;
 }
 
 void RemoteBridge::submit(const QString &text, const QString &source) {

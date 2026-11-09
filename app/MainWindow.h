@@ -95,7 +95,8 @@ private:
     void showBrowser();
     void showPhonePanel(bool connected);
     void showAppContext(const QString &name, const QString &hint);
-    void setBusy(bool busy);
+    void refreshSendButton();
+    void askApproval(quint64 task, quint64 actionId);
 
     AppController *controller_;
     ProviderRegistry *registry_;

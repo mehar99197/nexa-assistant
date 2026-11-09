@@ -20,6 +20,7 @@
 #include "voice/tts/ITextToSpeech.h"
 
 #include <QElapsedTimer>
+#include <QScopedValueRollback>
 
 #include <algorithm>
 
@@ -29,7 +30,6 @@ namespace nexa {
 
 namespace {
 
-constexpr qsizetype kMaxShownOutput = 6'000;
 const QLatin1StringView kScreenshotTool{"take_screenshot"};
 const QLatin1StringView kBrowserScreenshotTool{"browser_take_screenshot"};
 
@@ -43,12 +43,6 @@ QString pickDefaultModel(const QStringList &models) {
 
 QString stepText(const QString &tool, const QString &summary, qint64 elapsedMs) {
     return u"%1 — %2 · %3 ms"_s.arg(tool, summary).arg(elapsedMs);
-}
-
-// Spoken requests — at the PC or into the phone — are marked for the model, whose reply is then
-// read out (see systemPrompt()).
-QString forModel(const QString &prompt, const QString &source) {
-    return source == u"voice"_s || source == u"phone-voice"_s ? u"[voice] "_s + prompt : prompt;
 }
 
 // The provider is out of reach, as opposed to refusing a key or a request.
@@ -67,33 +61,45 @@ AppController::AppController(AppServices services, Config config, QString enviro
     applyScreenSharing();   // off until asked: the model works without looking
     contextExpiry_.setSingleShot(true);
     connect(&contextExpiry_, &QTimer::timeout, this, &AppController::refreshAppContext);
-    conversation_.setSystemPrompt(systemPrompt());
     services_.policy->setMode(PolicyEngine::modeFromString(config_.policyMode));
 
-    Agent *agent = services_.agent;
-    connect(agent, &Agent::textDelta, this, [this](const QString &delta) {
-        replyHasContent_ = true;
-        emit replyDelta(delta);
+    mission_ = std::make_unique<MissionControl>(services_.executor, services_.tools, this, config_.mission, this);
+    // The policy's questions go to the task that asked (its card, the live activity); one of no task to the window.
+    services_.executor->setConfirmer([this](const ConfirmRequest &request, std::function<void(bool)> answer) {
+        mission_->confirm(request, std::move(answer));
     });
-    connect(agent, &Agent::toolFinished, this, [this](const QString &tool, bool ok, const QString &summary, qint64 ms) {
-        replyHasContent_ = true;
+    connect(mission_.get(), &MissionControl::taskAdded, this, &AppController::onTaskAdded);
+    connect(mission_.get(), &MissionControl::taskReplyStarted, this, [this](quint64 id, const QString &source) {
+        if (shown_ == id) {
+            setReplying(true);
+            emit replyStarted(source);
+        }
+    });
+    connect(mission_.get(), &MissionControl::taskReplyRoute, this, [this](quint64 id, const QString &route) {
+        if (shown_ == id) emit replyRoute(route);
+    });
+    connect(mission_.get(), &MissionControl::taskReplyVia, this, [this](quint64 id, const QString &route) {
+        if (shown_ == id) emit replyVia(route);
+        emit statusChanged(tr("AI: answered by %1").arg(route), false);
+    });
+    connect(mission_.get(), &MissionControl::taskReplyDelta, this, [this](quint64 id, const QString &delta) {
+        if (shown_ == id) emit replyDelta(delta);
+    });
+    connect(mission_.get(), &MissionControl::taskReplyNotice, this, [this](quint64 id, const QString &message) {
+        if (shown_ == id) emit replyNotice(message);
+        emit statusChanged(message, true);
+    });
+    connect(mission_.get(), &MissionControl::taskReplyAction, this,
+            [this](quint64 id, const QString &tool, bool ok, const QString &summary, qint64 ms) {
+        if (shown_ != id) return;
         emit replyAction(tool, ok, summary, ms);
         emit replyStep(stepText(tool, summary, ms), ok);
     });
-    connect(agent, &Agent::notice, this, [this](const QString &message) {
-        emit replyNotice(message);
-        emit statusChanged(message, true);
-    });
-    connect(agent, &Agent::rerouted, this, [this](const QString &route, const QString &reason) {
-        emit replyVia(route);
-        emit statusChanged(tr("AI: %1 — %2").arg(route, reason), false);
-    });
-    connect(agent, &Agent::finished, this, &AppController::finishReply);
-    connect(agent, &Agent::failed, this, [this](const Error &error) {
-        noteProviderError(error);
-        failReply(describe(error));
-        if (error.code == ErrorCode::Unauthorized) credentialsRequired(error, true);
-    });
+    connect(mission_.get(), &MissionControl::taskReplyFinished, this, &AppController::onTaskFinished);
+    connect(mission_.get(), &MissionControl::taskReplyFailed, this, &AppController::onTaskFailed);
+    connect(mission_.get(), &MissionControl::busyChanged, this, &AppController::busyChanged);
+    connect(mission_.get(), &MissionControl::countsChanged, this, &AppController::refreshTaskActivity);
+    connect(mission_.get(), &MissionControl::taskChanged, this, &AppController::refreshTaskActivity);
 
     // Every action, from the fast path or the agent, lights the core and its satellites.
     connect(services_.executor, &ToolExecutor::actionStarted, this,
@@ -126,7 +132,12 @@ AppController::AppController(AppServices services, Config config, QString enviro
     });
 
     if (VoicePipeline *voice = services_.voice) {
-        connect(voice, &VoicePipeline::request, this, [this](const QString &text) { submit(text, u"voice"_s); });
+        connect(voice, &VoicePipeline::request, this, [this](const QString &text) {
+            lastHeard_ = text;
+            emit lastHeardChanged(text);
+            mission_->noteVoice(u"heard › “%1”"_s.arg(text));
+            submit(text, u"voice"_s);
+        });
         // Speaking over a reply replaces it; the new utterance itself must keep going.
         connect(voice, &VoicePipeline::interruptRequested, this, &AppController::cancelReply);
         connect(this, &AppController::replyStarted, voice, &VoicePipeline::onReplyStarted);
@@ -148,8 +159,8 @@ AppController::AppController(AppServices services, Config config, QString enviro
 }
 
 AppController::~AppController() {
-    services_.agent->disconnect(this);
-    services_.agent->cancel();
+    services_.executor->setConfirmer({});
+    mission_.reset();
 }
 
 void AppController::start() {
@@ -163,15 +174,20 @@ void AppController::start() {
         emit apiKeyRequired(active->name);
         return;
     }
-    provider_->warmUp();    // agy's process or opencode's server, so the first question does not wait for it
+    // The next task's provider, made now and warmed up (agy's process, opencode's server), so the first question does
+    // not wait for it.
+    if (Result<std::shared_ptr<IAiProvider>> spare = makeChain(); spare) {
+        spare_ = std::move(spare).value();
+        spare_->warmUp();
+    }
     refreshModels();
 }
 
 void AppController::updateConfig(const Config &config) {
-    cancel();
+    // Running tasks go on with the providers they have; the next ones are made from the new settings.
     config_ = config;
-    conversation_.setSystemPrompt(systemPrompt());
     services_.policy->setMode(PolicyEngine::modeFromString(config_.policyMode));
+    mission_->setConfig(config_.mission);
     refreshAppContext();    // a new policy may change whether commands are typed
     persist();
     emit configChanged(config_);
@@ -180,7 +196,7 @@ void AppController::updateConfig(const Config &config) {
 }
 
 void AppController::reloadProviders() {
-    if (busy_) return;
+    if (isBusy()) return;
     start();
 }
 
@@ -245,64 +261,177 @@ void AppController::refreshModels() {
     });
 }
 
-void AppController::submit(const QString &text, const QString &source) {
+quint64 AppController::submit(const QString &text, const QString &source) {
     const QString prompt = text.trimmed();
-    if (prompt.isEmpty() || busy_) return;
+    if (prompt.isEmpty()) return 0;
     refreshAppContext();
 
     const std::optional<IntentMatch> match = services_.router->route(prompt);
     if (match && match->panic) {
         emit userMessageAccepted(prompt, source);
         panic();
-        return;
+        return 0;
+    }
+    TaskRequest request;
+    request.text = prompt;
+    request.source = source;
+    // A request from the chat, the voice or the phone carries on that conversation (a task of its own, which sees what
+    // was said before); "New chat" starts a fresh one.
+    if (const auto head = heads_.constFind(channelOf(source)); head != heads_.cend() && mission_->task(*head)) {
+        request.continues = *head;
     }
     if (match && match->shareScreen) {
         setScreenShared(*match->shareScreen);
-        answerDirectly(prompt,
-                       screenShared_ ? tr("Your screen is shared: I will look at it when a request needs that.")
-                                     : tr("Screen sharing is off: I will work through commands and tools without "
-                                          "looking at your screen."),
-                       source);
-        return;
-    }
-    // A command asked for while the user is in a terminal Nexa opened is typed into that
-    // terminal, where they can see it run, instead of running out of sight.
-    if (match && services_.context) {
-        const QString command = match->arguments.value(u"command"_s).toString();
-        const bool destructive = !PolicyEngine::destructiveReason(command).isEmpty();
-        if (const std::optional<IntentMatch> typed = services_.context->redirect(*match, situation(source), destructive)) {
-            services_.context->touch();
-            emit userMessageAccepted(prompt, source);
-            beginReply(source);
-            activity_.fastPath = true;
-            refreshCoreMode();
-            emit replyRoute(u"fast"_s);
-            replyHasContent_ = true;
-            emit replyDelta(tr("Into %1: `%2`").arg(services_.context->app().name, command.trimmed()));
-            runFastPath(prompt, *typed, source);
-            return;
+        request.answer = screenShared_ ? tr("Your screen is shared: I will look at it when a request needs that.")
+                                       : tr("Screen sharing is off: I will work through commands and tools without "
+                                            "looking at your screen.");
+    } else if (match) {
+        request.fastPath = match;
+        // A command asked for while the user is in a terminal Nexa opened is typed into that terminal, where they can
+        // see it run, instead of running out of sight.
+        if (services_.context) {
+            const QString command = match->arguments.value(u"command"_s).toString();
+            const bool destructive = !PolicyEngine::destructiveReason(command).isEmpty();
+            if (const std::optional<IntentMatch> typed =
+                    services_.context->redirect(*match, situation(source), destructive)) {
+                services_.context->touch();
+                request.fastPath = typed;
+                request.shownFirst = tr("Into %1: `%2`").arg(services_.context->app().name, command.trimmed());
+            }
         }
+    } else if (!canUseModel(true)) {
+        return 0;
     }
-    if (!match && !canUseModel(true)) return;
+    const quint64 id = mission_->add(request);
+    heads_.insert(channelOf(source), id);
+    return id;
+}
 
-    emit userMessageAccepted(prompt, source);
-    beginReply(source);
-    if (match) {
-        activity_.fastPath = true;
-        refreshCoreMode();
-        emit replyRoute(u"fast"_s);
-        runFastPath(prompt, *match, source);
-        return;
+QList<quint64> AppController::addTasks(const QStringList &lines, const std::optional<ModelChoice> &model,
+                                       const QString &source) {
+    // On the board only: they do not take the chat over from the conversation.
+    const QScopedValueRollback<bool> boardOnly(addingToBoard_, true);
+    QList<quint64> added;
+    for (const QString &line : lines) {
+        const QString text = line.trimmed();
+        if (text.isEmpty()) continue;
+        TaskRequest request;
+        request.text = text;
+        request.source = source;
+        request.model = model;
+        if (!model) {
+            if (const std::optional<IntentMatch> match = services_.router->route(text); match && !match->panic
+                                                                                      && !match->shareScreen) {
+                request.fastPath = match;
+            }
+        }
+        added.append(mission_->add(request));
     }
-    conversation_.addUser(forModel(prompt, source));
-    runAgent(source);
+    return added;
+}
+
+QString AppController::channelOf(const QString &source) {
+    return source.startsWith(u"phone"_s) ? u"phone"_s : u"pc"_s;
+}
+
+void AppController::onTaskAdded(quint64 id) {
+    const Task *task = mission_->task(id);
+    if (!task || task->depth > 0 || addingToBoard_) return;     // sub-tasks and Add tasks live on the board
+    // The chat follows the newest request at once. A reply still running goes on in the background, and its answer is
+    // added here when it is done.
+    if (shown_ && isRunning(*shown_)) {
+        const Task *previous = mission_->task(*shown_);
+        emit replyNotice(tr("%1 goes on in the background; its answer comes here when it is done.")
+                             .arg(previous ? previous->agentId : tr("The task")));
+        emit replyFinished(FinishReason::Other, false);
+        detached_.insert(*shown_);
+    }
+    shown_ = id;
+    emit userMessageAccepted(task->text, task->source);
+}
+
+bool AppController::isRunning(quint64 id) const {
+    const Task *task = mission_->task(id);
+    return task && (task->state == TaskState::Queued || holdsSlot(task->state) || task->state == TaskState::Delegating);
+}
+
+void AppController::onTaskFinished(quint64 id, FinishReason reason, bool empty) {
+    if (reason == FinishReason::Stop) setOffline(false);
+    if (shown_ == id) {
+        const Task *task = mission_->task(id);
+        if (task && task->state == TaskState::Paused) {
+            emit replyNotice(tr("Paused — resume it on the board."));
+            emit replyFinished(FinishReason::Other, false);
+        } else {
+            emit replyFinished(reason, empty);
+        }
+        setReplying(false);
+    } else if (detached_.remove(id)) {
+        backlog_.append(id);
+    }
+    showBacklog();
+}
+
+void AppController::onTaskFailed(quint64 id, const Error &error) {
+    noteProviderError(error);
+    if (shown_ == id) {
+        emit replyFailed(describe(error));
+        setReplying(false);
+        if (error.code == ErrorCode::Unauthorized) credentialsRequired(error, true);
+    } else if (detached_.remove(id)) {
+        backlog_.append(id);
+    }
+    showBacklog();
+}
+
+// The answers of tasks that went on in the background, once the chat is free: each as a reply of its own.
+void AppController::showBacklog() {
+    while (!backlog_.isEmpty() && !(shown_ && isRunning(*shown_))) {
+        const quint64 id = backlog_.takeFirst();
+        const Task *task = mission_->task(id);
+        if (!task) continue;
+        emit replyStarted(task->source);
+        emit replyRoute(u"agent"_s);
+        if (task->state == TaskState::Failed) {
+            emit replyFailed(tr("%1 (“%2”) failed: %3").arg(task->agentId, task->title, task->lastError));
+            continue;
+        }
+        const TaskTranscript *transcript = mission_->transcript(id);
+        const QString answer = transcript ? transcript->lastReply() : QString();
+        emit replyDelta(tr("**%1** finished “%2”:").arg(task->agentId, task->title) + u"\n\n"_s
+                        + (answer.isEmpty() ? tr("(no answer)") : answer));
+        emit replyFinished(task->state == TaskState::Done ? FinishReason::Stop : FinishReason::Cancelled, false);
+    }
+}
+
+bool AppController::isBusy() const {
+    return mission_->isBusy();
+}
+
+void AppController::setReplying(bool replying) {
+    if (replying_ == replying) return;
+    replying_ = replying;
+    emit replyingChanged(replying);
+}
+
+// What the core shows of the board: thinking while a model works on a task, the fast path while its tool runs.
+void AppController::refreshTaskActivity() {
+    bool thinking = false;
+    bool fast = false;
+    for (const Task &task : mission_->tasks()) {
+        if (!holdsSlot(task.state)) continue;
+        (task.fastPath ? fast : thinking) = true;
+    }
+    if (thinking == activity_.thinking && fast == activity_.fastPath) return;
+    activity_.thinking = thinking;
+    activity_.fastPath = fast;
+    refreshCoreMode();
 }
 
 void AppController::setScreenShared(bool shared) {
     if (screenShared_ == shared) return;
     screenShared_ = shared;
     applyScreenSharing();
-    conversation_.setSystemPrompt(systemPrompt());
     qCInfo(lcApp) << "screen sharing" << (shared ? "on" : "off");
     emit screenSharingChanged(shared);
 }
@@ -364,105 +493,19 @@ void AppController::applyScreenSharing() {
     }
 }
 
-// A reply with no tool and no model (a switch flipped): shown, spoken and remembered like any other.
-void AppController::answerDirectly(const QString &prompt, const QString &reply, const QString &source) {
-    emit userMessageAccepted(prompt, source);
-    beginReply(source);
-    activity_.fastPath = true;
-    refreshCoreMode();
-    emit replyRoute(u"fast"_s);
-    replyHasContent_ = true;
-    emit replyDelta(reply);
-    conversation_.addUser(forModel(prompt, source));
-    conversation_.addAssistant(reply);
-    finishReply(FinishReason::Stop);
-}
-
 void AppController::askAboutPhone(const QString &question) {
     askAboutPicture(u"android_screenshot"_s, question, tr("Describe what is on my phone's screen."));
 }
 
 void AppController::askAboutPicture(const QString &tool, const QString &question, const QString &fallback) {
-    if (busy_ || !canUseModel(true)) return;
-    const QString prompt = question.trimmed().isEmpty() ? fallback : question.trimmed();
-    emit userMessageAccepted(prompt, u"gui"_s);
-    beginReply(u"gui"_s);
-    activity_.fastPath = true;
-    refreshCoreMode();
-    emit replyRoute(u"fast"_s);
-    runFastPath(prompt, IntentMatch{.toolName = tool, .forwardToAgent = true, .agentPrompt = prompt}, u"gui"_s);
-}
-
-void AppController::runFastPath(const QString &prompt, const IntentMatch &match, const QString &source) {
-    const quint64 generation = replyGeneration_;
-    QElapsedTimer timer;
-    timer.start();
-    qCDebug(lcApp) << "fast path:" << match.toolName << match.arguments;
-    services_.executor->execute(match.toolName, match.arguments, source,
-                                [this, generation, timer, prompt, match, source](Result<ToolResult> result) {
-        if (generation != replyGeneration_) return;  // cancelled meanwhile
-        const qint64 elapsed = timer.elapsed();
-        if (!result && result.error().code == ErrorCode::Cancelled) {
-            finishReply(FinishReason::Cancelled);
-            return;
-        }
-        // The fast path could not resolve it (e.g. an app name it does not know): let the model try.
-        if (!result && result.error().code == ErrorCode::NotFound && !match.forwardToAgent && canUseModel(false)) {
-            qCDebug(lcApp) << "fast path missed, asking the model:" << result.error().message;
-            conversation_.addUser(forModel(prompt, source));
-            runAgent(source);
-            return;
-        }
-
-        const QString summary = result ? summarize(result.value().text) : result.error().message;
-        replyHasContent_ = true;
-        emit replyAction(match.toolName, result.isOk(), summary, elapsed);
-        emit replyStep(stepText(match.toolName, summary, elapsed), result.isOk());
-        if (!result) {
-            failReply(describe(result.error()));
-            return;
-        }
-
-        if (match.forwardToAgent) {
-            if (!canUseModel(true)) {
-                finishReply(FinishReason::Stop);
-                return;
-            }
-            QList<ImageAttachment> images;
-            if (result.value().image) images.append(*result.value().image);
-            const QString question = match.agentPrompt.isEmpty() ? prompt : match.agentPrompt;
-            conversation_.addUser(u"%1\n\n(%2)"_s.arg(forModel(question, source), result.value().text), images);
-            runAgent(source);
-            return;
-        }
-        // Multi-line results (command output, …) are shown in full under the step line.
-        const QString details = result.value().text.section(u'\n', 1).trimmed();
-        if (!details.isEmpty()) {
-            emit replyDelta(u"```text\n"_s + (details.size() > kMaxShownOutput ? details.left(kMaxShownOutput) + u"\n…"_s
-                                                                                 : details)
-                            + u"\n```"_s);
-        }
-        // Keep the model's view of the conversation complete for later questions. The result
-        // stands as the reply, in plain words: a bracketed note would be copied back by some
-        // models ("Done directly with …").
-        conversation_.addUser(forModel(prompt, source));
-        conversation_.addAssistant(result.value().text);
-        finishReply(FinishReason::Stop);
-    });
-}
-
-void AppController::runAgent(const QString &source) {
-    qCDebug(lcApp) << "agent:" << currentModel();
-    // The prompt names the app the user is in, whether Nexa's window has the keyboard and where
-    // the request came from, which change between requests — and the skills, one of which the
-    // model may have written a moment ago.
-    if (services_.skills && config_.skills.enabled) services_.skills->refresh();
-    conversation_.setSystemPrompt(systemPrompt(source));
-    activity_.fastPath = false;
-    activity_.thinking = true;
-    refreshCoreMode();
-    emit replyRoute(u"agent"_s);
-    services_.agent->run(provider_.get(), &conversation_, currentModel(), source);
+    if (!canUseModel(true)) return;
+    TaskRequest request;
+    request.text = question.trimmed().isEmpty() ? fallback : question.trimmed();
+    request.fastPath = IntentMatch{.toolName = tool, .forwardToAgent = true, .agentPrompt = request.text};
+    if (const auto head = heads_.constFind(channelOf(request.source)); head != heads_.cend() && mission_->task(*head)) {
+        request.continues = *head;
+    }
+    heads_.insert(channelOf(request.source), mission_->add(request));
 }
 
 bool AppController::canUseModel(bool report) {
@@ -486,30 +529,32 @@ void AppController::cancel() {
 }
 
 void AppController::cancelReply() {
-    if (!busy_) return;
-    ++replyGeneration_;
-    if (services_.agent->isRunning()) {
-        services_.agent->cancel();  // emits finished(Cancelled) → finishReply
-        return;
-    }
-    services_.executor->cancelAll();
-    finishReply(FinishReason::Cancelled);
+    if (shown_) mission_->stop(*shown_);
 }
 
 void AppController::panic() {
-    cancel();
+    if (services_.voice) services_.voice->cancel();
+    mission_->stopAll();
     services_.panic->panic();
     emit panicked();
 }
 
 void AppController::newConversation() {
-    cancel();
-    conversation_.clear();
+    // A fresh conversation: the chat is cleared and the next request starts anew. Finished tasks leave the board;
+    // running ones go on.
+    if (services_.voice) services_.voice->cancel();
+    heads_.clear();
+    detached_.clear();
+    backlog_.clear();
+    if (shown_ && !isRunning(*shown_)) shown_.reset();
+    for (const Task &task : mission_->tasks()) {
+        if (task.depth == 0 && isFinished(task.state)) mission_->remove(task.id);
+    }
     emit conversationCleared();
 }
 
 void AppController::setConfirmer(ToolExecutor::Confirmer confirmer) {
-    services_.executor->setConfirmer(std::move(confirmer));
+    mission_->setFallbackConfirmer(std::move(confirmer));
 }
 
 void AppController::applyVoiceConfig() {
@@ -565,40 +610,9 @@ void AppController::applyVoiceConfig() {
     if (!problems.isEmpty()) emit statusChanged(problems.join(u' '), true);
 }
 
-void AppController::beginReply(const QString &source) {
-    ++replyGeneration_;
-    replyHasContent_ = false;
-    setBusy(true);
-    emit replyStarted(source);
-}
-
-void AppController::finishReply(FinishReason reason) {
-    if (!busy_) return;
-    if (reason == FinishReason::Stop) setOffline(false);
-    activity_.fastPath = false;
-    activity_.thinking = false;
-    refreshCoreMode();
-    setBusy(false);
-    emit replyFinished(reason, !replyHasContent_);
-}
-
-void AppController::failReply(const QString &message) {
-    if (!busy_) return;
-    activity_.fastPath = false;
-    activity_.thinking = false;
-    refreshCoreMode();
-    setBusy(false);
-    emit replyFailed(message);
-}
-
-void AppController::setBusy(bool busy) {
-    if (busy_ == busy) return;
-    busy_ = busy;
-    emit busyChanged(busy);
-}
-
 void AppController::rebuildProvider() {
     provider_.reset();
+    spare_.reset();
     models_.clear();
     const ProviderConfig *active = config_.active();
     if (!active) {
@@ -609,7 +623,8 @@ void AppController::rebuildProvider() {
     config_.activeProvider = active->id;
     emit providerChanged(active->name);
 
-    // The first choice, then every provider that may answer when it cannot.
+    // The first choice, then every provider that may answer when it cannot: for the model list. Each task asks
+    // through a chain of its own (createProvider).
     Result<std::unique_ptr<IAiProvider>> created = services_.providers->createChain(config_);
     if (!created) {
         emit statusChanged(created.error().message, true);
@@ -617,6 +632,75 @@ void AppController::rebuildProvider() {
     }
     provider_ = std::move(created).value();
     emit modelsChanged(models_, currentModel());
+}
+
+Result<std::shared_ptr<IAiProvider>> AppController::makeChain() {
+    Result<std::unique_ptr<IAiProvider>> chain = services_.providers->createChain(config_);
+    if (!chain) return chain.error();
+    return shareProvider(std::move(chain).value());
+}
+
+std::shared_ptr<IAiProvider> AppController::shareProvider(std::unique_ptr<IAiProvider> provider) {
+    // Released from its own stream's signals at times (a task ends there): deleted once control is back in the loop.
+    return std::shared_ptr<IAiProvider>(provider.release(), [](IAiProvider *p) { p->deleteLater(); });
+}
+
+Result<std::shared_ptr<IAiProvider>> AppController::createProvider(const ModelChoice &choice) {
+    if (choice.isAuto()) {
+        if (!config_.active()) return Error{ErrorCode::NotFound, tr("No AI provider is configured — open Settings.")};
+        if (spare_) return std::exchange(spare_, nullptr);
+        return makeChain();
+    }
+    const ProviderConfig *chosen = config_.provider(choice.provider);
+    if (!chosen) {
+        return Error{ErrorCode::NotFound, tr("The provider %1 is no longer in Settings → Providers.").arg(choice.provider)};
+    }
+    Result<std::unique_ptr<IAiProvider>> created = services_.providers->create(*chosen);
+    if (!created) return created.error();
+    return shareProvider(std::move(created).value());
+}
+
+QString AppController::modelFor(const ModelChoice &choice) {
+    if (choice.isAuto()) return currentModel();
+    if (!choice.model.isEmpty()) return choice.model;
+    const ProviderConfig *chosen = config_.provider(choice.provider);
+    return chosen ? chosen->defaultModel : QString();
+}
+
+QString AppController::describeChoice(const ModelChoice &choice) {
+    const ProviderConfig *provider = choice.isAuto() ? config_.active() : config_.provider(choice.provider);
+    const QString name = provider ? provider->name : choice.provider;
+    const QString model = modelFor(choice);
+    const QString words = model.isEmpty() ? name : u"%1 · %2"_s.arg(name, model);
+    return choice.isAuto() ? tr("Auto · %1").arg(words) : words;
+}
+
+QList<ProviderFacts> AppController::providerFacts() {
+    QList<ProviderFacts> facts;
+    const ProviderConfig *active = config_.active();
+    for (const ProviderConfig &provider : config_.providers) {
+        ProviderFacts fact{provider.id, provider.kind, provider.name, provider.defaultModel,
+                           provider.kind != kKindAgy && provider.kind != kKindCodex, {},
+                           active && active->id == provider.id};
+        if (fact.isFirstChoice && provider_) fact.imageModels = provider_->imageModels();
+        facts.append(fact);
+    }
+    return facts;
+}
+
+QString AppController::systemPrompt(const QString &source, AgentRole role) {
+    // The prompt names the app the user is in, whether Nexa's window has the keyboard and where the request came from,
+    // which change between requests — and the skills, one of which the model may have written a moment ago.
+    if (services_.skills && config_.skills.enabled) services_.skills->refresh();
+    QString prompt = basePrompt(source);
+    if (role != AgentRole::General) prompt += u"\n\n"_s + roleBrief(role);
+    prompt += u"\n\nOther tasks may be running at the same time; work on this one. For a part that another of Nexa's "
+              "agents does better (the web, code, the screen, the phone), use delegate_task."_s;
+    return prompt;
+}
+
+int AppController::maxSteps() {
+    return config_.agent.maxToolRounds;
 }
 
 void AppController::setWakeWordForced(bool on) {
@@ -675,7 +759,7 @@ ProviderConfig *AppController::activeProviderConfig() {
     return config_.providers.isEmpty() ? nullptr : &config_.providers.first();
 }
 
-QString AppController::systemPrompt(const QString &source) const {
+QString AppController::basePrompt(const QString &source) const {
     QString prompt = config_.systemPrompt;
     if (services_.voice) prompt += u"\n\n"_s + voicePromptParagraph(config_.voice.wakeName);
     if (!screenShared_) {
@@ -683,10 +767,6 @@ QString AppController::systemPrompt(const QString &source) const {
                   "available. Do what was asked through run_command, open_app and the other tools; only when a "
                   "request truly cannot be done without seeing the screen, say that Share screen (the button "
                   "beside the input box) has to be switched on."_s;
-    } else if (services_.agent->cannotSeeImages(currentModel())) {
-        prompt += u"\n\nThe user is sharing their screen, but this model cannot see images, so take_screenshot "
-                  "would show you nothing: do what was asked through the other tools, and when a request needs the "
-                  "screen, say that a vision-capable model has to be chosen in the toolbar."_s;
     } else {
         prompt += u"\n\nThe user is sharing their screen with you: call take_screenshot whenever seeing it would help."_s;
     }
@@ -717,8 +797,6 @@ QString AppController::browserParagraph() const {
                    "job — it is not a web page, or the snapshot shows nothing usable — use the screen: "_s.arg(target);
     if (!screenShared_) {
         text += u"the user is not sharing it, so tell them what you need and ask them to switch Share screen on."_s;
-    } else if (services_.agent->cannotSeeImages(currentModel())) {
-        text += u"the user is sharing it, but this model cannot see images, so say that a vision-capable model is needed."_s;
     } else {
         text += u"take_screenshot, then the mouse and keyboard tools."_s;
     }

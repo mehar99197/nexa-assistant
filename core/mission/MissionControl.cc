@@ -114,9 +114,9 @@ TaskId MissionControl::add(const TaskRequest &request) {
     emit taskAdded(id);
     note(added, ActivityKind::TaskState, u"new task: %1"_s.arg(added.title));
 
-    Pending pending{Pending::Kind::Start, added.text, added.source, request.images, request.fastPath,
+    Pending pending{Pending::Kind::Start, added.text, added.source, request.images, request.fastPath, request.answer,
                     request.shownFirst, std::nullopt, {}};
-    if (request.fastPath) {
+    if (request.fastPath || request.answer) {
         dispatch(id, std::move(pending));      // the fast path never waits for a slot
         updateCounts();
     } else {
@@ -249,7 +249,7 @@ void MissionControl::dispatch(TaskId id, Pending pending) {
         if (pending.done && pending.result) pending.done(std::move(*pending.result));
         return;
     }
-    if (!equip(*task)) return;
+    if (!pending.answer && !equip(*task)) return;
     if (!task->started.isValid()) task->started = QDateTime::currentDateTime();
     task->ended = {};
     task->lastError.clear();
@@ -263,7 +263,9 @@ void MissionControl::dispatch(TaskId id, Pending pending) {
     const QString prompt = environment_->systemPrompt(task->source, task->role);
     switch (pending.kind) {
     case Pending::Kind::Start:
-        if (pending.match) {
+        if (pending.answer) {
+            runner->answer(pending.text, *pending.answer);
+        } else if (pending.match) {
             runner->startFastPath(prompt, pending.text, *pending.match);
         } else {
             runner->start(prompt, pending.text, pending.images);
@@ -280,7 +282,7 @@ void MissionControl::followUp(TaskId id, const QString &text, const QString &sou
     const QString said = text.trimmed();
     if (!task || said.isEmpty() || (!isFinished(task->state) && task->state != TaskState::Paused)) return;
     transcripts_[id].append({TranscriptEvent::Kind::User, said});
-    enqueue(id, Pending{Pending::Kind::FollowUp, said, source, {}, std::nullopt, {}, std::nullopt, {}});
+    enqueue(id, Pending{Pending::Kind::FollowUp, said, source, {}, std::nullopt, std::nullopt, {}, std::nullopt, {}});
 }
 
 void MissionControl::pause(TaskId id) {
@@ -308,7 +310,8 @@ void MissionControl::resume(TaskId id) {
     if (pending_.contains(id)) {
         enqueue(id, pending_.take(id), true);
     } else {
-        enqueue(id, Pending{Pending::Kind::Resume, {}, task->source, {}, std::nullopt, {}, std::nullopt, {}}, true);
+        enqueue(id, Pending{Pending::Kind::Resume, {}, task->source, {}, std::nullopt, std::nullopt, {}, std::nullopt, {}},
+                true);
     }
 }
 
@@ -464,8 +467,8 @@ void MissionControl::returnToParent(TaskId child) {
         if (delegation.done) delegation.done(std::move(result));    // the lead was stopped: the executor drops it
         return;
     }
-    enqueue(delegation.parent, Pending{Pending::Kind::ReturnToParent, {}, {}, {}, std::nullopt, {}, std::move(result),
-                                       delegation.done},
+    enqueue(delegation.parent, Pending{Pending::Kind::ReturnToParent, {}, {}, {}, std::nullopt, std::nullopt, {},
+                                       std::move(result), delegation.done},
             true);
 }
 

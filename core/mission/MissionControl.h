@@ -51,6 +51,7 @@ struct TaskRequest {
     QList<ImageAttachment> images;
     std::optional<IntentMatch> fastPath;        // the fast path's tool for it; none: the model's
     QString shownFirst;                         // a line the reply opens with ("Into GNOME Terminal: `ls`")
+    std::optional<QString> answer;              // the reply itself, no tool and no model (a switch was flipped)
     std::optional<ModelChoice> model;           // none: what the role is given (Settings → Mission, ModelFit)
     std::optional<AgentRole> role;              // none: from the words (RoleClassifier) or the fast path's tool
     std::optional<TaskId> continues;            // the task whose conversation this one carries on
@@ -147,7 +148,8 @@ private:
         QString text;
         QString source;
         QList<ImageAttachment> images;
-        std::optional<IntentMatch> match;           // Start: the fast path's tool
+        std::optional<IntentMatch> match;           // Start: the fast path's tool…
+        std::optional<QString> answer;              // …or the reply itself
         QString shownFirst;
         std::optional<Result<ToolResult>> result;   // ReturnToParent: the sub-task's answer…
         ITool::Done done;                           // …for the lead's delegate_task call

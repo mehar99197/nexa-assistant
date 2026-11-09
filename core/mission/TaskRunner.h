@@ -53,6 +53,8 @@ public:
     // The fast path's tool for `text`; the model takes over when the tool cannot resolve it (NotFound) or the
     // match forwards its result (a screenshot to describe).
     void startFastPath(const QString &systemPrompt, const QString &text, const IntentMatch &match);
+    // A reply with no tool and no model (a switch flipped): shown, spoken and remembered like any other.
+    void answer(const QString &text, const QString &reply);
     void pause();                               // stops what runs; the conversation keeps everything so far
     void resume(const QString &systemPrompt);   // goes on from where it paused
     void stop();

@@ -37,6 +37,7 @@
 #include <QToolButton>
 #include <QVBoxLayout>
 
+#include <algorithm>
 #include <initializer_list>
 
 using namespace Qt::StringLiterals;
@@ -594,7 +595,10 @@ void MainWindow::connectController() {
         chatView_->addError(message);
     });
     connect(controller_, &AppController::panicked, this, [this] { chatView_->addNotice(tr("Stopped everything.")); });
-    connect(controller_, &AppController::busyChanged, this, &MainWindow::setBusy);
+    connect(controller_, &AppController::replyingChanged, this, [this] { refreshSendButton(); });
+    connect(input_, &QPlainTextEdit::textChanged, this, [this] { refreshSendButton(); });
+    // A task's question (the confirm-risky policy's): asked without blocking, so the other tasks stay in reach.
+    connect(controller_->mission(), &MissionControl::approvalRequested, this, &MainWindow::askApproval);
     connect(controller_, &AppController::conversationCleared, chatView_, &ChatView::clearTranscript);
     connect(controller_, &AppController::coreModeChanged, this, &MainWindow::showCoreMode);
     connect(controller_, &AppController::litNodesChanged, this, [this](unsigned nodes) { presence_->setLitNodes(nodes); });
@@ -758,7 +762,7 @@ bool MainWindow::eventFilter(QObject *watched, QEvent *event) {
         const auto *key = static_cast<QKeyEvent *>(event);
         const bool enter = key->key() == Qt::Key_Return || key->key() == Qt::Key_Enter;
         if (enter && !(key->modifiers() & Qt::ShiftModifier)) {
-            if (!controller_->isBusy()) controller_->submit(input_->toPlainText());
+            controller_->submit(input_->toPlainText());     // a new task, whatever else runs
             return true;
         }
     }
@@ -766,11 +770,41 @@ bool MainWindow::eventFilter(QObject *watched, QEvent *event) {
 }
 
 void MainWindow::sendOrStop() {
-    if (controller_->isBusy()) {
-        controller_->cancel();
-    } else {
+    // Words in the box are a new task; with none, the button stops the reply in view.
+    if (!input_->toPlainText().trimmed().isEmpty()) {
         controller_->submit(input_->toPlainText());
+    } else if (controller_->isReplying()) {
+        controller_->cancel();
     }
+}
+
+void MainWindow::askApproval(quint64 task, quint64 actionId) {
+    MissionControl *mission = controller_->mission();
+    const QList<Approval> waiting = mission->approvals();
+    const auto found = std::find_if(waiting.cbegin(), waiting.cend(), [actionId](const Approval &a) { return a.actionId == actionId; });
+    if (found == waiting.cend()) return;
+    const Task *asking = mission->task(task);
+    auto *box = new QMessageBox(QMessageBox::Question, tr("%1 asks: allow this action?").arg(found->agentId),
+                                (asking ? tr("Task: %1").arg(asking->title) + u"\n\n"_s : QString()) + found->question,
+                                QMessageBox::Yes | QMessageBox::No, this);
+    box->setDefaultButton(QMessageBox::No);
+    box->setWindowModality(Qt::NonModal);
+    box->setAttribute(Qt::WA_DeleteOnClose);
+    box->setObjectName(u"approval-%1"_s.arg(actionId));
+    connect(box, &QMessageBox::finished, this, [mission, actionId](int result) {
+        if (result == QMessageBox::Yes) {
+            mission->approve(actionId);
+        } else {
+            mission->deny(actionId);
+        }
+    });
+    // Answered elsewhere (the board, a stop): the question goes.
+    connect(mission, &MissionControl::approvalSettled, box, [box, actionId](quint64, quint64 settled, bool) {
+        if (settled != actionId) return;
+        box->disconnect();
+        box->close();
+    });
+    box->show();
 }
 
 void MainWindow::toggleTheme() {
@@ -977,12 +1011,13 @@ void MainWindow::showScreenSharing(bool shared) {
     showCoreMode(controller_->coreMode());  // the hint beside the core says it too
 }
 
-void MainWindow::setBusy(bool busy) {
-    sendButton_->setText(busy ? tr("Stop") : tr("Send"));
-    sendButton_->setProperty("busy", busy);
+void MainWindow::refreshSendButton() {
+    // Stop only while the reply in view runs and nothing new is typed: a request is never blocked by another.
+    const bool stop = controller_->isReplying() && input_->toPlainText().trimmed().isEmpty();
+    if (sendButton_->property("busy").toBool() == stop) return;
+    sendButton_->setText(stop ? tr("Stop") : tr("Send"));
+    sendButton_->setProperty("busy", stop);
     repolish(sendButton_);
-    modelCombo_->setEnabled(!busy);
-    if (!busy) input_->setFocus();
 }
 
 } // namespace nexa

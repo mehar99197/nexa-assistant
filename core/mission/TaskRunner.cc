@@ -146,6 +146,17 @@ void TaskRunner::startFastPath(const QString &systemPrompt, const QString &text,
     });
 }
 
+void TaskRunner::answer(const QString &text, const QString &reply) {
+    running_ = true;
+    fastPath_ = true;
+    hasContent_ = true;
+    emit route(u"fast"_s);
+    emit textDelta(reply);
+    conversation_.addUser(markedForModel(text, source_));
+    conversation_.addAssistant(reply);
+    end(FinishReason::Stop);
+}
+
 void TaskRunner::pause() {
     halt(u"Paused by the user."_s);
 }

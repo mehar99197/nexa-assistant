@@ -7,7 +7,6 @@
 #include "app/TrayIcon.h"
 #include "app/SystemStatus.h"
 #include "app/UnixSignals.h"
-#include "core/agent/Agent.h"
 #include "core/agent/AppContext.h"
 #include "core/Logging.h"
 #include "core/ai/ProgramLookup.h"
@@ -376,8 +375,6 @@ int main(int argc, char *argv[]) {
     router.add(std::make_unique<CommandIntent>(&apps, programExists));
     router.add(std::make_unique<InputIntent>());
 
-    Agent agent(&executor, &tools);
-    agent.setMaxSteps(config.agent.maxToolRounds);
 
     AppController controller(
         AppServices{.store = &store,
@@ -385,7 +382,6 @@ int main(int argc, char *argv[]) {
                     .tools = &tools,
                     .executor = &executor,
                     .router = &router,
-                    .agent = &agent,
                     .panic = &panic,
                     .policy = &policy,
                     .voice = &voice,
@@ -447,8 +443,7 @@ int main(int argc, char *argv[]) {
     applyRemote(controller.config());
 
     QObject::connect(&controller, &AppController::configChanged, &app,
-                     [applyAndroid, applyRemote, &agent, &mcp, &browser, &tools, &memory, &skills](const Config &updated) {
-                         agent.setMaxSteps(updated.agent.maxToolRounds);
+                     [applyAndroid, applyRemote, &mcp, &browser, &tools, &memory, &skills](const Config &updated) {
                          applyAndroid(updated.android);
                          applyRemote(updated);
                          mcp.apply(updated.mcp.servers);

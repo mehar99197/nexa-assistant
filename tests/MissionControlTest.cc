@@ -342,3 +342,17 @@ TEST_CASE("delegate_task outside a task is refused") {
     REQUIRE_FALSE(outcome->isOk());
     CHECK(outcome->error().code == ErrorCode::NotSupported);
 }
+
+TEST_CASE("A switch flipped is answered as a task of its own, with no tool and no model") {
+    Board board(1);
+    board.env.scripts = {{}};
+    const TaskId busy = board.ask(u"think hard"_s);
+    TaskRequest flipped;
+    flipped.text = u"share my screen"_s;
+    flipped.answer = u"Your screen is shared."_s;
+    const TaskId id = board.mission->add(flipped);
+    CHECK(board.state(id) == TaskState::Done);
+    CHECK(board.mission->transcript(id)->lastReply() == u"Your screen is shared."_s);
+    CHECK(board.env.created.size() == 1);       // no provider made for it
+    board.mission->stop(busy);
+}
