@@ -438,3 +438,16 @@ TEST_CASE("A program that offers no browser sign-in says so instead of refusing 
     CHECK(presenter.view().canSignIn);      // the list may change: another try asks again
     CHECK_FALSE(presenter.view().canSignOut);
 }
+
+TEST_CASE("Signed in with trouble says both, in the warning colour, and keeps Sign out") {
+    SignInPresenter presenter{QString(kKindCodex)};
+    presenter.checkStarted();
+    SignInStatus status = signedInAs(u"ChatGPT · Free"_s);
+    status.trouble = u"Codex's own settings file is invalid (~/.codex/config.toml, line 149)"_s;
+    presenter.statusChecked(status);
+    CHECK(presenter.view().statusText.startsWith(u"Signed in · ChatGPT · Free"_s));
+    CHECK(presenter.view().statusText.contains(u"line 149"_s));
+    CHECK(presenter.view().tone == Tone::Warn);
+    CHECK(presenter.view().canSignOut);
+    CHECK_FALSE(presenter.view().canSignIn);
+}

@@ -285,6 +285,9 @@ QWidget *SettingsDialog::buildProvidersTab() {
     fillAddMenu(presetMenu);
     addButton->setMenu(presetMenu);
     auto *removeButton = new QPushButton(tr("&Remove"), page);
+    removeButton->setObjectName(u"providerRemove"_s);
+    // Not pressed by Enter: it keeps the focus and moves to the next row, so Enter removed provider after provider.
+    removeButton->setAutoDefault(false);
     connect(removeButton, &QPushButton::clicked, this, &SettingsDialog::removeProvider);
     auto *upButton = new QToolButton(page);
     upButton->setText(u"▲"_s);
@@ -1603,6 +1606,17 @@ void SettingsDialog::browseProviders() {
 void SettingsDialog::removeProvider() {
     const int row = providerList_->currentRow();
     if (row < 0 || row >= config_.providers.size()) return;
+    const ProviderConfig &provider = config_.providers.at(row);
+    QString question = tr("Remove %1 from Nexa?").arg(provider.name);
+    if (ProviderRegistry::isProgramKind(provider.kind)) {
+        question += u"\n\n"_s + tr("%1 itself stays installed and signed in; Add → Programs puts it back.").arg(provider.name);
+    } else if (!provider.apiKey.isEmpty()) {
+        question += u"\n\n"_s + tr("Its API key is removed with it.");
+    }
+    if (QMessageBox::question(this, tr("Remove provider"), question, QMessageBox::Yes | QMessageBox::No, QMessageBox::No)
+        != QMessageBox::Yes) {
+        return;
+    }
     currentRow_ = -1;  // the form shows the provider being removed: do not store it back
     config_.providers.removeAt(row);
     const int next = std::min(row, int(config_.providers.size()) - 1);
@@ -1874,6 +1888,8 @@ QWidget *SettingsDialog::buildConnectorsTab() {
     }
     auto *addButton = new QPushButton(tr("&Add"), page);
     auto *removeButton = new QPushButton(tr("Re&move"), page);
+    removeButton->setObjectName(u"connectorRemove"_s);
+    removeButton->setAutoDefault(false);    // Enter is OK, never Remove (it moves on to the next connector)
     connect(addButton, &QPushButton::clicked, this, &SettingsDialog::addConnector);
     connect(removeButton, &QPushButton::clicked, this, &SettingsDialog::removeConnector);
 
@@ -2014,6 +2030,13 @@ void SettingsDialog::addConnector() {
 void SettingsDialog::removeConnector() {
     const int row = mcpList_->currentRow();
     if (row < 0 || row >= config_.mcp.servers.size()) return;
+    const McpServerConfig &server = config_.mcp.servers.at(row);
+    if (QMessageBox::question(this, tr("Remove connector"),
+                              tr("Remove the connector %1?").arg(server.name.isEmpty() ? server.id : server.name),
+                              QMessageBox::Yes | QMessageBox::No, QMessageBox::No)
+        != QMessageBox::Yes) {
+        return;
+    }
     mcpRow_ = -1;
     config_.mcp.servers.removeAt(row);
     delete mcpList_->takeItem(row);

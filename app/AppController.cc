@@ -97,8 +97,8 @@ AppController::AppController(AppServices services, Config config, QString enviro
 
     // Every action, from the fast path or the agent, lights the core and its satellites.
     connect(services_.executor, &ToolExecutor::actionStarted, this,
-            [this](quint64, const QString &tool, const QJsonObject &, const QString &) {
-                ++runningActions_;
+            [this](quint64 id, const QString &tool, const QJsonObject &, const QString &) {
+                runningActions_.insert(id, tool);
                 const CoreNodes lit = litNodes_ | coreNodesForTool(tool);
                 if (lit != litNodes_) {
                     litNodes_ = lit;
@@ -107,15 +107,16 @@ AppController::AppController(AppServices services, Config config, QString enviro
                 activity_.acting = true;
                 refreshCoreMode();
             });
-    connect(services_.executor, &ToolExecutor::actionFinished, this, [this](quint64, bool, const QString &tool, qint64) {
+    connect(services_.executor, &ToolExecutor::actionFinished, this, [this](quint64 id, bool, const QString &, qint64) {
+        // The finished signal carries a summary, not the tool: the name is the one its start gave.
+        const QString tool = runningActions_.take(id);
         // open_app, close_app and create_document move the user elsewhere; a command or typing
         // while an app is in front is a sign they are still there.
         if (services_.context && (tool == u"type_text"_s || tool == u"run_command"_s || tool == u"create_document"_s)) {
             services_.context->touch();
         }
         refreshAppContext();
-        if (--runningActions_ > 0) return;
-        runningActions_ = 0;
+        if (!runningActions_.isEmpty()) return;
         activity_.acting = false;
         if (litNodes_ != NoNode) {
             litNodes_ = NoNode;

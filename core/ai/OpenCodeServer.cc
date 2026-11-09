@@ -1,6 +1,7 @@
 #include "core/ai/OpenCodeServer.h"
 
 #include "core/Logging.h"
+#include "core/ai/ProgramLookup.h"
 #include "core/net/HttpClient.h"
 
 #include <QDir>
@@ -152,7 +153,7 @@ void OpenCodeServer::startProcess() {
     output_.clear();
     stderrTail_.clear();
     base_.clear();
-    QProcessEnvironment environment = QProcessEnvironment::systemEnvironment();
+    QProcessEnvironment environment = environmentFor(program_);     // an npm install's node beside it (nvm)
     environment.insert(u"OPENCODE_SERVER_PASSWORD"_s, password_);
     environment.insert(u"OPENCODE_CONFIG_CONTENT"_s, kConfig);
     process_.setProcessEnvironment(environment);

@@ -259,3 +259,35 @@ TEST_CASE("ConfigStore round-trips a provider of kind codex") {
     REQUIRE(loaded.value().active() != nullptr);
     CHECK(loaded.value().active()->id == u"codex"_s);
 }
+
+TEST_CASE("A save that removes providers keeps the settings from before it, privately, until the next removal") {
+    QTemporaryDir dir;
+    REQUIRE(dir.isValid());
+    const ConfigStore store(dir.filePath(u"nexa/config.json"_s));
+    const auto withProviders = [](const QStringList &ids) {
+        Config config;
+        for (const QString &id : ids) config.providers.append(ProviderConfig{.id = id, .name = id});
+        return config;
+    };
+    const auto idsIn = [](const Config &config) {
+        QStringList ids;
+        for (const ProviderConfig &provider : config.providers) ids.append(provider.id);
+        return ids;
+    };
+
+    REQUIRE(store.save(withProviders({u"opencode"_s, u"agy"_s, u"codex"_s})).isOk());
+    CHECK_FALSE(QFile::exists(store.previousPath()));    // nothing was removed
+
+    REQUIRE(store.save(withProviders({u"opencode"_s})).isOk());
+    REQUIRE(QFile::exists(store.previousPath()));
+    CHECK_FALSE(QFileInfo(store.previousPath()).permissions().testAnyFlags(kGroupOrOther));
+    const Result<Config> previous = ConfigStore(store.previousPath()).load();
+    REQUIRE(previous.isOk());
+    CHECK(idsIn(previous.value()) == QStringList{u"opencode"_s, u"agy"_s, u"codex"_s});
+
+    // A later save that removes nothing (a model changed) leaves the copy alone.
+    Config later = withProviders({u"opencode"_s});
+    later.providers.first().defaultModel = u"another"_s;
+    REQUIRE(store.save(later).isOk());
+    CHECK(idsIn(ConfigStore(store.previousPath()).load().value()) == QStringList{u"opencode"_s, u"agy"_s, u"codex"_s});
+}

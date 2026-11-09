@@ -14,6 +14,8 @@ $FAKE_CODEX_STATE is a JSON file shared by every process of a test (the account 
    "models": [{"model": "fake-fast"}, {"model": "fake-hidden", "hidden": true}],
    "paginate": true,                           model/list in two pages (cursor "p2")
    "configFails": true,                        config/read answers with an error
+   "configError": "/x/config.toml:149:9",      config/read and thread/start fail as codex-cli 0.166 does when its
+                                              own config.toml cannot be parsed (the account calls still work)
    "turnStartDelay": 0.5,                      seconds before turn/start is answered
    "mode": "garbage" | "die"}                  garbage: print junk and exit 0; die: "Not logged in" on stderr, exit 1
 What each turn answers comes from the JSON list in $FAKE_CODEX_SCRIPT (the position is kept beside it, so a
@@ -273,12 +275,18 @@ def handle(msg):
     elif method == "model/list":
         respond(msg_id, model_list(params))
     elif method == "config/read":
+        if read_state().get("configError"):
+            return fail(msg_id, -32603, "failed to load workspace requirements: invalid configuration at "
+                        + read_state()["configError"])
         if read_state().get("configFails"):
             return fail(msg_id, -32603, "config is unavailable")
         names = read_state().get("mcp", [])
         respond(msg_id, {"config": {"mcp_servers": {n: {"command": "x", "enabled": True} for n in names}},
                          "origins": {}})
     elif method == "thread/start":
+        if read_state().get("configError"):
+            return fail(msg_id, -32603, "failed to load workspace requirements: invalid configuration at "
+                        + read_state()["configError"])
         STATE["thread"] += 1
         thread_id = "thread-%d" % STATE["thread"]
         respond(msg_id, {"thread": {"id": thread_id, "ephemeral": True}, "model": params.get("model") or "fake-default",

@@ -682,3 +682,15 @@ TEST_CASE("A turn cancelled while Codex is being stopped for its own tool lets i
     // The first turn ends by itself; its server is then of no use to anyone, and goes, long before the idle stop.
     CHECK(QTest::qWaitFor([&] { return !alive(old); }, 6'000));
 }
+
+TEST_CASE("A turn against an invalid settings file names it, and the chain may move on", "[codex]") {
+    CodexRig rig({entry(R"({"text":"never sent"})")},
+                 QJsonObject{{u"configError"_s, u"/tmp/fake-home/.codex/config.toml:149:9"_s}});
+    CodexProvider provider(rig.config(), rig.workingDir());
+    const Outcome outcome = run(provider, ask({user(u"hello"_s)}));
+    REQUIRE(outcome.error);
+    CHECK(outcome.error->code == ErrorCode::InvalidArgument);
+    CHECK(outcome.error->message.contains(u"line 149"_s));
+    CHECK(ProviderChain::meansUnavailable(*outcome.error));
+    CHECK(rig.turns().isEmpty());
+}

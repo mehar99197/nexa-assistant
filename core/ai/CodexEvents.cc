@@ -1,5 +1,6 @@
 #include "core/ai/CodexEvents.h"
 
+#include <QDir>
 #include <QJsonObject>
 #include <QRegularExpression>
 #include <QSet>
@@ -132,7 +133,26 @@ CodexEvent CodexEvents::decode(const CodexMessage &message) {
     return event;
 }
 
+QString CodexEvents::configTrouble(const QString &codexText) {
+    const QString lower = codexText.toLower();
+    if (!lower.contains(u"config.toml"_s) && !lower.contains(u"configuration"_s)) return {};
+    if (!anyOf(lower, {u"invalid configuration", u"error loading configuration", u"failed to load", u"toml parse error",
+                       u"unclosed table", u"duplicate key"})) {
+        return {};
+    }
+    static const QRegularExpression place(u"([^\\s'\"`]*config\\.toml):(\\d+)"_s);
+    const QRegularExpressionMatch found = place.match(codexText);
+    const QString advice = u"Fix that file (running codex in a terminal says what is wrong), then try again."_s;
+    if (!found.hasMatch()) {
+        return u"Codex cannot read its own settings file (config.toml in ~/.codex, or in $CODEX_HOME). "_s + advice;
+    }
+    QString path = found.captured(1);
+    if (const QString home = QDir::homePath(); path.startsWith(home + u'/')) path = u"~"_s + path.mid(home.size());
+    return u"Codex cannot read its own settings file, %1, at line %2. "_s.arg(path, found.captured(2)) + advice;
+}
+
 Error CodexEvents::turnError(const QString &message, const QJsonValue &errorInfo) {
+    if (const QString trouble = configTrouble(message); !trouble.isEmpty()) return Error{ErrorCode::InvalidArgument, trouble};
     const ErrorInfo info = infoOf(errorInfo);
     const QString said = tidy(message);
     const QString lower = message.toLower();
@@ -167,6 +187,9 @@ Error CodexEvents::rpcError(int code, const QString &message) {
 }
 
 Error CodexEvents::exitError(int exitCode, const QString &stderrTail) {
+    if (const QString trouble = configTrouble(stderrTail); !trouble.isEmpty()) {
+        return Error{ErrorCode::InvalidArgument, trouble};
+    }
     const QString lower = stderrTail.toLower();
     if (anyOf(lower, {u"not logged in", u"authenticat", u"codex login"})) {
         return Error{ErrorCode::Unauthorized, notSignedInMessage()};

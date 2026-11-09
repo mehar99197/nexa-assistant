@@ -54,6 +54,9 @@ public:
     // The process ended before it answered: what it said last on stderr (never more than a line).
     static Error exitError(int exitCode, const QString &stderrTail);
     static QString notSignedInMessage();
+    // Codex's own settings file (config.toml in CODEX_HOME) cannot be read: a sentence naming the file and the line,
+    // for whatever Codex said about it; empty when `codexText` is about something else.
+    static QString configTrouble(const QString &codexText);
     // What Codex said, cut to one short line, without colours and with any web address (a sign-in link
     // carries a secret), email address and key-like string replaced: safe to show and to log.
     static QString tidy(const QString &text);

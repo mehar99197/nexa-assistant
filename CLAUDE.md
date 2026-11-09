@@ -119,7 +119,9 @@ text-only model refuses images with a 400; the `Agent` then resends without them
   stream-json), `OpenCodeProvider` + `OpenCodeServer` + `OpenCodeWire` (opencode's server API), `CodexProvider` +
   `CodexSession` (it also holds `CodexConnection`, one `codex app-server` and its JSON-RPC) + `CodexEvents` +
   `CodexProtocol` (the wire, pure), with `TurnLedger` deciding what a warm session still needs and `TranscriptWriter`
-  the text of a turn; `ProgramLookup`; **sign-in**: `SignIn.h` (`ISignIn`, `SignInStatus` — a plan, never an email —
+  the text of a turn; `ProgramLookup` (PATH, then ~/.local/bin, ~/.npm-global/bin, npm's prefix, nvm, Volta, Bun —
+  a desktop session's PATH lacks them; `environmentFor` puts the program's folder first on its PATH, for an npm
+  program's `env node`); **sign-in**: `SignIn.h` (`ISignIn`, `SignInStatus` — a plan, never an email —
   and `SignInMethod`), `AgySignIn` + `AgyAcp` (`agy acp`), `OpenCodeSignIn` (opencode's `/provider/auth` and OAuth
   routes; an allow-list of the sign-ins a clean opencode offers), `CodexSignIn` (`account/login/*`), and
   `SignInPresenter` (pure: what Settings shows of a sign-in); **the catalogue**: `ProviderCatalog` over the generated
@@ -265,7 +267,8 @@ text-only model refuses images with a 400; the `Agent` then resends without them
   screens against the real server. Keep it free of anything Android could not build (no D-Bus, no `app/`).
 - `packaging/` — `org.nexa.Assistant.desktop`, the helper's polkit policy, D-Bus and systemd files, and
   `install-helper.sh` / `uninstall-helper.sh`; `scripts/` — model and engine downloads, desktop-entry install.
-- Runtime files: `~/.config/nexa/config.json` (settings, 0600), `~/.local/share/nexa/audit.jsonl` (every action,
+- Runtime files: `~/.config/nexa/config.json` (settings, 0600; a save that removes providers first keeps the file as
+  it was in `config.json.prev` and logs which went), `~/.local/share/nexa/audit.jsonl` (every action,
   0600), `~/.local/share/nexa/models/` (whisper), `~/.local/share/nexa/piper/` (Piper and its voices),
   `~/.local/share/nexa/memory.json` (what Nexa remembers, 0600), `~/.local/share/nexa/skills/` (the user's
   skills), `~/.local/share/nexa/playwright/` (Playwright, its output and its Chromium if any),

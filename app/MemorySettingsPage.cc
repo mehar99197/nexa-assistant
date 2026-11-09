@@ -51,6 +51,9 @@ MemorySettingsPage::MemorySettingsPage(const MemoryConfig &config, MemoryStore *
     auto *add = new QPushButton(tr("&Add"), this);
     auto *remove = new QPushButton(tr("&Delete"), this);
     auto *clear = new QPushButton(tr("Clear &all"), this);
+    // Enter is the dialog's OK, never a delete: Delete moves on to the next fact and keeps the focus.
+    remove->setAutoDefault(false);
+    clear->setAutoDefault(false);
     connect(add, &QPushButton::clicked, this, [this] {
         QListWidgetItem *item = itemFor(QString(), QString(), tr("new"), list_);
         list_->setCurrentItem(item);

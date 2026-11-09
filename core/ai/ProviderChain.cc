@@ -167,6 +167,7 @@ bool ProviderChain::meansUnavailable(const Error &error) {
     case ErrorCode::Unauthorized:
     case ErrorCode::Timeout:
     case ErrorCode::Network:
+    case ErrorCode::InvalidArgument:    // the provider's own setup is broken (Codex's config.toml): it cannot answer
         return true;
     case ErrorCode::Http: {
         // "HTTP 429: …" from a reply, "[503]: …" inside a gateway's stream.

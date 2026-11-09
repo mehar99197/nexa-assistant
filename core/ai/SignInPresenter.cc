@@ -144,7 +144,13 @@ void SignInPresenter::statusChecked(const SignInStatus &status) {
     state_ = status.state;
     detail_ = status.state == SignInStatus::State::SignedIn ? status.detail : QString();
     switch (status.state) {
-    case SignInStatus::State::SignedIn: setText(signedInText(detail_), Tone::Good); break;
+    case SignInStatus::State::SignedIn:
+        if (status.trouble.isEmpty()) {
+            setText(signedInText(detail_), Tone::Good);
+        } else {
+            setText(signedInText(detail_) + u" — but "_s + status.trouble, Tone::Warn);
+        }
+        break;
     case SignInStatus::State::SignedOut:
         // A keyring that is locked or out of reach looks the same to agy as no sign-in at all.
         setText(kind_ == kKindAgy ? u"Not signed in, or the keyring is locked"_s : u"Not signed in"_s, Tone::Warn);

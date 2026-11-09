@@ -16,6 +16,9 @@ struct SignInStatus {
     enum class State { Unknown, SignedOut, SignedIn };
     State state{State::Unknown};
     QString detail;
+    // Signed in, but the program cannot work for another reason Nexa can name (Codex's own config.toml is invalid).
+    // A sentence of Nexa's own, never the program's words.
+    QString trouble;
 };
 
 // One way to sign in: agy has one, opencode one per provider it offers an OAuth login for.

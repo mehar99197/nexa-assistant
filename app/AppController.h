@@ -9,6 +9,7 @@
 #include "core/tools/ToolExecutor.h"
 #include "ui/NexaCoreSpec.h"
 
+#include <QHash>
 #include <QObject>
 #include <QStringList>
 #include <QTimer>
@@ -194,7 +195,7 @@ private:
     std::unique_ptr<MicrophoneLeveler> leveler_;
     bool wakeForced_{false};
     CoreNodes litNodes_{NoNode};
-    int runningActions_{0};
+    QHash<quint64, QString> runningActions_;    // the executor's action id → the tool, while it runs
     QString offlineReason_;
     bool screenShared_{false};
     QString announcedApp_;              // the app id the window was last told about

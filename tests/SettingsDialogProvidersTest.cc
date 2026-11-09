@@ -11,7 +11,9 @@
 
 #include "QtStringMakers.h"
 
+#include <QAbstractButton>
 #include <QAction>
+#include <QApplication>
 #include <QCoreApplication>
 #include <QFile>
 #include <QJsonDocument>
@@ -20,8 +22,11 @@
 #include <QLineEdit>
 #include <QListWidget>
 #include <QMenu>
+#include <QMessageBox>
+#include <QPushButton>
 #include <QTemporaryDir>
 #include <QTest>
+#include <QTimer>
 #include <QToolButton>
 
 #include <catch2/catch_test_macros.hpp>
@@ -118,6 +123,25 @@ struct Rig {
 };
 
 bool alive(qint64 pid) { return pid > 0 && ::kill(pid_t(pid), 0) == 0; }
+
+// Answers the next question box with `button` once it is up (it runs an event loop of its own); gives up after a second.
+void answerNextQuestion(QMessageBox::StandardButton button, int triesLeft = 100) {
+    QTimer::singleShot(10, [button, triesLeft] {
+        for (QWidget *widget : QApplication::topLevelWidgets()) {
+            if (auto *box = qobject_cast<QMessageBox *>(widget); box && box->isVisible()) {
+                if (QAbstractButton *answer = box->button(button)) answer->click();
+                return;
+            }
+        }
+        if (triesLeft > 0) answerNextQuestion(button, triesLeft - 1);
+    });
+}
+
+QStringList providerIds(const SettingsDialog &dialog) {
+    QStringList ids;
+    for (const ProviderConfig &provider : dialog.config().providers) ids.append(provider.id);
+    return ids;
+}
 
 } // namespace
 
@@ -235,4 +259,42 @@ TEST_CASE("The Add menu groups the presets by category, programs first, and ends
     second->actions().at(0)->trigger();
     CHECK(rig.list()->count() == before + 1);
     CHECK(rig.list()->currentRow() == before);
+}
+
+TEST_CASE("Removing a provider asks first, and No keeps it") {
+    Rig rig;
+    rig.open();
+    auto *remove = rig.dialog->findChild<QPushButton *>(u"providerRemove"_s);
+    REQUIRE(remove != nullptr);
+    rig.list()->setCurrentRow(2);    // Groq, which holds a key
+
+    answerNextQuestion(QMessageBox::No);
+    remove->click();
+    CHECK(providerIds(*rig.dialog) == QStringList{u"agy"_s, u"codex"_s, u"groq"_s});
+
+    answerNextQuestion(QMessageBox::Yes);
+    remove->click();
+    CHECK(providerIds(*rig.dialog) == QStringList{u"agy"_s, u"codex"_s});
+}
+
+// The owner lost four providers at once: Remove keeps the keyboard focus and moves to the next row, and a focused push
+// button in a dialog is pressed by Enter — so Enter after one removal removed the next provider, and the next.
+TEST_CASE("Enter after a removal never removes the next provider") {
+    Rig rig;
+    rig.open();
+    auto *remove = rig.dialog->findChild<QPushButton *>(u"providerRemove"_s);
+    REQUIRE(remove != nullptr);
+    CHECK_FALSE(remove->autoDefault());
+    rig.list()->setCurrentRow(0);
+    answerNextQuestion(QMessageBox::Yes);
+    remove->click();
+    REQUIRE(providerIds(*rig.dialog) == QStringList{u"codex"_s, u"groq"_s});
+
+    remove->setFocus();
+    for (int i = 0; i < 3; ++i) {
+        answerNextQuestion(QMessageBox::Yes);    // were Enter to press Remove, the question would be answered yes
+        QTest::keyClick(remove, Qt::Key_Return);
+        QTest::qWait(30);
+    }
+    CHECK(providerIds(*rig.dialog) == QStringList{u"codex"_s, u"groq"_s});
 }

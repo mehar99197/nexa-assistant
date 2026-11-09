@@ -2,6 +2,7 @@
 
 #include "core/Logging.h"
 #include "core/ai/CodexEvents.h"
+#include "core/ai/ProgramLookup.h"
 
 #include <QCoreApplication>
 #include <QDir>
@@ -88,6 +89,7 @@ void CodexConnection::start() {
     if (started_) return;
     started_ = true;
     process_.setProgram(program_);
+    process_.setProcessEnvironment(environmentFor(program_));     // an npm install's node beside it (nvm)
     process_.setArguments(CodexProtocol::serverArguments());
     process_.setWorkingDirectory(workspace(workingDir_));
     process_.setUnixProcessParameters(kProcessFlags);

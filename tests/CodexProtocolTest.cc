@@ -2,9 +2,11 @@
 
 #include "core/ai/CodexEvents.h"
 #include "core/ai/CodexProtocol.h"
+#include "core/ai/ProviderChain.h"
 
 #include "QtStringMakers.h"
 
+#include <QDir>
 #include <QJsonArray>
 #include <QJsonDocument>
 
@@ -406,4 +408,29 @@ TEST_CASE("Codex's own tools that are only suggestions are off too", "[codex]") 
     const qsizetype at = arguments.indexOf(u"tool_suggest"_s);
     REQUIRE(at > 0);
     CHECK(arguments.at(at - 1) == u"--disable"_s);
+}
+
+// codex-cli 0.166 with a broken ~/.codex/config.toml: the account answers, but every step that loads the file fails.
+TEST_CASE("Codex's own settings file being invalid is named, with the line, and the chain moves on", "[codex]") {
+    const QString home = QDir::homePath();
+    const Error turn = CodexEvents::rpcError(
+        -32603, u"failed to load workspace requirements: invalid configuration at %1/.codex/config.toml:149:9"_s.arg(home));
+    CHECK(turn.code == ErrorCode::InvalidArgument);
+    CHECK(turn.message.contains(u"~/.codex/config.toml"_s));
+    CHECK(turn.message.contains(u"line 149"_s));
+    CHECK_FALSE(turn.message.contains(home));
+    CHECK(ProviderChain::meansUnavailable(turn));
+
+    const Error exited = CodexEvents::exitError(
+        1, u"Error loading configuration: /tmp/x/config.toml:12:3: unclosed table, expected `]`\n"_s);
+    CHECK(exited.code == ErrorCode::InvalidArgument);
+    CHECK(exited.message.contains(u"/tmp/x/config.toml"_s));
+    CHECK(exited.message.contains(u"line 12"_s));
+
+    const Error bootstrap = CodexEvents::turnError(u"failed to load bootstrap configuration"_s, QJsonValue());
+    CHECK(bootstrap.code == ErrorCode::InvalidArgument);
+    CHECK(bootstrap.message.contains(u"config.toml"_s));
+
+    CHECK(CodexEvents::configTrouble(u"something else went wrong"_s).isEmpty());
+    CHECK(CodexEvents::turnError(u"the model is thinking too hard"_s, QJsonValue()).code == ErrorCode::Unknown);
 }

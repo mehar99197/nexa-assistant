@@ -102,8 +102,24 @@ void CodexSignIn::onClosed(const Error &error) {
 void CodexSignIn::checkStatus() {
     if (!begin(Op::Status)) return;
     readAccountThen([this](const SignInStatus &status) {
-        end();
-        emit statusChecked(status);
+        if (status.state != SignInStatus::State::SignedIn) {
+            end();
+            emit statusChecked(status);
+            return;
+        }
+        // Signed in is not working: Codex reads its own config.toml for every turn (the account calls do not), and
+        // a file it cannot read fails every turn. Reading the config starts none of the servers it names.
+        const quint64 serial = serial_;
+        connection_->call(u"config/read"_s, QJsonObject{{u"includeLayers"_s, false}},
+                          [self = QPointer<CodexSignIn>(this), serial, status](Result<QJsonObject> result) {
+                              if (!self || self->serial_ != serial) return;
+                              SignInStatus checked = status;
+                              if (!result && result.error().code == ErrorCode::InvalidArgument) {
+                                  checked.trouble = result.error().message;
+                              }
+                              self->end();
+                              emit self->statusChecked(checked);
+                          });
     });
 }
 

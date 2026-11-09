@@ -10,6 +10,7 @@
 #include "core/tools/ToolRegistry.h"
 
 #include "QtStringMakers.h"
+#include "ScriptedProvider.h"
 
 #include <QFile>
 #include <QJsonDocument>
@@ -26,65 +27,8 @@ namespace {
 
 constexpr int kWaitMs = 5'000;
 
-class ScriptedStream : public ChatStream {
-public:
-    void play(const QString &text, const QList<ToolCall> &calls, std::optional<Error> error,
-              const QStringList &chunks = {}, const QString &route = {}) {
-        QTimer::singleShot(0, this, [this, text, calls, error, chunks, route] {
-            if (!route.isEmpty()) setRoute(route, u"One: down"_s);
-            for (const QString &chunk : chunks) emitText(chunk);
-            emitText(text);
-            if (error) {
-                fail(*error);
-            } else {
-                complete(calls.isEmpty() ? FinishReason::Stop : FinishReason::ToolCalls, calls);
-            }
-        });
-    }
-    bool aborted{false};
-
-protected:
-    void abortTransport() override { aborted = true; }
-};
-
-// One scripted reply per chat() call; an empty script leaves the stream hanging (for cancel tests).
-class ScriptedProvider : public IAiProvider {
-public:
-    struct Reply {
-        QString text;
-        QList<ToolCall> calls;
-        std::optional<Error> error;
-        QStringList chunks;     // streamed one by one before `text`
-        QString route;          // a fallback answered: who
-    };
-
-    QString id() const override { return u"scripted"_s; }
-    QString displayName() const override { return u"Scripted"_s; }
-    Capabilities capabilities() const override { return {.nativeTools = nativeTools, .vision = vision}; }
-    std::optional<bool> takesImages(const QString &) const override { return images; }
-    void listModels(std::function<void(Result<QStringList>)> done) override { done(QStringList{u"m"_s}); }
-
-    std::shared_ptr<ChatStream> chat(const ChatRequest &request) override {
-        requests.append(request);
-        auto stream = std::make_shared<ScriptedStream>();
-        lastStream = stream.get();
-        if (!script.isEmpty()) {
-            const Reply reply = script.takeFirst();
-            stream->play(reply.text, reply.calls, reply.error, reply.chunks, reply.route);
-        } else if (repeat) {
-            stream->play(repeat->text, repeat->calls, repeat->error);
-        }
-        return stream;
-    }
-
-    QList<Reply> script;
-    std::optional<Reply> repeat;
-    bool nativeTools{true};
-    bool vision{true};
-    std::optional<bool> images;     // what takesImages() answers
-    QList<ChatRequest> requests;
-    ScriptedStream *lastStream{nullptr};
-};
+using test::ScriptedProvider;
+using test::ScriptedStream;
 
 ToolCall call(const QString &id, const QString &name, const QString &arguments) {
     return ToolCall{id, name, arguments};

@@ -24,7 +24,7 @@ const QString kReminder = u"Use only Nexa's tools, written as <tool_call> blocks
                           "Your own tools are switched off."_s;
 
 QString notInstalled() {
-    return u"Codex is not installed (looked on PATH, in ~/.local/bin and in ~/.npm-global/bin)"_s;
+    return u"Codex is not installed (%1)"_s.arg(programSearchHint());
 }
 
 } // namespace
@@ -68,9 +68,7 @@ IAiProvider::Capabilities CodexProvider::capabilities() const {
 }
 
 QString CodexProvider::locate(const QString &configured) {
-    if (!configured.trimmed().isEmpty()) return findProgram(u"codex"_s, configured.trimmed());
-    if (const QString found = findProgram(u"codex"_s); !found.isEmpty()) return found;
-    return QStandardPaths::findExecutable(u"codex"_s, {QDir::homePath() + u"/.npm-global/bin"_s});
+    return findProgram(u"codex"_s, configured.trimmed());
 }
 
 QString CodexProvider::program() const {

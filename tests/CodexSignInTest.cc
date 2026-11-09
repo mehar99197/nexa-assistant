@@ -399,3 +399,27 @@ TEST_CASE("A Codex that cannot start fails every operation, once and without a c
         CHECK_FALSE(heard.link);
     }
 }
+
+TEST_CASE("Codex status says when Codex's own settings file is invalid, though signed in", "[codex]") {
+    QJsonObject state = signedOutState();
+    state.insert(u"signedIn"_s, true);
+    state.insert(u"configError"_s, u"/tmp/fake-home/.codex/config.toml:149:9"_s);
+    CodexRig rig(state);
+    CodexSignIn signIn(rig.program(), rig.workingDir());
+    Heard heard(signIn);
+    signIn.checkStatus();
+    REQUIRE(heard.waitFinished());
+    REQUIRE(heard.status);
+    CHECK(heard.status->state == SignInStatus::State::SignedIn);
+    CHECK(heard.status->trouble.contains(u"config.toml"_s));
+    CHECK(heard.status->trouble.contains(u"line 149"_s));
+
+    // A healthy file says nothing.
+    state.remove(u"configError"_s);
+    rig.write(state);
+    Heard again(signIn);
+    signIn.checkStatus();
+    REQUIRE(again.waitFinished());
+    REQUIRE(again.status);
+    CHECK(again.status->trouble.isEmpty());
+}
