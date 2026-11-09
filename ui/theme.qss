@@ -361,3 +361,79 @@ QWidget#stateHeader[tile="true"] { border: 0; }
 nexa--ChatView[tile="true"] { background: @panel@; }
 QLabel#statusState { color: @text@; font-weight: 700; }
 QLabel#orbTitle { font-size: 30px; font-weight: 700; }
+
+/* ---- Mission Control: the agents rail, the core card, the board, the live activity. Lanes and states wear tokens every
+   palette has (stt = web, think = code, wake = screen and "online", listen = phone, speak = voice, act = what needs the
+   user, error = a failure), and every chip says its state in words too. */
+nexa--MissionPanel {
+    background: @panel@;
+    border: 1px solid @line@;
+    border-radius: @radius@px;
+    qproperty-textColor: @text@;
+    qproperty-mutedColor: @muted@;
+    qproperty-lineColor: @line@;
+    qproperty-raisedColor: @panel2@;
+    qproperty-accentColor: @idle@;
+    qproperty-goodColor: @wake@;
+    qproperty-warnColor: @act@;
+    qproperty-errorColor: @error@;
+    qproperty-webColor: @stt@;
+    qproperty-codeColor: @think@;
+    qproperty-screenColor: @wake@;
+    qproperty-phoneColor: @listen@;
+    qproperty-voiceColor: @speak@;
+    qproperty-monoFamily: "@mono@";
+}
+nexa--TaskStrip { background: transparent; border: 0; border-bottom: 1px solid @line@; border-radius: 0; }
+QStackedWidget#missionCentre { background: transparent; }
+QLabel#sectionTitle { color: @muted@; font-family: "@mono@"; font-size: 11px; font-weight: 700; background: transparent; }
+QLabel#sectionNote, QLabel#boardCounts { color: @muted@; font-family: "@mono@"; font-size: 11px; background: transparent; }
+QListView#agentList, QListView#taskList, QListView#queueList, QListView#activityList, QListView#taskStrip {
+    background: transparent; border: 0; outline: 0;
+}
+QFrame#voiceCard { background: @panel2@; border: 1px solid @line@; border-radius: @radiusSmall@px; }
+QLabel#voiceName { color: @speak@; font-family: "@mono@"; font-weight: 700; background: transparent; }
+QLabel#voiceChip {
+    color: @speak@; font-family: "@mono@"; font-size: 10px; font-weight: 700;
+    border: 1px solid @speak@; border-radius: 4px; padding: 1px 6px; background: transparent;
+}
+QLabel#voiceLine { color: @text@; background: transparent; }
+nexa--SparklineWidget { background: transparent; qproperty-lineColor: @idle@; }
+nexa--SparklineWidget#voiceLevel { qproperty-lineColor: @speak@; }
+QPushButton#spawn { background: transparent; border: 1px dashed @line@; color: @muted@; padding: 10px; }
+QPushButton#spawn:hover { color: @text@; border-color: @muted@; }
+QPushButton#ghost { background: transparent; border: 1px solid @line@; color: @text@; padding: 6px 14px; }
+QPushButton#ghost:hover { border-color: @muted@; }
+QPushButton#ghost:disabled { color: @muted@; }
+QPushButton#addTasksButton { background: @idle@; color: @onAccent@; border: 0; padding: 7px 16px; font-weight: 600; }
+QLabel#coreTitle { font-size: 22px; font-weight: 700; color: @idle@; background: transparent; }
+QLabel#micLine { color: @wake@; font-family: "@mono@"; font-size: 11px; background: transparent; }
+QLabel#micLine[trouble="true"] { color: @act@; }
+QLabel#lastHeard { color: @muted@; font-family: "@mono@"; font-size: 11px; background: transparent; }
+QFrame#metricTile { background: @panel2@; border: 1px solid @line@; border-radius: @radiusSmall@px; }
+QLabel#tileLabel { color: @muted@; font-family: "@mono@"; font-size: 10px; background: transparent; }
+QLabel#tileValue { color: @text@; font-family: "@mono@"; font-size: 18px; font-weight: 700; background: transparent; }
+QLabel#tileValue[tone="web"] { color: @stt@; }
+QLabel#tileValue[tone="code"] { color: @think@; }
+QLabel#tileValue[tone="screen"] { color: @wake@; }
+QLabel#streaming { color: @wake@; font-family: "@mono@"; font-size: 10px; background: transparent; }
+QPushButton#laneChip {
+    padding: 5px 8px; border-radius: @radiusSmall@px; color: @muted@; font-family: "@mono@"; font-size: 10px;
+    background: @panel2@; border: 1px solid @line@;
+}
+QPushButton#laneChip:checked { background: @idle@; color: @onAccent@; border-color: @idle@; }
+QFrame#approvalCard { background: @panel2@; border: 1px solid @act@; border-radius: @radiusSmall@px; }
+QLabel#approvalTitle { color: @act@; font-family: "@mono@"; font-size: 11px; font-weight: 700; background: transparent; }
+QLabel#approvalQuestion { color: @text@; background: transparent; }
+QLabel#approvalDetail { color: @muted@; font-size: 11px; background: transparent; }
+QPushButton#approve { background: @act@; color: @onAccent@; border: 0; padding: 8px; font-weight: 600; }
+QPushButton#deny { background: transparent; color: @act@; border: 1px solid @act@; padding: 8px; font-weight: 600; }
+QLabel#onlineChip {
+    color: @wake@; font-family: "@mono@"; font-size: 11px; font-weight: 700;
+    border: 1px solid @wake@; border-radius: 12px; padding: 4px 10px; margin-right: 8px;
+}
+QLabel#onlineChip[offline="true"] { color: @error@; border-color: @error@; }
+QLabel#metaPill { color: @muted@; font-family: "@mono@"; font-size: 11px; padding: 0 8px; }
+QLabel#drawerAgent { font-family: "@mono@"; font-weight: 700; background: transparent; }
+QLabel#drawerState { font-family: "@mono@"; font-size: 11px; font-weight: 700; background: transparent; }
+QLabel#drawerTitle { font-weight: 600; background: transparent; }

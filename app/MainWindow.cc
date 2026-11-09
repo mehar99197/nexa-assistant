@@ -1,17 +1,28 @@
 #include "app/MainWindow.h"
 
 #include "app/ActionLogDock.h"
+#include "app/ActivityStream.h"
+#include "app/AddTasksDialog.h"
+#include "app/AgentsRail.h"
 #include "app/AppController.h"
 #include "app/ChatView.h"
+#include "app/CoreCard.h"
+#include "app/MetricsTiles.h"
+#include "app/MissionBoard.h"
+#include "app/TaskListModel.h"
+#include "app/TaskStrip.h"
+#include "app/TaskTranscriptDrawer.h"
 #include "app/GlobalShortcuts.h"
 #include "app/MicButton.h"
 #include "app/PhonePanel.h"
 #include "app/SettingsDialog.h"
+#include "core/mission/MissionControl.h"
 #include "core/tools/ToolExecutor.h"
 #include "remote/RemoteServer.h"
 #include "system/android/AndroidDevice.h"
 #include "system/browser/BrowserService.h"
 #include "system/helper/HelperClient.h"
+#include "system/info/ProcessStats.h"
 #include "ui/NexaCoreWidget.h"
 #include "voice/pipeline/VoicePipeline.h"
 
@@ -20,6 +31,7 @@
 #include <QCloseEvent>
 #include <QComboBox>
 #include <QCompleter>
+#include <QDialog>
 #include <QFrame>
 #include <QHBoxLayout>
 #include <QInputDialog>
@@ -30,6 +42,7 @@
 #include <QPlainTextEdit>
 #include <QPushButton>
 #include <QSignalBlocker>
+#include <QStackedWidget>
 #include <QStatusBar>
 #include <QStyle>
 #include <QTimer>
@@ -38,6 +51,7 @@
 #include <QVBoxLayout>
 
 #include <algorithm>
+#include <cmath>
 #include <initializer_list>
 
 using namespace Qt::StringLiterals;
@@ -98,8 +112,10 @@ MainWindow::MainWindow(AppController *controller, ProviderRegistry *registry, To
       design_(NexaDesigns::resolve(controller->config().ui.design)) {
     setWindowTitle(tr("Nexa"));
     resize(1280, 800);
+    uptime_.start();
     buildToolbar();
     buildCentral();
+    buildMission();
     buildStatusBar();
     applyDesign(design_);
     connectController();
@@ -107,6 +123,8 @@ MainWindow::MainWindow(AppController *controller, ProviderRegistry *registry, To
     refreshTheme();
     showPolicy();
 }
+
+MainWindow::~MainWindow() = default;
 
 void MainWindow::buildToolbar() {
     QToolBar *toolbar = addToolBar(tr("Main"));
@@ -133,6 +151,11 @@ void MainWindow::buildToolbar() {
     connect(modelCombo_, &QComboBox::textActivated, controller_, &AppController::setCurrentModel);
     toolbar->addWidget(makePill(tr("Model"), modelCombo_));
 
+    // Mission Control's top bar: whether the core is online, how long Nexa has run, the slots taken.
+    onlineChip_ = new QLabel(this);
+    onlineChip_->setObjectName(u"onlineChip"_s);
+    missionBar_.append(toolbar->insertWidget(toolbar->actions().isEmpty() ? nullptr : toolbar->actions().first(), onlineChip_));
+
     auto *refresh = new QAction(tr("Reload the model list"), this);
     connect(refresh, &QAction::triggered, controller_, &AppController::refreshModels);
     toolbar->addWidget(makeIconButton(NexaIcons::Kind::Refresh, u"iconButton"_s, refresh));
@@ -140,7 +163,7 @@ void MainWindow::buildToolbar() {
     auto *newChat = new QAction(tr("New chat"), this);
     newChat->setShortcut(QKeySequence::New);
     connect(newChat, &QAction::triggered, controller_, &AppController::newConversation);
-    toolbar->addWidget(makeIconButton(NexaIcons::Kind::NewChat, u"iconButton"_s, newChat));
+    chatBar_.append(toolbar->addWidget(makeIconButton(NexaIcons::Kind::NewChat, u"iconButton"_s, newChat)));
 
     actionLog_ = new ActionLogDock(auditPath_, this);
     addDockWidget(Qt::RightDockWidgetArea, actionLog_);
@@ -148,7 +171,7 @@ void MainWindow::buildToolbar() {
     QAction *showActions = actionLog_->toggleViewAction();
     showActions->setText(tr("Actions panel"));
     showActions->setShortcut(QKeySequence(u"Ctrl+L"_s));
-    toolbar->addWidget(makeIconButton(NexaIcons::Kind::Actions, u"iconButton"_s, showActions));
+    chatBar_.append(toolbar->addWidget(makeIconButton(NexaIcons::Kind::Actions, u"iconButton"_s, showActions)));
 
     // The phone beside the chat while one is connected; the button brings it back by hand.
     phonePanel_ = new PhonePanel(status_.phone, this);
@@ -164,6 +187,16 @@ void MainWindow::buildToolbar() {
     spacer->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Preferred);
     toolbar->addWidget(spacer);
 
+    uptimeLabel_ = new QLabel(this);
+    uptimeLabel_->setObjectName(u"metaPill"_s);
+    missionBar_.append(toolbar->addWidget(uptimeLabel_));
+    slotsLabel_ = new QLabel(this);
+    slotsLabel_->setObjectName(u"metaPill"_s);
+    missionBar_.append(toolbar->addWidget(slotsLabel_));
+    clock_.setInterval(1000);
+    connect(&clock_, &QTimer::timeout, this, &MainWindow::refreshMissionBar);
+    connect(&clock_, &QTimer::timeout, this, &MainWindow::sampleProcesses);
+
     policyButton_ = new QToolButton(this);
     policyButton_->setObjectName(u"pillButton"_s);
     policyButton_->setToolTip(tr("When Nexa asks before acting. Click to change it (Settings → Policy)."));
@@ -171,7 +204,7 @@ void MainWindow::buildToolbar() {
     connect(policyButton_, &QToolButton::clicked, this, [this] { openSettings(tr("Policy")); });
     toolbar->addWidget(policyButton_);
 
-    auto *stopAll = new QPushButton(tr("Stop all · Ctrl+Alt+Esc"), this);
+    auto *stopAll = stopAllButton_ = new QPushButton(tr("Stop all · Ctrl+Alt+Esc"), this);
     stopAll->setObjectName(u"stopAll"_s);
     stopAll->setToolTip(tr("Stop the reply, every tool and every child process (also Ctrl+Shift+Esc)"));
     stopAll->setCursor(Qt::PointingHandCursor);
@@ -294,7 +327,7 @@ void MainWindow::buildCentral() {
 // out of sight, the parts as cards. The pieces are built once; only their arrangement changes.
 void MainWindow::applyDesign(const DesignSpec &design) {
     design_ = design;
-    for (NexaCoreWidget *core : {presence_, statusCore_}) {
+    for (NexaCoreWidget *core : {presence_, statusCore_, coreCard_ ? coreCard_->core() : nullptr}) {
         if (core) core->setShape(design.shape);
     }
     if (micButton_) micButton_->setShape(design.shape);
@@ -306,9 +339,14 @@ void MainWindow::rebuildCentral() {
     const WindowLayout layout = design_.layout;
     // A piece the new arrangement leaves out (Console has no header) must not go down with the
     // old central widget: every piece is taken back first, and placed again below.
-    for (QWidget *piece : std::initializer_list<QWidget *>{header_, chatView_, inputBar_}) {
+    for (QWidget *piece : std::initializer_list<QWidget *>{header_, chatView_, inputBar_, rail_, coreCard_, centreStack_,
+                                                           stream_}) {
         if (piece->parentWidget() != this) piece->setParent(this);
     }
+    const bool mission = layout == WindowLayout::MissionControl;
+    for (QWidget *piece : std::initializer_list<QWidget *>{rail_, coreCard_, centreStack_, stream_}) piece->setVisible(false);
+    for (QWidget *piece : std::initializer_list<QWidget *>{header_, chatView_}) piece->setVisible(!mission);
+    inputBar_->setVisible(true);
     auto *central = new QWidget(this);
     auto *column = new QVBoxLayout(central);
     column->setContentsMargins(0, 0, 0, 0);
@@ -335,7 +373,7 @@ void MainWindow::rebuildCentral() {
     default: break;
     }
     presence_->setDiameter(diameter);
-    header_->setVisible(layout != WindowLayout::Console);
+    header_->setVisible(layout != WindowLayout::Console && layout != WindowLayout::MissionControl);
     header_->setMaximumWidth(layout == WindowLayout::Sidebar ? 300 : QWIDGETSIZE_MAX);
     header_->setMinimumWidth(layout == WindowLayout::Sidebar ? 240 : 0);
     header_->setProperty("tile", layout == WindowLayout::Dashboard);
@@ -371,11 +409,32 @@ void MainWindow::rebuildCentral() {
     switch (layout) {
     case WindowLayout::Studio:
     case WindowLayout::Bottom:
-    case WindowLayout::MissionControl:
         column->addWidget(header_);
         column->addWidget(chatView_, 1);
         column->addWidget(inputBar_);
         break;
+    case WindowLayout::MissionControl: {
+        // The agents | the core card, the board (or a task) and the input | the live activity.
+        auto *row = new QHBoxLayout;
+        row->setContentsMargins(12, 12, 12, 0);
+        row->setSpacing(12);
+        rail_->setMinimumWidth(250);
+        rail_->setMaximumWidth(320);
+        stream_->setMinimumWidth(290);
+        stream_->setMaximumWidth(400);
+        auto *middle = new QVBoxLayout;
+        middle->setContentsMargins(0, 0, 0, 0);
+        middle->setSpacing(12);
+        middle->addWidget(coreCard_);
+        middle->addWidget(centreStack_, 1);
+        row->addWidget(rail_);
+        row->addLayout(middle, 1);
+        row->addWidget(stream_);
+        column->addLayout(row, 1);
+        column->addWidget(inputBar_);
+        for (QWidget *piece : std::initializer_list<QWidget *>{rail_, coreCard_, centreStack_, stream_}) piece->show();
+        break;
+    }
     case WindowLayout::Focus:
     case WindowLayout::Orb:
         column->addWidget(header_);
@@ -417,7 +476,8 @@ void MainWindow::rebuildCentral() {
                                         : layout == WindowLayout::Sidebar ? Qt::LeftDockWidgetArea : Qt::RightDockWidgetArea;
     removeDockWidget(actionLog_);
     addDockWidget(area, actionLog_);
-    const bool shown = !(layout == WindowLayout::Focus || layout == WindowLayout::Orb);
+    // Mission Control has its own live activity: the Actions panel stays out of the way there.
+    const bool shown = !(layout == WindowLayout::Focus || layout == WindowLayout::Orb || mission);
     actionLog_->setVisible(shown);
     if (area == Qt::BottomDockWidgetArea) {
         resizeDocks({actionLog_}, {180}, Qt::Vertical);
@@ -435,6 +495,19 @@ void MainWindow::rebuildCentral() {
     // Console: the state lives in the status line.
     statusCore_->setVisible(layout == WindowLayout::Console);
     statusState_->setVisible(layout == WindowLayout::Console);
+
+    for (QAction *action : missionBar_) action->setVisible(mission);
+    // The control room's top bar is full: the shortcut stays in the tooltip.
+    stopAllButton_->setText(mission ? tr("Stop all") : tr("Stop all · Ctrl+Alt+Esc"));
+    modelCombo_->setMinimumContentsLength(mission ? 12 : 18);
+    for (QAction *action : chatBar_) action->setVisible(!mission);
+    if (mission) {
+        clock_.start();
+        centreStack_->setCurrentWidget(board_);
+    } else {
+        clock_.stop();
+    }
+    refreshMissionBar();
 }
 
 void MainWindow::buildStatusBar() {
@@ -602,7 +675,11 @@ void MainWindow::connectController() {
     connect(controller_->mission(), &MissionControl::approvalRequested, this, &MainWindow::askApproval);
     connect(controller_, &AppController::conversationCleared, chatView_, &ChatView::clearTranscript);
     connect(controller_, &AppController::coreModeChanged, this, &MainWindow::showCoreMode);
-    connect(controller_, &AppController::litNodesChanged, this, [this](unsigned nodes) { presence_->setLitNodes(nodes); });
+    connect(controller_, &AppController::litNodesChanged, this, [this](unsigned nodes) {
+        presence_->setLitNodes(nodes);
+        coreCard_->core()->setLitNodes(nodes);
+    });
+    connect(controller_, &AppController::lastHeardChanged, coreCard_, &CoreCard::setLastHeard);
     connect(controller_, &AppController::screenSharingChanged, this, &MainWindow::showScreenSharing);
     connect(controller_, &AppController::appContextChanged, this, &MainWindow::showAppContext);
     connect(phonePanel_, &PhonePanel::phoneChanged, this, &MainWindow::showPhonePanel);
@@ -636,10 +713,19 @@ void MainWindow::connectController() {
 void MainWindow::connectVoice() {
     VoicePipeline *voice = controller_->voice();
     if (!voice) return;
-    connect(voice, &VoicePipeline::levelChanged, this, [this](double level) { presence_->setLevel(level); });
+    connect(voice, &VoicePipeline::levelChanged, this, [this](double level) {
+        presence_->setLevel(level);
+        coreCard_->core()->setLevel(level);
+        coreCard_->pushLevel(level);
+        rail_->pushVoiceLevel(int(level * 100));
+        showMicLine(level);
+    });
+    connect(voice, &VoicePipeline::stateChanged, this, &MainWindow::showVoiceCard);
     connect(voice, &VoicePipeline::notice, this, &MainWindow::showStatus);
     connect(voice, &VoicePipeline::settingsChanged, this, [this] {
         showVoiceEngines();
+        showVoiceCard();
+        showMicLine(0);
         showCoreMode(controller_->coreMode());
     });
 
@@ -669,6 +755,11 @@ void MainWindow::closeEvent(QCloseEvent *event) {
 
 void MainWindow::showCoreMode(CoreMode mode) {
     presence_->setMode(mode);
+    if (coreCard_) {
+        coreCard_->core()->setMode(mode);
+        coreCard_->setState(titleFor(mode), hintFor(mode));
+    }
+    if (onlineChip_) refreshMissionBar();
     if (micButton_) micButton_->setMode(mode);
     if (statusCore_) statusCore_->setMode(mode);
     stateTitle_->setText(titleFor(mode));
@@ -763,7 +854,7 @@ bool MainWindow::eventFilter(QObject *watched, QEvent *event) {
         const auto *key = static_cast<QKeyEvent *>(event);
         const bool enter = key->key() == Qt::Key_Return || key->key() == Qt::Key_Enter;
         if (enter && !(key->modifiers() & Qt::ShiftModifier)) {
-            controller_->submit(input_->toPlainText());     // a new task, whatever else runs
+            submitInput();      // a new task, whatever else runs
             return true;
         }
     }
@@ -773,13 +864,14 @@ bool MainWindow::eventFilter(QObject *watched, QEvent *event) {
 void MainWindow::sendOrStop() {
     // Words in the box are a new task; with none, the button stops the reply in view.
     if (!input_->toPlainText().trimmed().isEmpty()) {
-        controller_->submit(input_->toPlainText());
+        submitInput();
     } else if (controller_->isReplying()) {
         controller_->cancel();
     }
 }
 
 void MainWindow::askApproval(quint64 task, quint64 actionId) {
+    if (inMission()) return;    // the live activity holds the question, with Approve and Deny
     MissionControl *mission = controller_->mission();
     const QList<Approval> waiting = mission->approvals();
     const auto found = std::find_if(waiting.cbegin(), waiting.cend(), [actionId](const Approval &a) { return a.actionId == actionId; });
@@ -1010,6 +1102,165 @@ void MainWindow::showScreenSharing(bool shared) {
                                     : tr("Nexa works through commands and tools without looking at your screen. Share "
                                          "screen (Ctrl+Shift+S) lets it look."));
     showCoreMode(controller_->coreMode());  // the hint beside the core says it too
+}
+
+void MainWindow::buildMission() {
+    MissionControl *mission = controller_->mission();
+    tasks_ = new TaskListModel(mission, this);
+    processStats_ = std::make_unique<ProcessStats>();
+
+    rail_ = new AgentsRail(tasks_, this);
+    coreCard_ = new CoreCard(this);
+    board_ = new MissionBoard(tasks_, this);
+    drawer_ = new TaskTranscriptDrawer(mission, this);
+    centreStack_ = new QStackedWidget(this);
+    centreStack_->setObjectName(u"missionCentre"_s);
+    centreStack_->addWidget(board_);
+    centreStack_->addWidget(drawer_);
+    stream_ = new ActivityStream(mission, this);
+    for (QWidget *piece : std::initializer_list<QWidget *>{rail_, coreCard_, centreStack_, stream_}) piece->hide();
+
+    connect(rail_, &AgentsRail::taskActivated, this, &MainWindow::openTask);
+    connect(rail_, &AgentsRail::spawnRequested, this, &MainWindow::openAddTasks);
+    connect(board_, &MissionBoard::taskActivated, this, &MainWindow::openTask);
+    connect(board_, &MissionBoard::pauseRequested, mission, &MissionControl::pause);
+    connect(board_, &MissionBoard::resumeRequested, mission, &MissionControl::resume);
+    connect(board_, &MissionBoard::stopRequested, mission, &MissionControl::stop);
+    connect(board_, &MissionBoard::removeRequested, mission, &MissionControl::remove);
+    connect(board_, &MissionBoard::pauseAllRequested, mission, &MissionControl::pauseAll);
+    connect(board_, &MissionBoard::addTasksRequested, this, &MainWindow::openAddTasks);
+    connect(drawer_, &TaskTranscriptDrawer::backRequested, this, [this] { centreStack_->setCurrentWidget(board_); });
+    connect(stream_, &ActivityStream::approved, mission, &MissionControl::approve);
+    connect(stream_, &ActivityStream::denied, mission, &MissionControl::deny);
+    connect(mission, &MissionControl::metricsChanged, this, &MainWindow::showMetrics);
+    connect(mission, &MissionControl::countsChanged, this, &MainWindow::refreshMissionBar);
+
+    // The other designs show the tasks at the top of the Actions panel.
+    taskStrip_ = new TaskStrip(tasks_, this);
+    actionLog_->setTop(taskStrip_);
+    connect(taskStrip_, &TaskStrip::taskActivated, this, &MainWindow::openTask);
+
+    // Keys of the board.
+    const auto key = [this](const QString &sequence, std::function<void()> act) {
+        auto *action = new QAction(this);
+        action->setShortcut(QKeySequence(sequence));
+        connect(action, &QAction::triggered, this, std::move(act));
+        addAction(action);
+    };
+    key(u"Ctrl+T"_s, [this] { openAddTasks(); });
+    key(u"Ctrl+Shift+Space"_s, [mission] { mission->pauseAll(); });
+    key(u"Ctrl+Shift+Y"_s, [mission] {
+        if (const QList<Approval> waiting = mission->approvals(); !waiting.isEmpty()) mission->approve(waiting.first().actionId);
+    });
+    key(u"Ctrl+Shift+N"_s, [mission] {
+        if (const QList<Approval> waiting = mission->approvals(); !waiting.isEmpty()) mission->deny(waiting.first().actionId);
+    });
+    showVoiceCard();
+    showMicLine(0);
+}
+
+void MainWindow::submitInput() {
+    const quint64 id = controller_->submit(input_->toPlainText());
+    // In Mission Control a request typed here opens, so its answer is in view; the board is a click away.
+    if (id != 0 && inMission()) openTask(id);
+}
+
+void MainWindow::openTask(quint64 id) {
+    if (!controller_->mission()->task(id)) return;
+    if (inMission()) {
+        drawer_->showTask(id);
+        centreStack_->setCurrentWidget(drawer_);
+        return;
+    }
+    // The other designs: the task in a window of its own, beside the conversation.
+    auto *window = new QDialog(this);
+    window->setAttribute(Qt::WA_DeleteOnClose);
+    window->setWindowTitle(tr("Task — Nexa"));
+    window->resize(720, 560);
+    auto *column = new QVBoxLayout(window);
+    column->setContentsMargins(0, 0, 0, 0);
+    auto *transcript = new TaskTranscriptDrawer(controller_->mission(), window);
+    column->addWidget(transcript);
+    connect(transcript, &TaskTranscriptDrawer::backRequested, window, &QDialog::close);
+    transcript->showTask(id);
+    window->show();
+}
+
+void MainWindow::openAddTasks() {
+    AddTasksDialog dialog(controller_->config(), this);
+    if (!input_->toPlainText().trimmed().isEmpty()) dialog.setText(input_->toPlainText());
+    if (dialog.exec() != QDialog::Accepted) return;
+    const QList<quint64> added = controller_->addTasks(dialog.lines(), dialog.model());
+    if (!added.isEmpty() && dialog.lines().join(u'\n') == input_->toPlainText().trimmed()) input_->clear();
+    if (inMission()) centreStack_->setCurrentWidget(board_);
+    showStatus(tr("%n task(s) added to the board.", nullptr, int(added.size())), false);
+}
+
+void MainWindow::showMetrics() {
+    MissionControl *mission = controller_->mission();
+    const std::optional<quint64> newest = mission->newestRunning();
+    if (!newest) return;     // the last numbers stay until another task works
+    const TaskRunner::Metrics metrics = mission->metrics(*newest);
+    coreCard_->tiles()->setLatency(metrics.firstTokenMs);
+    coreCard_->tiles()->setTokensPerSecond(metrics.tokensPerSecond);
+}
+
+void MainWindow::showVoiceCard() {
+    const VoicePipeline *voice = controller_->voice();
+    if (!voice || !rail_) return;
+    const QString name = controller_->config().voice.wakeName;
+    const QString engines = voice->canListen() ? u"%1 · %2"_s.arg(voice->recognizerName(), voice->speechName()) : QString();
+    switch (voice->state()) {
+    case VoiceState::Listening: rail_->setVoice(tr("LISTENING"), tr("Listening to you…"), engines); return;
+    case VoiceState::Transcribing: rail_->setVoice(tr("HEARING"), tr("Working out what you said…"), engines); return;
+    case VoiceState::Speaking: rail_->setVoice(tr("SPEAKING"), tr("Reading the answer aloud."), engines); return;
+    default: break;
+    }
+    if (voice->wakeWordActive()) {
+        rail_->setVoice(tr("WAKE WORD ON"), tr("Listening for “Hey %1”").arg(name), engines);
+    } else if (voice->canListen()) {
+        rail_->setVoice(tr("READY"), tr("Hold Talk (or Ctrl+M) and speak."), engines);
+    } else {
+        rail_->setVoice(tr("OFF"), tr("No speech recognition: see Settings → Voice."), {});
+    }
+}
+
+void MainWindow::showMicLine(double level) {
+    const VoicePipeline *voice = controller_->voice();
+    if (!voice || !coreCard_) return;
+    micLevel_ = level;
+    const QString trouble = voice->microphoneTrouble();
+    if (!trouble.isEmpty()) {
+        coreCard_->setMicLine(tr("MIC · %1").arg(trouble.section(u'.', 0, 0)), true);
+    } else if (level > 0) {
+        const double db = 20.0 * std::log10(std::max(level, 0.001));
+        coreCard_->setMicLine(tr("MIC OK · %1 dB").arg(int(std::lround(db))), false);
+    } else {
+        coreCard_->setMicLine(voice->wakeWordActive() ? tr("MIC OK · listening") : tr("MIC · closed"), false);
+    }
+}
+
+void MainWindow::refreshMissionBar() {
+    if (!onlineChip_) return;
+    const bool offline = controller_->coreMode() == CoreMode::Offline;
+    onlineChip_->setText(offline ? tr("● CORE OFFLINE") : tr("● CORE ONLINE"));
+    onlineChip_->setProperty("offline", offline);
+    repolish(onlineChip_);
+    onlineChip_->setToolTip(offline ? controller_->offlineReason() : tr("The providers answer."));
+    const qint64 seconds = uptime_.elapsed() / 1000;
+    uptimeLabel_->setText(tr("UPTIME %1:%2:%3")
+                              .arg(seconds / 3600, 2, 10, QChar(u'0'))
+                              .arg((seconds % 3600) / 60, 2, 10, QChar(u'0'))
+                              .arg(seconds % 60, 2, 10, QChar(u'0')));
+    const MissionControl *mission = controller_->mission();
+    slotsLabel_->setText(tr("SLOTS %1 / %2").arg(mission->running()).arg(mission->slotCount()));
+}
+
+void MainWindow::sampleProcesses() {
+    // Every other tick of the clock: Nexa and the programs it runs, while the control room is in view.
+    if (++processTick_ % 2 != 0) return;
+    const ProcessStats::Sample sample = processStats_->sample();
+    coreCard_->tiles()->setProcess(sample.cpuPercent, sample.residentBytes);
 }
 
 void MainWindow::refreshSendButton() {

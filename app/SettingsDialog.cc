@@ -2,6 +2,7 @@
 
 #include "app/BrowserSettingsPage.h"
 #include "app/MemorySettingsPage.h"
+#include "app/MissionSettingsPage.h"
 #include "app/ProviderGalleryDialog.h"
 #include "app/ProviderSignInBlock.h"
 #include "app/SkillsSettingsPage.h"
@@ -94,6 +95,8 @@ SettingsDialog::SettingsDialog(Config config, ProviderRegistry *registry, HttpCl
 
     tabs_ = new QTabWidget(this);
     tabs_->addTab(buildProvidersTab(), tr("Providers"));
+    missionPage_ = new MissionSettingsPage(config_, this);
+    tabs_->addTab(missionPage_, tr("Mission"));
     voicePage_ = buildVoiceTab();
     tabs_->addTab(voicePage_, tr("Voice"));
     tabs_->addTab(buildHelperTab(), tr("Helper"));
@@ -252,6 +255,7 @@ void SettingsDialog::accept() {
     config_.remote.port = remotePort_->value();
     browserPage_->store(config_.browser);
     memoryPage_->store(config_.memory);
+    missionPage_->store(config_.mission);
     skillsPage_->store(config_.skills);
     // The memory's own file, not the config: what the page changed, applied to the memory as it is now.
     if (const Result<void> edited = memoryPage_->applyEdits(); !edited) {

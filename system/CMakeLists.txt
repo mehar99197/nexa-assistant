@@ -28,6 +28,7 @@ add_library(nexa_system STATIC
     input/PortalInputBackend.h input/PortalInputBackend.cc
     input/RemoteDesktopSession.h input/RemoteDesktopSession.cc
     input/XTestInputBackend.h input/XTestInputBackend.cc
+    info/ProcessStats.h info/ProcessStats.cc
     info/SystemInfo.h info/SystemInfo.cc
     media/MprisController.h media/MprisController.cc
     office/OdfWriter.h office/OdfWriter.cc

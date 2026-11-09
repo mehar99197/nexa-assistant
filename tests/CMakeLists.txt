@@ -9,6 +9,7 @@ add_executable(nexa_tests
     FakeHttpServer.h
     QtStringMakers.h
     ScriptedProvider.h
+    MissionRig.h
     AgentTest.cc
     AgyEventsTest.cc
     AgyAcpTest.cc
@@ -27,6 +28,7 @@ add_executable(nexa_tests
     TaskTest.cc
     TaskTranscriptTest.cc
     TaskRunnerTest.cc
+    ProcessStatsTest.cc
     MissionControlTest.cc
     SignInPresenterTest.cc
     ProviderCatalogTest.cc
@@ -71,11 +73,16 @@ add_executable(nexa_tests
     # The Providers tab's sign-in block and the provider gallery, built from app/ like the Phone panel above.
     ProviderSignInBlockTest.cc ../app/ProviderSignInBlock.cc
     AppControllerTest.cc ../app/AppController.cc ../app/MicrophoneLeveler.cc
+    MissionBoardTest.cc AgentsRailTest.cc ActivityStreamTest.cc AddTasksDialogTest.cc TaskTranscriptDrawerTest.cc
+        ../app/MissionPanel.cc ../app/TaskListModel.cc ../app/AgentsRail.cc ../app/MissionBoard.cc ../app/ActivityStream.cc
+        ../app/AddTasksDialog.cc ../app/TaskTranscriptDrawer.cc ../app/TaskStrip.cc ../app/MetricsTiles.cc ../app/CoreCard.cc
+        ../app/ChatView.cc
     ProviderGalleryDialogTest.cc ../app/ProviderGalleryDialog.cc
     ProviderRegistryTest.cc
     # The dialog itself, for the sign-in block it holds per program row, built from app/ with its pages.
     SettingsDialogProvidersTest.cc ../app/SettingsDialog.cc ../app/BrowserSettingsPage.cc
-        ../app/MemorySettingsPage.cc ../app/SkillsSettingsPage.cc ../app/PhoneLink.cc ../app/GlobalShortcuts.cc
+        ../app/MemorySettingsPage.cc ../app/MissionSettingsPage.cc ../app/SkillsSettingsPage.cc ../app/PhoneLink.cc
+        ../app/GlobalShortcuts.cc
     SkillCatalogTest.cc
     SkillParserTest.cc
     PortalInputBackendTest.cc

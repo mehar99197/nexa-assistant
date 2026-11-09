@@ -20,6 +20,17 @@ qt_add_executable(nexa_assistant
     MemorySettingsPage.h MemorySettingsPage.cc
     SkillsSettingsPage.h SkillsSettingsPage.cc
     UnixSignals.h UnixSignals.cc
+    ActivityStream.h ActivityStream.cc
+    AddTasksDialog.h AddTasksDialog.cc
+    AgentsRail.h AgentsRail.cc
+    CoreCard.h CoreCard.cc
+    MetricsTiles.h MetricsTiles.cc
+    MissionBoard.h MissionBoard.cc
+    MissionPanel.h MissionPanel.cc
+    MissionSettingsPage.h MissionSettingsPage.cc
+    TaskListModel.h TaskListModel.cc
+    TaskStrip.h TaskStrip.cc
+    TaskTranscriptDrawer.h TaskTranscriptDrawer.cc
 )
 
 set_target_properties(nexa_assistant PROPERTIES OUTPUT_NAME nexa-assistant)

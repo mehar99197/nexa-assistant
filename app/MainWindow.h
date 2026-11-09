@@ -7,9 +7,12 @@
 #include "ui/NexaTheme.h"
 #include "ui/NexaThemes.h"
 
+#include <QElapsedTimer>
 #include <QMainWindow>
+#include <QTimer>
 
 #include <functional>
+#include <memory>
 #include <utility>
 #include <vector>
 
@@ -19,12 +22,21 @@ class QComboBox;
 class QLabel;
 class QPlainTextEdit;
 class QPushButton;
+class QStackedWidget;
 class QToolButton;
 
 namespace nexa {
 
 class ActionLogDock;
+class ActivityStream;
+class AgentsRail;
 class AppController;
+class CoreCard;
+class MissionBoard;
+class ProcessStats;
+class TaskListModel;
+class TaskStrip;
+class TaskTranscriptDrawer;
 class ChatView;
 class GlobalShortcuts;
 class HttpClient;
@@ -38,13 +50,17 @@ class ToolExecutor;
 // core with the state's name and a hint beside it, the transcript, the input bar with Share screen
 // (a switch: off, the model never looks at the screen), See phone, Send and Talk (the core again),
 // the Actions panel on the right, the Phone panel beside it while a phone is connected (its screen,
-// live) and a one-line status bar in monospace. Everything it shows comes from AppController's
-// signals; nothing here decides.
+// live) and a one-line status bar in monospace. In the Mission Control design the middle is the
+// control room instead: the agents rail, the core card with the metric tiles, the mission board (or
+// a task's transcript), the live activity with its approval cards, and the top bar says the core is
+// online, how long Nexa has run and how many slots are taken. Everything it shows comes from
+// AppController's and the board's signals; nothing here decides.
 class MainWindow : public QMainWindow {
     Q_OBJECT
 public:
     MainWindow(AppController *controller, ProviderRegistry *registry, ToolExecutor *executor, HttpClient *http,
                GlobalShortcuts *shortcuts, SystemStatus status, const QString &auditPath, QWidget *parent = nullptr);
+    ~MainWindow() override;
 
     void openSettings(const QString &tab = {});
     // Opens Settings without blocking, saves a picture of each tab into `directory`, closes it.
@@ -97,6 +113,16 @@ private:
     void showAppContext(const QString &name, const QString &hint);
     void refreshSendButton();
     void askApproval(quint64 task, quint64 actionId);
+    void buildMission();                // the Mission Control pieces, built once
+    bool inMission() const { return design_.layout == WindowLayout::MissionControl; }
+    void submitInput();                 // the input box's words as a task (in Mission Control, opened)
+    void openTask(quint64 id);          // its transcript: in the board's place, or a window of its own
+    void openAddTasks();
+    void showMetrics();
+    void showVoiceCard();
+    void showMicLine(double level);
+    void refreshMissionBar();
+    void sampleProcesses();
 
     AppController *controller_;
     ProviderRegistry *registry_;
@@ -125,6 +151,7 @@ private:
     QComboBox *modelCombo_{nullptr};
     QLabel *providerLabel_{nullptr};
     QToolButton *policyButton_{nullptr};
+    QPushButton *stopAllButton_{nullptr};
     QAction *themeAction_{nullptr};
     QAction *shareScreenAction_{nullptr};
     QLabel *statusLabel_{nullptr};
@@ -144,6 +171,26 @@ private:
     QString statusMessage_;         // the status bar's message in full; the label shows it elided
     bool promptingForKey_{false};
     std::function<bool()> closeToTray_;
+
+    // Mission Control.
+    TaskListModel *tasks_{nullptr};
+    AgentsRail *rail_{nullptr};
+    CoreCard *coreCard_{nullptr};
+    MissionBoard *board_{nullptr};
+    TaskTranscriptDrawer *drawer_{nullptr};
+    QStackedWidget *centreStack_{nullptr};
+    ActivityStream *stream_{nullptr};
+    TaskStrip *taskStrip_{nullptr};
+    QLabel *onlineChip_{nullptr};
+    QLabel *uptimeLabel_{nullptr};
+    QLabel *slotsLabel_{nullptr};
+    QList<QAction *> missionBar_;       // the top bar's pills of Mission Control
+    QList<QAction *> chatBar_;          // the toolbar buttons only the chat designs use
+    QElapsedTimer uptime_;
+    QTimer clock_;                      // the uptime, once a second; the CPU and memory every two
+    std::unique_ptr<ProcessStats> processStats_;
+    int processTick_{0};
+    double micLevel_{0};
 };
 
 } // namespace nexa

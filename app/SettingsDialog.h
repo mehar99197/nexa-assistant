@@ -36,6 +36,7 @@ class ITextToSpeech;
 // (system prompt). Edits a copy of the config; the caller applies config() after accept().
 class BrowserSettingsPage;
 class MemorySettingsPage;
+class MissionSettingsPage;
 class ProviderSignInBlock;
 class SkillsSettingsPage;
 
@@ -220,6 +221,7 @@ private:
 
     BrowserSettingsPage *browserPage_{nullptr};
     MemorySettingsPage *memoryPage_{nullptr};
+    MissionSettingsPage *missionPage_{nullptr};
     SkillsSettingsPage *skillsPage_{nullptr};
 };
 
