@@ -14,6 +14,7 @@
 
 #include <QFile>
 #include <QJsonDocument>
+#include <QSignalSpy>
 #include <QTemporaryDir>
 #include <QTest>
 #include <QTimer>
@@ -308,8 +309,8 @@ TEST_CASE("ToolExecutor asks for confirmation and honours the answer") {
     f.policy.setMode(PolicyMode::ConfirmAll);
     QStringList questions;
     bool allow = false;
-    f.executor.setConfirmer([&](const QString &question, std::function<void(bool)> answer) {
-        questions.append(question);
+    f.executor.setConfirmer([&](const ConfirmRequest &request, std::function<void(bool)> answer) {
+        questions.append(request.question);
         answer(allow);
     });
 
@@ -335,7 +336,7 @@ TEST_CASE("A tool that goes while its question is open is not run when the answe
     Fixture f;
     f.policy.setMode(PolicyMode::ConfirmAll);
     std::function<void(bool)> pending;
-    f.executor.setConfirmer([&](const QString &, std::function<void(bool)> answer) { pending = std::move(answer); });
+    f.executor.setConfirmer([&](const ConfirmRequest &, std::function<void(bool)> answer) { pending = std::move(answer); });
 
     std::optional<Result<ToolResult>> result;
     f.executor.execute(u"echo"_s, {{u"msg"_s, u"a"_s}}, u"gui"_s, [&](Result<ToolResult> r) { result = std::move(r); });
@@ -515,4 +516,66 @@ TEST_CASE("A picture is kept when some provider of the chain can see it, though 
     REQUIRE(f.provider.requests.size() == 1);
     CHECK(f.provider.requests.first().messages.last().images.size() == 1);
     CHECK(notices.isEmpty());
+}
+
+TEST_CASE("An agent given a task runs its tools for that task, and says when each step starts") {
+    Fixture f;
+    f.agent.setTask(5);
+    QSignalSpy started(&f.executor, &ToolExecutor::actionStarted);
+    QSignalSpy steps(&f.agent, &Agent::stepStarted);
+    f.provider.script = {{{}, {call(u"c1"_s, u"echo"_s, u"{\"msg\":\"x\"}"_s)}, {}}, {u"Done."_s, {}, {}}};
+    f.agent.run(&f.provider, &f.conversation, u"m"_s, u"gui"_s);
+    REQUIRE(f.waitDone());
+    REQUIRE(started.size() == 1);
+    CHECK(started.at(0).at(4).toULongLong() == 5);
+    REQUIRE(steps.size() == 2);
+    CHECK(steps.at(0).at(0).toInt() == 1);
+    CHECK(steps.at(1).at(0).toInt() == 2);
+}
+
+TEST_CASE("A hidden tool is not offered, and a call to it is answered with the reason, nothing run") {
+    Fixture f;
+    f.agent.setHiddenTools({u"echo"_s}, u"it is not available in a sub-task"_s);
+    f.provider.script = {{{}, {call(u"c1"_s, u"echo"_s, u"{}"_s)}, {}}, {u"Fine."_s, {}, {}}};
+    f.agent.run(&f.provider, &f.conversation, u"m"_s, u"gui"_s);
+    REQUIRE(f.waitDone());
+    REQUIRE(f.provider.requests.size() == 2);
+    for (const ToolSpec &spec : f.provider.requests[0].tools) CHECK(spec.name != u"echo"_s);
+    CHECK(f.toolRuns == QStringList{u"echo:fail"_s});
+    CHECK(f.provider.requests[1].messages.last().text.contains(u"not available in a sub-task"_s));
+    const QFile audit(f.audit.path());
+    CHECK((!audit.exists() || audit.size() == 0));
+}
+
+TEST_CASE("Cancelling with a note closes the open call with it") {
+    Fixture f;
+    f.provider.script = {{{}, {call(u"c1"_s, u"slow"_s, u"{}"_s)}, {}}};
+    f.agent.run(&f.provider, &f.conversation, u"m"_s, u"gui"_s);
+    REQUIRE(QTest::qWaitFor([&f] { return bool(f.pendingSlow); }, kWaitMs));
+    f.agent.cancel(u"Paused by the user."_s);
+    CHECK(f.finish == FinishReason::Cancelled);
+    CHECK(f.conversation.messages().last().text == u"Paused by the user."_s);
+}
+
+TEST_CASE("Cancelling an agent with a task stops only that task's tool") {
+    Fixture f;
+    f.agent.setTask(5);
+    std::optional<Result<ToolResult>> other;
+    ITool::Done otherSlow;
+    f.registry.add(std::make_unique<FunctionTool>(
+        ToolSpec{u"slow_other"_s, u"Slow"_s, {}}, [&otherSlow](const QJsonObject &, ITool::Done done) { otherSlow = std::move(done); },
+        [&otherSlow] {
+            if (otherSlow) std::exchange(otherSlow, nullptr)(Error{ErrorCode::Cancelled, u"Cancelled"_s});
+        }));
+    f.executor.execute(u"slow_other"_s, {}, ToolContext{u"gui"_s, 6}, [&other](Result<ToolResult> r) { other = std::move(r); });
+    f.provider.script = {{{}, {call(u"c1"_s, u"slow"_s, u"{}"_s)}, {}}};
+    f.agent.run(&f.provider, &f.conversation, u"m"_s, u"gui"_s);
+    REQUIRE(QTest::qWaitFor([&f] { return bool(f.pendingSlow); }, kWaitMs));
+    f.agent.cancel();
+    CHECK_FALSE(f.pendingSlow);     // its own tool was cancelled
+    CHECK_FALSE(other.has_value()); // the other task's was not
+    REQUIRE(otherSlow);
+    std::exchange(otherSlow, nullptr)(ToolResult{u"fine"_s, {}});
+    REQUIRE(other.has_value());
+    CHECK(other->isOk());
 }

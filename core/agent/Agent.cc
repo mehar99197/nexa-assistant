@@ -36,17 +36,34 @@ void Agent::run(IAiProvider *provider, Conversation *conversation, const QString
     requestStep();
 }
 
-void Agent::cancel() {
+void Agent::cancel(const QString &note) {
     if (!running_) return;
     const bool toolRunning = currentCall_.has_value();
     if (stream_) {
         stream_->disconnect(this);
         stream_->cancel();
     }
+    cancelNote_ = note;
     stop(std::nullopt, FinishReason::Cancelled);
+    cancelNote_.clear();
     // After stop(): the generation has moved on, so a tool that reports synchronously from
-    // cancel() is ignored instead of starting another round.
-    if (toolRunning) executor_->cancelAll();
+    // cancel() is ignored instead of starting another round. An agent working for a task stops
+    // that task's tools only; the others' go on.
+    if (toolRunning) {
+        if (task_ != 0) {
+            executor_->cancelTask(task_);
+        } else {
+            executor_->cancelAll();
+        }
+    }
+}
+
+QList<ToolSpec> Agent::offeredTools() const {
+    QList<ToolSpec> tools = registry_->specs();
+    if (!hidden_.isEmpty()) {
+        tools.removeIf([this](const ToolSpec &spec) { return hidden_.contains(spec.name); });
+    }
+    return tools;
 }
 
 void Agent::requestStep() {
@@ -62,7 +79,8 @@ void Agent::requestStep() {
 }
 
 void Agent::sendStep() {
-    const QList<ToolSpec> tools = registry_->specs();
+    emit stepStarted(step_);
+    const QList<ToolSpec> tools = offeredTools();
     textTools_ = !provider_->capabilities().nativeTools;
     ChatRequest request = conversation_->buildRequest(model_, tools);
     if (textTools_) request = TextToolParser::asTextRequest(request);
@@ -179,7 +197,7 @@ void Agent::onStepFinished(ChatStream *stream, FinishReason reason) {
     // models even with them.
     if (calls.isEmpty()) {
         QStringList known;
-        for (const ToolSpec &spec : registry_->specs()) known.append(spec.name);
+        for (const ToolSpec &spec : offeredTools()) known.append(spec.name);
         TextToolParser::Parsed parsed = TextToolParser::parse(text, known);
         if (!parsed.calls.isEmpty()) {
             for (qsizetype i = 0; i < parsed.calls.size(); ++i) parsed.calls[i].id = u"text_%1_%2"_s.arg(step_).arg(i + 1);
@@ -233,8 +251,11 @@ void Agent::runNextTool() {
         return;
     }
 
-    // Withheld for now (the screen while it is not shared): the model learns why, nothing runs.
-    if (const QString reason = registry_->withheldReason(call.name); !reason.isEmpty()) {
+    // Withheld for now (the screen while it is not shared), or hidden from this agent: the model learns why,
+    // nothing runs.
+    QString reason = hidden_.contains(call.name) ? hiddenReason_ : registry_->withheldReason(call.name);
+    if (hidden_.contains(call.name) && reason.isEmpty()) reason = u"it is not available here"_s;
+    if (!reason.isEmpty()) {
         const QString message = u"Error: %1 cannot be used now — %2"_s.arg(call.name, reason);
         conversation_->addToolResult(call.id, call.name, message);
         currentCall_.reset();
@@ -247,7 +268,7 @@ void Agent::runNextTool() {
     QElapsedTimer timer;
     timer.start();
     const quint64 generation = generation_;
-    executor_->execute(call.name, arguments.object(), source_,
+    executor_->execute(call.name, arguments.object(), ToolContext{source_, task_},
                        [this, generation, call, timer](Result<ToolResult> result) {
         if (generation != generation_) return;  // cancelled meanwhile
         currentCall_.reset();
@@ -269,7 +290,8 @@ void Agent::closeOpenCalls(const QString &text) {
 
 void Agent::stop(std::optional<Error> error, FinishReason reason) {
     if (!running_) return;
-    closeOpenCalls(reason == FinishReason::Cancelled ? u"Cancelled by the user."_s : u"Not run."_s);
+    const QString cancelled = cancelNote_.isEmpty() ? u"Cancelled by the user."_s : cancelNote_;
+    closeOpenCalls(reason == FinishReason::Cancelled ? cancelled : u"Not run."_s);
     ++generation_;
     running_ = false;
     stream_.reset();

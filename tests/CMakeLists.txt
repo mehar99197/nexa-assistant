@@ -19,6 +19,7 @@ add_executable(nexa_tests
     OpenCodeSignInTest.cc
     PresetFilterTest.cc
     ProgramLookupTest.cc
+    ToolExecutorTest.cc
     SignInPresenterTest.cc
     ProviderCatalogTest.cc
     AgyProviderTest.cc

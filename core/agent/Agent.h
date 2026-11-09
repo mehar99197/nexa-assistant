@@ -32,15 +32,28 @@ public:
     // The conversation must already end with the user's message. It receives every assistant
     // message and tool result of the run, and must outlive it.
     void run(IAiProvider *provider, Conversation *conversation, const QString &model, const QString &source);
-    // Stops the stream and the running tool; emits finished(FinishReason::Cancelled).
-    void cancel();
+    // Stops the stream and the running tool; emits finished(FinishReason::Cancelled). The tool calls left open are
+    // answered with `note` ("Cancelled by the user." when empty; a pause says "Paused by the user.").
+    void cancel(const QString &note = {});
     bool isRunning() const { return running_; }
     void setMaxSteps(int steps) { maxSteps_ = steps; }
+    // The task on the mission board this agent works for: its tools run for it (ToolContext::task), and cancelling
+    // stops only its tools. 0: none — cancelling then stops every tool.
+    void setTask(quint64 task) { task_ = task; }
+    quint64 task() const { return task_; }
+    // Tools this agent does not offer the model (delegate_task in a sub-task); a call to one is answered with
+    // `reason` and nothing runs.
+    void setHiddenTools(const QSet<QString> &names, const QString &reason) {
+        hidden_ = names;
+        hiddenReason_ = reason;
+    }
     // A model that refused a request because of the images in it (a text-only model): from then
     // on its requests go without images, with a note where each one was.
     bool cannotSeeImages(const QString &model) const { return blindModels_.contains(model); }
 
 signals:
+    // A request to the model is on its way: step 1, 2, … (a retry of the same step says the same number again).
+    void stepStarted(int step);
     void textDelta(const QString &delta);
     void toolStarted(const QString &tool, const QJsonObject &arguments);
     void toolFinished(const QString &tool, bool ok, const QString &summary, qint64 elapsedMs);
@@ -63,6 +76,7 @@ private:
     // Every tool call the model made needs a result, or the next request is rejected.
     void closeOpenCalls(const QString &text);
     void stop(std::optional<Error> error, FinishReason reason);
+    QList<ToolSpec> offeredTools() const;       // the registry's, without the hidden ones
 
     ToolExecutor *executor_;
     ToolRegistry *registry_;
@@ -70,6 +84,10 @@ private:
     Conversation *conversation_{nullptr};
     QString model_;
     QString source_;
+    quint64 task_{0};
+    QSet<QString> hidden_;
+    QString hiddenReason_;
+    QString cancelNote_;
     std::shared_ptr<ChatStream> stream_;
     QList<ToolCall> pendingCalls_;
     std::optional<ToolCall> currentCall_;

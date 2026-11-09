@@ -623,8 +623,8 @@ void MainWindow::connectController() {
                 if (mode == CoreMode::Acting || mode == CoreMode::FastPath) stateHint_->setText(hintFor(mode));
             });
     connect(executor_, &ToolExecutor::actionFinished, actionLog_, &ActionLogDock::actionFinished);
-    controller_->setConfirmer([this](const QString &question, std::function<void(bool)> answer) {
-        confirm(question, std::move(answer));
+    controller_->setConfirmer([this](const ConfirmRequest &request, std::function<void(bool)> answer) {
+        confirm(request.question, std::move(answer));
     });
 }
 
