@@ -9,6 +9,19 @@ add_library(nexa_core STATIC
     ai/AgyEvents.h ai/AgyEvents.cc
     ai/AgyProvider.h ai/AgyProvider.cc
     ai/AgySession.h ai/AgySession.cc
+    ai/AgyAcp.h ai/AgyAcp.cc
+    ai/AgySignIn.h ai/AgySignIn.cc
+    ai/CodexEvents.h ai/CodexEvents.cc
+    ai/CodexProtocol.h ai/CodexProtocol.cc
+    ai/CodexProvider.h ai/CodexProvider.cc
+    ai/CodexSession.h ai/CodexSession.cc
+    ai/CodexSignIn.h ai/CodexSignIn.cc
+    ai/OpenCodeSignIn.h ai/OpenCodeSignIn.cc
+    ai/PresetFilter.h ai/PresetFilter.cc
+    ai/ProviderCatalog.h ai/ProviderCatalog.cc
+    ai/ProviderCatalogData.cc
+    ai/SignIn.h
+    ai/SignInPresenter.h ai/SignInPresenter.cc
     ai/AnthropicProvider.h ai/AnthropicProvider.cc
     ai/ChatRequest.h ai/ChatRequest.cc
     ai/ChatStream.h ai/ChatStream.cc

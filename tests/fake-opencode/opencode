@@ -21,6 +21,26 @@ abort is reported the way opencode does, a MessageAbortedError 0.5 s later.
   {"hang": true}                     busy, and nothing more
 Requests other than health and events go to $FAKE_OPENCODE_LOG as {"method", "path", "body"}; the
 start goes there as {"pid", "argv", "cwd", "config"}.
+
+Sign-in (what OpenCodeSignInTest drives): GET /provider/auth, /provider, and POST /provider/<id>/oauth/authorize
+and /oauth/callback, DELETE /auth/<id>, POST /instance/dispose, scripted by the JSON file $FAKE_OPENCODE_AUTH
+(every key optional):
+  "providers": {id: [{"type", "label", "prompts"?}]}   replaces GET /provider/auth's reply; the default is what a
+                                     clean opencode 1.19.3 lists, plus "google" the way a user's plugin adds it
+  "connected": [id, ..]              providers GET /config/providers and GET /provider call connected
+  "sticky": [id, ..]                 connected through the environment: DELETE /auth/<id> does not remove them
+  "authorize": {"<id>/<index>": X}   X = {"url", "method", "instructions"} (the reply), null (the null body of a
+                                     method that is not oauth), or {"status": N, "body": {..}} / {"status": N,
+                                     "raw": "text"}; a key left out answers an oauth entry with an "auto" reply
+                                     and anything else with null
+  "callback": {"delay": s, "fail": {"status": N, "body": {..}}, "expectCode": "..."}
+                                     the callback waits `delay` seconds (a held request), fails the way "fail" says,
+                                     and for a "code" flow fails with ProviderAuthOauthCallbackFailed unless the
+                                     code is `expectCode`
+Like opencode, a callback with no authorize before it is ProviderAuthOauthMissing, a "code" flow's callback
+without a code is ProviderAuthOauthCodeMissing, and a sign-in, a DELETE /auth/<id> only show in the connected
+lists after POST /instance/dispose (opencode caches its providers per instance); that dispose also reconnects the
+MCP server ("fakemcp") that POST /mcp/fakemcp/disconnect had left out, as opencode's new instance does.
 """
 import base64
 import json
@@ -38,6 +58,79 @@ LISTENERS = []
 SESSIONS = [0]
 ABORTED = set()
 MCP = {"fakemcp": {"status": "connected"}}
+# Sign-in state: pending flows by provider, and the connected lists (live, and as the last dispose left them).
+AUTH_STATE = {"pending": {}, "live": None, "shown": None}
+
+
+def _entry(kind, label, *prompts):
+    entry = {"type": kind, "label": label}
+    if prompts:
+        entry["prompts"] = list(prompts)
+    return entry
+
+
+def _text(key, message, **more):
+    return dict({"type": "text", "key": key, "message": message}, **more)
+
+
+DEFAULT_PROVIDER_AUTH = {
+    "openai": [_entry("oauth", "ChatGPT Pro/Plus (browser)"), _entry("oauth", "ChatGPT Pro/Plus (headless)"),
+               _entry("api", "Manually enter API Key")],
+    "github-copilot": [_entry(
+        "oauth", "Login with GitHub Copilot",
+        {"type": "select", "key": "deploymentType", "message": "Select GitHub deployment type",
+         "options": [{"label": "GitHub.com", "value": "github.com", "hint": "Public"},
+                     {"label": "GitHub Enterprise", "value": "enterprise", "hint": "Data residency or self-hosted"}]},
+        _text("enterpriseUrl", "Enter your GitHub Enterprise URL or domain",
+              when={"key": "deploymentType", "op": "eq", "value": "enterprise"}))],
+    "gitlab": [_entry("oauth", "GitLab OAuth", _text("instanceUrl", "GitLab instance URL")),
+               _entry("api", "GitLab Personal Access Token", _text("instanceUrl", "GitLab instance URL"))],
+    "poe": [_entry("oauth", "Login with Poe (browser)"), _entry("api", "Manually enter API Key")],
+    "cloudflare-workers-ai": [_entry("api", "API key", _text("accountId", "Account ID"))],
+    "cloudflare-ai-gateway": [_entry("api", "Gateway API token", _text("accountId", "Account ID"),
+                                     _text("gatewayId", "Gateway ID"))],
+    "azure": [_entry("api", "API key", _text("resourceName", "Resource name")),
+              _entry("oauth", "Microsoft Entra ID (Azure CLI)", _text("resourceName", "Resource name"))],
+    "digitalocean": [_entry("oauth", "Login with DigitalOcean"), _entry("api", "Paste Model Access Key")],
+    "snowflake-cortex": [_entry("oauth", "Login with Snowflake (External Browser)",
+                                _text("account", "Snowflake Account Identifier"), _text("role", "Snowflake Role (optional)")),
+                         _entry("api", "Paste PAT or bearer token manually", _text("account", "Snowflake Account Identifier"))],
+    "xai": [_entry("oauth", "SuperGrok Subscription"), _entry("api", "Manually enter API Key")],
+    # What the owner's opencode-antigravity-auth plugin adds: not one of opencode's own.
+    "google": [_entry("oauth", "OAuth with Google (Antigravity)"), _entry("api", "Manually enter API Key")],
+}
+
+
+def auth_script():
+    path = os.environ.get("FAKE_OPENCODE_AUTH")
+    if not path:
+        return {}
+    with open(path) as f:
+        return json.load(f)
+
+
+def auth_providers():
+    return auth_script().get("providers", DEFAULT_PROVIDER_AUTH)
+
+
+def connected_now():
+    """What GET /config/providers and GET /provider list: the last dispose's view."""
+    with LOCK:
+        if AUTH_STATE["shown"] is None:
+            AUTH_STATE["live"] = list(auth_script().get("connected", []))
+            AUTH_STATE["shown"] = list(AUTH_STATE["live"])
+        return list(AUTH_STATE["shown"])
+
+
+def dispose_instance():
+    connected_now()
+    with LOCK:
+        AUTH_STATE["shown"] = list(AUTH_STATE["live"])
+        AUTH_STATE["pending"].clear()
+        # opencode builds the instance anew, and connects the MCP servers of its configuration again (measured on
+        # 1.19.3): what Nexa disconnected at the start is back until it is disconnected once more.
+        for name in MCP:
+            MCP[name] = {"status": "connected"}
 
 
 def parent_death_signal():
@@ -148,13 +241,18 @@ class Handler(BaseHTTPRequestHandler):
         return False
 
     def reply(self, status, payload=None):
-        body = b"" if payload is None else json.dumps(payload).encode()
-        self.send_response(status)
-        if payload is not None:
-            self.send_header("Content-Type", "application/json")
-        self.send_header("Content-Length", str(len(body)))
-        self.end_headers()
-        self.wfile.write(body)
+        self.reply_bytes(status, b"" if payload is None else json.dumps(payload).encode(), payload is not None)
+
+    def reply_bytes(self, status, body, json_body=True):
+        try:
+            self.send_response(status)
+            if json_body:
+                self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+        except (BrokenPipeError, ConnectionResetError):
+            pass        # a held request the client gave up on
 
     def body(self):
         length = int(self.headers.get("Content-Length") or 0)
@@ -181,9 +279,15 @@ class Handler(BaseHTTPRequestHandler):
             # Capabilities as opencode reports them: fast takes images, smart does not, one does not say.
             seeing = {"capabilities": {"toolcall": True, "input": {"text": True, "image": True}}}
             blind = {"capabilities": {"toolcall": True, "input": {"text": True, "image": False}}}
+            signed_in = [{"id": name, "models": {"model": {}}} for name in connected_now()]
             return self.reply(200, {"providers": [{"id": "fake", "models": {"fast": seeing, "smart": blind}},
-                                                  {"id": "other", "models": {"one": {}}}],
+                                                  {"id": "other", "models": {"one": {}}}] + signed_in,
                                     "default": {"fake": "smart"}})
+        if self.path == "/provider/auth":
+            return self.reply(200, auth_providers())
+        if self.path == "/provider":
+            # The real one is 7 MB and takes 2 s: Nexa asks /config/providers for the same list.
+            return self.reply(200, {"all": [], "default": {}, "connected": connected_now()})
         self.reply(404, {"error": "no such route"})
 
     def events(self):
@@ -233,12 +337,75 @@ class Handler(BaseHTTPRequestHandler):
         if disconnect:
             MCP[disconnect.group(1)] = {"status": "disabled"}
             return self.reply(200, True)
+        authorize = re.fullmatch(r"/provider/([^/]+)/oauth/authorize", self.path)
+        if authorize:
+            return self.oauth_authorize(authorize.group(1), body)
+        callback = re.fullmatch(r"/provider/([^/]+)/oauth/callback", self.path)
+        if callback:
+            return self.oauth_callback(callback.group(1), body)
+        if self.path == "/instance/dispose":
+            dispose_instance()
+            return self.reply(200, True)
         self.reply(404, {"error": "no such route"})
+
+    def oauth_authorize(self, provider, body):
+        index = int((body or {}).get("method", -1)) if isinstance(body, dict) else -1
+        scripted = auth_script().get("authorize", {})
+        key = "%s/%d" % (provider, index)
+        entries = auth_providers().get(provider, [])
+        oauth = 0 <= index < len(entries) and entries[index]["type"] == "oauth"
+        if key in scripted:
+            answer = scripted[key]
+        elif oauth:
+            answer = {"url": "https://auth.example.test/authorize?client_id=nexa-test&state=STATE-" + provider,
+                      "method": "auto",
+                      "instructions": "Complete authorization in your browser. This window will close automatically."}
+        else:
+            answer = None
+        if answer is None:
+            return self.reply_bytes(200, b"null")       # opencode answers 200 with a null body
+        if "status" in answer:
+            if "raw" in answer:
+                return self.reply_bytes(answer["status"], answer["raw"].encode(), False)
+            return self.reply(answer["status"], answer.get("body"))
+        with LOCK:
+            AUTH_STATE["pending"][provider] = {"method": index, "kind": answer["method"]}
+        self.reply(200, answer)
+
+    def oauth_callback(self, provider, body):
+        body = body if isinstance(body, dict) else {}
+        with LOCK:
+            pending = AUTH_STATE["pending"].get(provider)
+        if pending is None:
+            return self.reply(400, {"name": "ProviderAuthOauthMissing", "data": {"providerID": provider}})
+        script = auth_script().get("callback", {})
+        if pending["kind"] == "code" and not body.get("code"):
+            return self.reply(400, {"name": "ProviderAuthOauthCodeMissing", "data": {"providerID": provider}})
+        time.sleep(script.get("delay", 0))                # the held request of an "auto" flow
+        failure = script.get("fail")
+        if failure is None and pending["kind"] == "code" and "expectCode" in script \
+                and body.get("code") != script["expectCode"]:
+            failure = {"status": 400, "body": {"name": "ProviderAuthOauthCallbackFailed",
+                                                "data": {"providerID": provider}}}
+        if failure is not None:
+            return self.reply(failure["status"], failure.get("body"))
+        connected_now()
+        with LOCK:
+            AUTH_STATE["pending"].pop(provider, None)
+            if provider not in AUTH_STATE["live"]:
+                AUTH_STATE["live"].append(provider)       # shown only after a dispose
+        self.reply(200, True)
 
     def do_DELETE(self):
         if not self.authorized():
             return
         log({"method": "DELETE", "path": self.path, "body": None})
+        removed = re.fullmatch(r"/auth/([^/]+)", self.path)
+        if removed:
+            connected_now()
+            with LOCK:
+                if removed.group(1) not in auth_script().get("sticky", []):
+                    AUTH_STATE["live"] = [name for name in AUTH_STATE["live"] if name != removed.group(1)]
         self.reply(200, True)
 
 

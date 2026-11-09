@@ -1,11 +1,18 @@
 #include "core/ai/ProviderRegistry.h"
 
+#include "core/ai/AgyEvents.h"
+#include "core/ai/AgySignIn.h"
+#include "core/ai/CodexEvents.h"
+#include "core/ai/CodexSignIn.h"
+#include "core/ai/OpenCodeSignIn.h"
+#include "core/ai/ProviderCatalog.h"
 #include "core/net/HttpClient.h"
 
 #include "QtStringMakers.h"
 
 #include <catch2/catch_test_macros.hpp>
 
+#include <algorithm>
 #include <functional>
 #include <optional>
 
@@ -171,4 +178,257 @@ TEST_CASE("An API needs a model named; agy and opencode answer with their own de
     CHECK(ProviderRegistry::needsModel(ProviderConfig{.kind = kKindAnthropic}));
     CHECK_FALSE(ProviderRegistry::needsModel(ProviderConfig{.kind = kKindAgy}));
     CHECK_FALSE(ProviderRegistry::needsModel(ProviderConfig{.kind = kKindOpenCode}));
+}
+
+TEST_CASE("The Codex preset sits beside agy: a program, no key, no URL, the first visible model") {
+    const std::optional<ProviderPreset> codex = preset(u"codex"_s);
+    REQUIRE(codex);
+    CHECK(codex->kind == kKindCodex);
+    CHECK(codex->name == u"Codex (ChatGPT)"_s);
+    CHECK_FALSE(codex->requiresKey);
+    CHECK(codex->baseUrl.isEmpty());
+    CHECK(codex->defaultModel.isEmpty());
+    CHECK(codex->category == u"Programs"_s);
+
+    CHECK(ProviderRegistry::fromPreset(*codex).kind == kKindCodex);
+    CHECK_FALSE(ProviderRegistry::isHttpKind(kKindCodex));
+    CHECK_FALSE(ProviderRegistry::needsModel(ProviderConfig{.kind = kKindCodex}));
+
+    HttpClient http;
+    ProviderRegistry registry(&http);
+    CHECK(registry.supports(kKindCodex));
+    CHECK(registry.create(ProviderConfig{.id = u"codex"_s, .kind = kKindCodex, .name = u"Codex"_s}).isOk());
+}
+
+TEST_CASE("Codex is added by the user: it is not a default provider") {
+    CHECK(ids(ProviderRegistry::defaultProviders(installedOnly({u"codex"_s, u"agy"_s, u"opencode"_s})))
+          == QStringList{u"opencode"_s, u"agy"_s});
+    CHECK(ProviderRegistry::defaultProviders(installedOnly({u"codex"_s})).isEmpty());
+}
+
+TEST_CASE("isProgramKind is agy, opencode and codex") {
+    CHECK(ProviderRegistry::isProgramKind(kKindAgy));
+    CHECK(ProviderRegistry::isProgramKind(kKindOpenCode));
+    CHECK(ProviderRegistry::isProgramKind(kKindCodex));
+    CHECK_FALSE(ProviderRegistry::isProgramKind(kKindOpenAiCompatible));
+    CHECK_FALSE(ProviderRegistry::isProgramKind(kKindAnthropic));
+    CHECK_FALSE(ProviderRegistry::isProgramKind(kKindGemini));
+    CHECK_FALSE(ProviderRegistry::isProgramKind(QString()));
+}
+
+TEST_CASE("The presets list the programs first, then the hand-tuned entries, then the catalogue") {
+    const QList<ProviderPreset> all = ProviderRegistry::presets();
+    REQUIRE(all.size() > 20);
+    CHECK(all.at(0).id == u"opencode"_s);
+    CHECK(all.at(1).id == u"agy"_s);
+    CHECK(all.at(2).id == u"codex"_s);
+    for (int i = 0; i < 3; ++i) CHECK(all.at(i).category == u"Programs"_s);
+    for (qsizetype i = 3; i < all.size(); ++i) {
+        CHECK(all.at(i).category != u"Programs"_s);
+        CHECK_FALSE(ProviderRegistry::isProgramKind(all.at(i).kind));
+    }
+    QStringList handTuned;
+    for (qsizetype i = 3; i < 3 + 15; ++i) handTuned.append(all.at(i).id);
+    CHECK(handTuned == QStringList{u"opencode-console"_s, u"opencode-console-claude"_s, u"opencode-go"_s,
+                                   u"opencode-go-claude"_s, u"openai"_s, u"ollama"_s, u"lmstudio"_s, u"groq"_s,
+                                   u"openrouter"_s, u"deepseek"_s, u"mistral"_s, u"xai"_s, u"together"_s,
+                                   u"custom"_s, u"anthropic"_s});
+    CHECK(all.at(3 + 15).id == u"gemini"_s);
+    // Everything after is the catalogue's.
+    for (qsizetype i = 3 + 16; i < all.size(); ++i) CHECK(ProviderCatalog::find(all.at(i).id) != nullptr);
+}
+
+TEST_CASE("No preset id appears twice") {
+    QStringList seen;
+    for (const ProviderPreset &candidate : ProviderRegistry::presets()) {
+        CHECK_FALSE(seen.contains(candidate.id));
+        seen.append(candidate.id);
+    }
+}
+
+TEST_CASE("Every catalogue entry is a preset; the hand-tuned one wins on a clash") {
+    QStringList presetIds;
+    for (const ProviderPreset &candidate : ProviderRegistry::presets()) presetIds.append(candidate.id);
+    for (const CatalogEntry &entry : ProviderCatalog::entries()) {
+        CAPTURE(entry.id);
+        CHECK(presetIds.contains(entry.id));
+    }
+
+    // The hand-tuned deepseek keeps its own URLs, whatever the catalogue says.
+    const std::optional<ProviderPreset> deepseek = preset(u"deepseek"_s);
+    REQUIRE(deepseek);
+    CHECK(deepseek->baseUrl == u"https://api.deepseek.com/v1"_s);
+    CHECK(deepseek->modelsUrl.isEmpty());
+    const std::optional<ProviderPreset> openai = preset(u"openai"_s);
+    REQUIRE(openai);
+    CHECK(openai->sttModel == u"whisper-1"_s);
+    CHECK(openai->ttsVoice == u"alloy"_s);
+    const std::optional<ProviderPreset> console = preset(u"opencode-console"_s);
+    REQUIRE(console);
+    CHECK(console->modelsUrl == u"https://opencode.ai/inference/v1/models"_s);
+
+    // A catalogue entry that is not hand-tuned is converted as it is.
+    const CatalogEntry *aihorde = ProviderCatalog::find(u"aihorde"_s);
+    REQUIRE(aihorde);
+    const std::optional<ProviderPreset> converted = preset(u"aihorde"_s);
+    REQUIRE(converted);
+    CHECK(converted->kind == aihorde->kind);
+    CHECK(converted->name == aihorde->name);
+    CHECK(converted->baseUrl == aihorde->baseUrl);
+    CHECK(converted->modelsUrl == aihorde->modelsUrl);
+    CHECK(converted->requiresKey == aihorde->requiresKey);
+    CHECK(converted->category == aihorde->category);
+    CHECK(converted->website == aihorde->website);
+    CHECK(converted->hint == aihorde->hint);
+    CHECK(converted->freeTier == aihorde->freeTier);
+    CHECK(converted->defaultModel.isEmpty());
+    CHECK(converted->sttModel.isEmpty());
+}
+
+TEST_CASE("A hand-tuned preset inherits category, website, hint and free tier from its catalogue twin") {
+    for (const QString &id : {u"openai"_s, u"groq"_s, u"openrouter"_s, u"deepseek"_s, u"mistral"_s, u"xai"_s,
+                              u"together"_s, u"anthropic"_s, u"gemini"_s, u"ollama"_s, u"lmstudio"_s}) {
+        CAPTURE(id);
+        const CatalogEntry *entry = ProviderCatalog::find(id);
+        REQUIRE(entry);
+        const std::optional<ProviderPreset> candidate = preset(id);
+        REQUIRE(candidate);
+        CHECK(candidate->category == entry->category);
+        CHECK(candidate->website == entry->website);
+        CHECK(candidate->hint == entry->hint);
+        CHECK(candidate->freeTier == entry->freeTier);
+    }
+    const std::optional<ProviderPreset> groq = preset(u"groq"_s);
+    REQUIRE(groq);
+    CHECK(groq->freeTier);
+    CHECK(groq->sttModel == u"whisper-large-v3-turbo"_s);
+    CHECK(groq->category == u"Model makers"_s);
+}
+
+TEST_CASE("The hand-tuned entries that are not in the catalogue have a category of their own") {
+    for (const QString &id : {u"opencode-console"_s, u"opencode-console-claude"_s, u"opencode-go"_s,
+                              u"opencode-go-claude"_s}) {
+        CAPTURE(id);
+        CHECK(ProviderCatalog::find(id) == nullptr);
+        const std::optional<ProviderPreset> candidate = preset(id);
+        REQUIRE(candidate);
+        CHECK(candidate->category == u"Gateways"_s);
+    }
+    const std::optional<ProviderPreset> custom = preset(u"custom"_s);
+    REQUIRE(custom);
+    CHECK(custom->category == u"Local"_s);
+}
+
+TEST_CASE("Every preset has a known category, a registered kind and what its kind needs") {
+    HttpClient http;
+    const ProviderRegistry registry(&http);
+    const QStringList categories = ProviderRegistry::presetCategories();
+    CHECK(registry.availablePresets().size() == ProviderRegistry::presets().size());
+    for (const ProviderPreset &candidate : ProviderRegistry::presets()) {
+        CAPTURE(candidate.id);
+        CHECK(registry.supports(candidate.kind));
+        CHECK(categories.contains(candidate.category));
+        CHECK_FALSE(candidate.name.isEmpty());
+        if (ProviderRegistry::isHttpKind(candidate.kind)) CHECK_FALSE(candidate.baseUrl.isEmpty());
+    }
+}
+
+TEST_CASE("The categories are Programs, then the catalogue's") {
+    const QStringList categories = ProviderRegistry::presetCategories();
+    REQUIRE(categories.size() == ProviderCatalog::categories().size() + 1);
+    CHECK(categories.first() == u"Programs"_s);
+    CHECK(categories.mid(1) == ProviderCatalog::categories());
+    CHECK_FALSE(ProviderCatalog::categories().contains(u"Programs"_s));
+}
+
+TEST_CASE("availablePresets keeps only the kinds a registry has") {
+    HttpClient http;
+    ProviderRegistry registry(&http);
+    CHECK(registry.availablePresets().size() == ProviderRegistry::presets().size());
+}
+
+TEST_CASE("createSignIn makes the right sign-in for a program and none for an API") {
+    HttpClient http;
+    ProviderRegistry registry(&http);
+
+    const std::unique_ptr<ISignIn> agy = registry.createSignIn(
+        ProviderConfig{.id = u"agy"_s, .kind = kKindAgy, .name = u"agy"_s, .baseUrl = u"/nonexistent/agy"_s});
+    REQUIRE(agy);
+    CHECK(dynamic_cast<AgySignIn *>(agy.get()) != nullptr);
+    CHECK_FALSE(agy->busy());
+
+    const std::unique_ptr<ISignIn> opencode = registry.createSignIn(
+        ProviderConfig{.id = u"opencode"_s, .kind = kKindOpenCode, .name = u"opencode"_s});
+    REQUIRE(opencode);
+    CHECK(dynamic_cast<OpenCodeSignIn *>(opencode.get()) != nullptr);
+
+    const std::unique_ptr<ISignIn> codex = registry.createSignIn(
+        ProviderConfig{.id = u"codex"_s, .kind = kKindCodex, .name = u"Codex"_s, .baseUrl = u"/nonexistent/codex"_s});
+    REQUIRE(codex);
+    CHECK(dynamic_cast<CodexSignIn *>(codex.get()) != nullptr);
+
+    for (const QString &kind : {QString(kKindOpenAiCompatible), QString(kKindAnthropic), QString(kKindGemini),
+                                QString(u"nonsense"_s), QString()}) {
+        CAPTURE(kind);
+        CHECK(registry.createSignIn(ProviderConfig{.id = u"x"_s, .kind = kind, .name = u"X"_s}) == nullptr);
+    }
+}
+
+TEST_CASE("The opencode sign-in and the opencode provider share one server") {
+    HttpClient http;
+    ProviderRegistry registry(&http);
+    const ProviderConfig config{.id = u"opencode"_s, .kind = kKindOpenCode, .name = u"opencode"_s};
+    CHECK(registry.openCodeServer(config) == registry.openCodeServer(config));
+}
+
+TEST_CASE("Only the refusals that a sign-in can mend are 'not signed in'") {
+    // What the programs say when nobody is signed in: Nexa's own sentence replaces it and Settings has the button.
+    CHECK(ProviderRegistry::meansNotSignedIn(AgyEvents::exitError(1, u"Error: authentication required"_s)));
+    CHECK(ProviderRegistry::meansNotSignedIn(Error{ErrorCode::Unauthorized, CodexEvents::notSignedInMessage()}));
+    CHECK(ProviderRegistry::meansNotSignedIn(CodexEvents::exitError(1, u"not logged in"_s)));
+    CHECK(ProviderRegistry::meansNotSignedIn(
+        Error{ErrorCode::Unauthorized, u"opencode is not signed in for this model — run `opencode auth login`"_s}));
+
+    // A model opencode refuses (no plan, no licence) or a server whose password is wrong is not mended by Sign in:
+    // the program's own words stay, the chat must not send the user to a button that does nothing.
+    CHECK_FALSE(ProviderRegistry::meansNotSignedIn(
+        Error{ErrorCode::Unauthorized, u"opencode: gpt-5 refused (HTTP 403): no plan — choose another model in the toolbar"_s}));
+    CHECK_FALSE(ProviderRegistry::meansNotSignedIn(
+        Error{ErrorCode::Unauthorized, u"opencode's server at http://127.0.0.1:4096 refused the password — check the server "
+                                       "password in Settings → Providers"_s}));
+    // Not an Unauthorized at all.
+    CHECK_FALSE(ProviderRegistry::meansNotSignedIn(Error{ErrorCode::Http, u"agy is not signed in"_s}));
+    CHECK_FALSE(ProviderRegistry::meansNotSignedIn(Error{}));
+}
+
+TEST_CASE("The Add menu's groups: the programs first, every preset once, strays under Other") {
+    const QList<ProviderPreset> all = ProviderRegistry::presets();
+    const QList<PresetGroup> groups = ProviderRegistry::groupPresets(all, ProviderRegistry::presetCategories());
+    REQUIRE_FALSE(groups.isEmpty());
+    CHECK(groups.first().title == u"Programs"_s);
+    QList<int> seen;
+    for (const PresetGroup &group : groups) {
+        CAPTURE(group.title);
+        CHECK_FALSE(group.indices.isEmpty());       // a category with nothing in it has no submenu
+        for (const int index : group.indices) {
+            CHECK(all.at(index).category == group.title);
+            seen.append(index);
+        }
+    }
+    std::sort(seen.begin(), seen.end());
+    CHECK(seen.size() == all.size());
+    CHECK(std::adjacent_find(seen.begin(), seen.end()) == seen.end());      // none twice
+
+    // A category nobody listed, or none at all, goes under "Other", last.
+    ProviderPreset stray{.id = u"s"_s, .kind = QString(kKindOpenAiCompatible), .name = u"Stray"_s};
+    stray.category = u"Brand new"_s;
+    ProviderPreset bare{.id = u"b"_s, .kind = QString(kKindOpenAiCompatible), .name = u"Bare"_s};
+    ProviderPreset local{.id = u"l"_s, .kind = QString(kKindOpenAiCompatible), .name = u"Local one"_s};
+    local.category = u"Local"_s;
+    const QList<PresetGroup> some = ProviderRegistry::groupPresets({stray, local, bare}, {u"Programs"_s, u"Local"_s});
+    REQUIRE(some.size() == 2);
+    CHECK(some.at(0).title == u"Local"_s);
+    CHECK(some.at(0).indices == QList<int>{1});
+    CHECK(some.at(1).title == u"Other"_s);
+    CHECK(some.at(1).indices == QList<int>{0, 2});
 }

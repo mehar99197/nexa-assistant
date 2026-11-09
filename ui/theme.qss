@@ -338,6 +338,22 @@ nexa--ChatView {
     qproperty-monoFamily: "@mono@";
 }
 
+/* ---- Settings → Providers: the sign-in block and the provider gallery. The tones are tokens every palette has
+   (wake = green, act = amber, error = red); the words say the same, so the colour is never alone. */
+nexa--ProviderSignInBlock {
+    background: transparent;
+    qproperty-goodColor: @wake@;
+    qproperty-warnColor: @act@;
+    qproperty-badColor: @error@;
+    qproperty-mutedColor: @muted@;
+}
+QLineEdit#signInLink { font-family: "@mono@"; font-size: 11px; }
+QPushButton#galleryChip { padding: 4px 12px; border-radius: 13px; color: @muted@; }
+QPushButton#galleryChip:hover { color: @text@; border-color: @muted@; }
+QPushButton#galleryChip:checked { background: @accentSoft@; border-color: @accentLine@; color: @text@; }
+QLabel#galleryCount { color: @muted@; }
+QListWidget#galleryList::item { padding: 0; }
+
 /* ---- designs: cards and tiles (Dashboard), the state in the status line (Console) */
 QFrame#tile { background: @panel@; border: 1px solid @line@; border-radius: @radius@px; }
 QFrame#tile > QWidget { background: transparent; }

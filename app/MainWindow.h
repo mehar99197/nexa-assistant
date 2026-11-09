@@ -81,6 +81,7 @@ private:
     void rebuildCentral();
     void refreshTheme();
     void promptForApiKey(const QString &providerName);
+    void showSignInRequired(const QString &providerName);
     void confirm(const QString &question, std::function<void(bool)> answer);
     void showModels(const QStringList &models, const QString &current);
     void showStatus(const QString &message, bool isError);
@@ -127,6 +128,7 @@ private:
     QAction *shareScreenAction_{nullptr};
     QLabel *statusLabel_{nullptr};
     QToolButton *lowerMicButton_{nullptr};
+    QToolButton *signInButton_{nullptr};    // in the status bar while a program provider needs its sign-in
     QLabel *screenLabel_{nullptr};
     QLabel *browserLabel_{nullptr};
     QLabel *appLabel_{nullptr};     // "In: GNOME Terminal" while Nexa knows where the user is

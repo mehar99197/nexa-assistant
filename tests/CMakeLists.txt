@@ -10,6 +10,15 @@ add_executable(nexa_tests
     QtStringMakers.h
     AgentTest.cc
     AgyEventsTest.cc
+    AgyAcpTest.cc
+    AgySignInTest.cc
+    CodexProtocolTest.cc
+    CodexProviderTest.cc
+    CodexSignInTest.cc
+    OpenCodeSignInTest.cc
+    PresetFilterTest.cc
+    SignInPresenterTest.cc
+    ProviderCatalogTest.cc
     AgyProviderTest.cc
     AppContextTest.cc
     BrowserServiceTest.cc
@@ -48,7 +57,13 @@ add_executable(nexa_tests
     PhonePanelTest.cc ../app/PhonePanel.cc
     PolicyEngineTest.cc
     ProviderChainTest.cc
+    # The Providers tab's sign-in block and the provider gallery, built from app/ like the Phone panel above.
+    ProviderSignInBlockTest.cc ../app/ProviderSignInBlock.cc
+    ProviderGalleryDialogTest.cc ../app/ProviderGalleryDialog.cc
     ProviderRegistryTest.cc
+    # The dialog itself, for the sign-in block it holds per program row, built from app/ with its pages.
+    SettingsDialogProvidersTest.cc ../app/SettingsDialog.cc ../app/BrowserSettingsPage.cc
+        ../app/MemorySettingsPage.cc ../app/SkillsSettingsPage.cc ../app/PhoneLink.cc ../app/GlobalShortcuts.cc
     SkillCatalogTest.cc
     SkillParserTest.cc
     PortalInputBackendTest.cc

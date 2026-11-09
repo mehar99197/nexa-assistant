@@ -41,6 +41,10 @@ struct SystemStatus {
     SherpaRuntime *sherpa{nullptr};         // instant spotting installed? (Settings → Voice)
     std::function<QString()> microphoneSummary;     // "fine", or what is wrong with its sound
     std::function<void()> lowerMicrophone;          // Settings → Voice → Lower it
+    // Settings → Providers → sign-in: a chat turn is in flight (opencode's event stream and agy's app-data folder
+    // must not be disturbed), and a sign-in or sign-out succeeded (the providers are built again).
+    std::function<bool()> replyRunning;
+    std::function<void()> providersChanged;
 };
 
 } // namespace nexa

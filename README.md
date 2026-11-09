@@ -1,8 +1,9 @@
 # Nexa
 
 A Linux desktop AI assistant written in C++20 with a Qt 6 Widgets interface. It talks to any AI
-provider — your own opencode and agy (Google's Antigravity CLI) on their own sign-ins by default, or OpenAI-compatible
-APIs, Anthropic and Google Gemini natively —
+provider — your own opencode and agy (Google's Antigravity CLI) on their own sign-ins by default, Codex on your
+ChatGPT account, a catalogue of 179 key-based and local providers, or OpenAI-compatible APIs, Anthropic and Google
+Gemini natively —
 acts on the PC through tools, listens and talks back, and works with your Android phone in both
 directions. See [ARCHITECTURE.md](ARCHITECTURE.md) for the design and the milestone status.
 
@@ -55,11 +56,24 @@ Not to be confused with Nexa Download Manager: this is a separate program, named
 - **Stays out of the way** — one copy per user (starting it again brings the window forward), an icon
   in the top bar, and closing the window keeps the hotkeys and web remote running.
 
-Providers: **opencode** and **agy** (Google's Antigravity CLI) — the models you already have there, on their own
-sign-ins and quotas, with no key in Nexa: Nexa runs its own `opencode serve` and a warm `agy` process, and every
-action still goes through Nexa's own tools (theirs stay switched off). Sign in once with `opencode auth login` and by
-running `agy` in a terminal. Also OpenCode's hosted API (Console and Go, with a key), OpenAI, Anthropic, Google
-Gemini, Ollama, LM Studio, Groq, OpenRouter, DeepSeek, Mistral, xAI, Together, or any OpenAI-compatible endpoint.
+Providers: **opencode**, **agy** (Google's Antigravity CLI) and **Codex** (OpenAI's coding agent, on your ChatGPT
+plan; add it under Settings → Providers → Add → Programs) — the models you already have there, on their own sign-ins
+and quotas, with no key in Nexa: Nexa runs its own `opencode serve`, a warm `agy` process and a warm `codex app-server`,
+and every action still goes through Nexa's own tools (theirs stay switched off).
+
+**Sign in from inside Nexa.** Settings → Providers → pick the program → **Sign in…** opens that program's own login in
+your browser (the link is shown too, to copy) and reads its status; the program keeps the token, Nexa never sees it.
+A program that says nobody is signed in gets a **Sign in…** button in the status bar that opens the same place. The
+sign-in is shared with the program in your terminal, so signing out in Nexa signs it out there too (`opencode auth
+login`, running `agy` once and `codex login` still work). Claude's subscription login is not offered — Anthropic's terms
+do not let a third-party app offer it — so Claude goes through an Anthropic API key.
+
+**A catalogue of 179 providers.** Settings → Providers → **Add** lists them by category (gateways, model makers, inference hosts,
+regional and cloud providers, local servers, ones that need no key) and **Browse all…** opens a searchable gallery (a
+name, a host, "free" or "nokey"). Each takes a key from its own site, except local servers and the few that need none.
+OpenAI, Anthropic, Google Gemini, Groq, OpenRouter, DeepSeek, Mistral, xAI, Together, Ollama, LM Studio, OpenCode's
+hosted API (Console and Go) and a Custom OpenAI-compatible endpoint are all in the menu; the catalogue is generated from
+OmniRoute's open-source registry (`THIRD_PARTY_NOTICES.md`).
 
 Settings → Providers sets the **first choice** and the order of the rest (▲ ▼): when the first choice cannot answer —
 not running, not signed in, out of quota — the next one that allows it answers, with its own model, and the reply
@@ -162,7 +176,9 @@ reach Nexa only over adb, so the build refuses to go on without it.
   the PC — single use, five minutes, withdrawn after ten wrong guesses — traded for a token stored
   only as a hash. It speaks HTTPS on the network (plain HTTP only on loopback, for adb), refuses other
   sites' pages, rate-limits everything, and a revoked phone is disconnected at once.
-- API keys live in `~/.config/nexa/config.json` (readable only by you) and are never logged or shown.
+- API keys live in `~/.config/nexa/config.json` (readable only by you) and are never logged or shown. Signing in to
+  opencode, agy or Codex is each program's own OAuth: Nexa starts it and reads its status, and the token stays with the
+  program — Nexa never reads, stores or shows one.
 
 ## The browser, memory and skills
 
@@ -224,4 +240,4 @@ its standard streams (`npx -y @modelcontextprotocol/server-filesystem /home/me`,
 the model calls them like any other, through the policy, the Actions panel and the audit log; in
 confirm-risky mode Nexa asks before each call. Test lists a server's tools before you press OK.
 
-No licence has been chosen yet.
+No licence has been chosen yet. Third-party notices: [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).

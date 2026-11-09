@@ -152,4 +152,155 @@ QNetworkRequest OpenCodeWire::request(const QUrl &base, const QString &path, con
     return request;
 }
 
+namespace {
+
+// opencode's own words, made safe to show: its links (their query holds state and codes) are cut out, the
+// text is one line and short.
+QString scrubbed(QString text) {
+    static const QRegularExpression link(u"[A-Za-z][A-Za-z0-9+.-]*://\\S*"_s);
+    text.replace(link, u"…"_s);
+    text = text.simplified();
+    constexpr qsizetype kLongest = 160;
+    if (text.size() > kLongest) text = text.left(kLongest - 1) + u"…"_s;
+    return text;
+}
+
+// A name that is only an identifier: safe to show as it is.
+QString identifier(const QString &text) {
+    static const QRegularExpression plain(u"\\A[A-Za-z0-9_.-]{1,60}\\z"_s);
+    return plain.match(text).hasMatch() ? text : QString();
+}
+
+} // namespace
+
+Result<QList<OpenCodeAuthMethod>> OpenCodeWire::parseAuthMethods(const QByteArray &body) {
+    const QJsonDocument document = QJsonDocument::fromJson(body);
+    if (!document.isObject()) return Error{ErrorCode::Parse, u"opencode's list of sign-ins is not what Nexa expects"_s};
+    QList<OpenCodeAuthMethod> methods;
+    const QJsonObject providers = document.object();
+    for (auto it = providers.begin(); it != providers.end(); ++it) {
+        const QJsonArray entries = it.value().toArray();
+        for (int index = 0; index < entries.size(); ++index) {
+            const QJsonObject entry = entries.at(index).toObject();
+            const QJsonValue type = entry.value(u"type"_s);
+            if (!type.isString()) continue;
+            methods.append(OpenCodeAuthMethod{.providerId = it.key(),
+                                              .index = index,
+                                              .oauth = type.toString() == u"oauth",
+                                              .label = entry.value(u"label"_s).toString(),
+                                              .hasPrompts = !entry.value(u"prompts"_s).toArray().isEmpty()});
+        }
+    }
+    return methods;
+}
+
+QByteArray OpenCodeWire::authorizeBody(int method) {
+    return QJsonDocument(QJsonObject{{u"method"_s, method}}).toJson(QJsonDocument::Compact);
+}
+
+QByteArray OpenCodeWire::callbackBody(int method, const QString &code) {
+    QJsonObject body{{u"method"_s, method}};
+    if (!code.isEmpty()) body.insert(u"code"_s, code);
+    return QJsonDocument(body).toJson(QJsonDocument::Compact);
+}
+
+Result<OpenCodeAuthorization> OpenCodeWire::parseAuthorization(const QByteArray &body) {
+    // An index that is no oauth method answers 200 with `null`.
+    if (body.trimmed() == "null") {
+        return Error{ErrorCode::NotSupported, u"opencode has no browser sign-in for that method"_s};
+    }
+    const QJsonDocument document = QJsonDocument::fromJson(body);
+    const Error unexpected{ErrorCode::Parse, u"opencode's sign-in reply is not what Nexa expects"_s};
+    if (!document.isObject()) return unexpected;
+    const QJsonObject reply = document.object();
+    const QString method = reply.value(u"method"_s).toString();
+    if (method != u"auto" && method != u"code") return unexpected;
+    // The link is opened for the person: a web page only, never a file or a script.
+    const QUrl url(reply.value(u"url"_s).toString(), QUrl::TolerantMode);
+    if (!url.isValid() || url.host().isEmpty() || (url.scheme() != u"https" && url.scheme() != u"http")) {
+        return unexpected;
+    }
+    return OpenCodeAuthorization{.url = url,
+                                 .needsCode = method == u"code",
+                                 .instructions = reply.value(u"instructions"_s).toString()};
+}
+
+bool OpenCodeWire::isTrue(const QByteArray &body) {
+    return body.trimmed() == "true";
+}
+
+Result<QStringList> OpenCodeWire::parseConnected(const QByteArray &body) {
+    const QJsonObject object = QJsonDocument::fromJson(body).object();
+    QStringList connected;
+    if (object.value(u"connected"_s).isArray()) {
+        for (const QJsonValue &id : object.value(u"connected"_s).toArray()) {
+            if (id.isString()) connected.append(id.toString());
+        }
+        return connected;
+    }
+    if (object.value(u"providers"_s).isArray()) {
+        for (const QJsonValue &provider : object.value(u"providers"_s).toArray()) {
+            const QString id = provider.toObject().value(u"id"_s).toString();
+            if (!id.isEmpty()) connected.append(id);
+        }
+        return connected;
+    }
+    return Error{ErrorCode::Parse, u"opencode's list of connected providers is not what Nexa expects"_s};
+}
+
+Error OpenCodeWire::authFailure(int httpStatus, const QByteArray &body, OpenCodeAuthStep step) {
+    // opencode's errors: {name, data: {…}} — Effect's own: {_tag, message}.
+    const QJsonObject object = QJsonDocument::fromJson(body).object();
+    const QJsonObject data = object.value(u"data"_s).toObject();
+    QString name = object.value(u"name"_s).toString();
+    if (name.isEmpty()) name = object.value(u"_tag"_s).toString();
+    QString message = data.value(u"message"_s).toString();
+    if (message.isEmpty()) message = object.value(u"message"_s).toString();
+    message = scrubbed(message);
+
+    if (name == u"ProviderAuthOauthMissing") {
+        return Error{ErrorCode::NotFound, u"opencode no longer has that sign-in pending (it timed out, or opencode "
+                                          "restarted). Start it again."_s};
+    }
+    if (name == u"ProviderAuthOauthCodeMissing") {
+        return Error{ErrorCode::InvalidArgument, u"opencode needs the code the browser page shows. Paste it and "
+                                                 "try again."_s};
+    }
+    if (name == u"ProviderAuthOauthCallbackFailed") {
+        if (step == OpenCodeAuthStep::SubmitCode) {
+            return Error{ErrorCode::Unauthorized, u"opencode did not accept that code. Check it, or start the "
+                                                  "sign-in again."_s};
+        }
+        return Error{ErrorCode::Unauthorized, u"The sign-in did not complete: it was refused, failed or timed out. "
+                                              "Try again."_s};
+    }
+    if (name == u"ProviderAuthValidationFailed") {
+        const QString field = identifier(data.value(u"field"_s).toString());
+        return Error{ErrorCode::InvalidArgument,
+                     field.isEmpty() ? u"opencode did not accept the sign-in details."_s
+                                     : u"opencode did not accept the value for %1."_s.arg(field)};
+    }
+    if (name == u"ProviderAuthError") {
+        return Error{ErrorCode::Unauthorized, message.isEmpty() ? u"opencode could not sign in."_s
+                                                                 : u"opencode could not sign in: %1"_s.arg(message)};
+    }
+    if (name == u"BadRequest" || name == u"InvalidRequestError") {
+        return Error{ErrorCode::InvalidArgument,
+                     message.isEmpty() ? u"opencode did not understand the sign-in request."_s
+                                       : u"opencode did not understand the sign-in request: %1"_s.arg(message)};
+    }
+    if (httpStatus == 401 || httpStatus == 403) {
+        return Error{ErrorCode::Unauthorized, u"opencode's server refused Nexa's request (HTTP %1)."_s.arg(httpStatus)};
+    }
+    if (step == OpenCodeAuthStep::Authorize && (httpStatus >= 500 || identifier(name).isEmpty())) {
+        // opencode starts a listener for some sign-ins (ChatGPT's, on port 1455): a program that holds it fails them.
+        return Error{ErrorCode::Http, u"opencode could not start that sign-in (HTTP %1). If another program is "
+                                      "already signing in — a terminal opencode, the Codex CLI — finish or close it "
+                                      "and try again."_s.arg(httpStatus)};
+    }
+    const QString known = identifier(name);
+    return Error{ErrorCode::Http, known.isEmpty() ? u"opencode refused the sign-in (HTTP %1)."_s.arg(httpStatus)
+                                                  : u"opencode refused the sign-in (%1, HTTP %2)."_s.arg(known).arg(httpStatus)};
+}
+
 } // namespace nexa

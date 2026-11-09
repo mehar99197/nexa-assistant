@@ -92,7 +92,7 @@ AppController::AppController(AppServices services, Config config, QString enviro
     connect(agent, &Agent::failed, this, [this](const Error &error) {
         noteProviderError(error);
         failReply(describe(error));
-        if (error.code == ErrorCode::Unauthorized) emit apiKeyRequired(providerName());
+        if (error.code == ErrorCode::Unauthorized) credentialsRequired(error, true);
     });
 
     // Every action, from the fast path or the agent, lights the core and its satellites.
@@ -156,7 +156,8 @@ void AppController::start() {
     applyVoiceConfig();
     const ProviderConfig *active = config_.active();
     if (!active || !provider_) return;
-    if (active->requiresKey && active->apiKey.isEmpty()) {
+    // A program is signed in by Settings → Providers, never by a key Nexa holds.
+    if (active->requiresKey && active->apiKey.isEmpty() && !ProviderRegistry::isProgramKind(active->kind)) {
         emit statusChanged(tr("%1 needs an API key.").arg(active->name), true);
         emit apiKeyRequired(active->name);
         return;
@@ -175,6 +176,11 @@ void AppController::updateConfig(const Config &config) {
     emit configChanged(config_);
     emit themeChanged(config_.ui.theme);
     start();    // rebuilds the provider and the voice backends
+}
+
+void AppController::reloadProviders() {
+    if (busy_) return;
+    start();
 }
 
 void AppController::setTheme(const QString &theme) {
@@ -227,7 +233,7 @@ void AppController::refreshModels() {
         if (!result) {
             noteProviderError(result.error());
             emit statusChanged(describe(result.error()), true);
-            if (result.error().code == ErrorCode::Unauthorized) emit apiKeyRequired(providerName());
+            if (result.error().code == ErrorCode::Unauthorized) credentialsRequired(result.error(), false);
             return;
         }
         setOffline(false);
@@ -638,6 +644,19 @@ void AppController::refreshCoreMode() {
     emit coreModeChanged(mode);
 }
 
+void AppController::credentialsRequired(const Error &error, bool told) {
+    const ProviderConfig *active = config_.active();
+    if (active && ProviderRegistry::isProgramKind(active->kind)) {
+        // Only a sign-in is mended by the button; a model the program refuses, or a server whose password was
+        // refused, keeps its own sentence (describe() shows it) and sends nobody to Settings → Providers → Sign in.
+        if (!ProviderRegistry::meansNotSignedIn(error)) return;
+        if (!told) emit replyNotice(describe(error));
+        emit signInRequired(active->name);
+        return;
+    }
+    emit apiKeyRequired(providerName());
+}
+
 void AppController::noteProviderError(const Error &error) {
     if (isOffline(error)) setOffline(true, describe(error));
 }
@@ -714,6 +733,14 @@ QString AppController::describe(const Error &error) const {
     case ErrorCode::ConnectionRefused:
         return tr("Cannot reach %1 at %2 — is it running?").arg(name, active ? active->baseUrl : QString());
     case ErrorCode::Unauthorized:
+        if (active && ProviderRegistry::isProgramKind(active->kind)) {
+            // Not a key: the program's own sign-in, in a sentence of Nexa's own. Any other refusal (a model the
+            // program will not serve, a server's password) says what it was in the program's own words.
+            if (ProviderRegistry::meansNotSignedIn(error)) {
+                return tr("%1 is not signed in. Open Settings → Providers and press Sign in.").arg(name);
+            }
+            return error.message;
+        }
         return tr("%1 rejected the API key (%2). Set it in Settings → Providers.").arg(name, error.message);
     default:
         return error.message;

@@ -14,6 +14,7 @@ inline constexpr QLatin1StringView kKindGemini{"gemini"};
 // Programs Nexa runs rather than APIs it posts to: they answer with their own sign-in and quota.
 inline constexpr QLatin1StringView kKindAgy{"agy"};
 inline constexpr QLatin1StringView kKindOpenCode{"opencode"};
+inline constexpr QLatin1StringView kKindCodex{"codex"};
 
 // One configured AI endpoint; `kind` selects the IAiProvider implementation.
 struct ProviderConfig {

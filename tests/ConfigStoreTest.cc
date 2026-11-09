@@ -233,3 +233,29 @@ TEST_CASE("Config falls back to the first provider when the active id is unknown
     REQUIRE(config.active() != nullptr);
     CHECK(config.active()->id == u"gateway"_s);
 }
+
+TEST_CASE("ConfigStore round-trips a provider of kind codex") {
+    QTemporaryDir dir;
+    REQUIRE(dir.isValid());
+    const ConfigStore store(dir.filePath(u"nexa/config.json"_s));
+    Config config = sampleConfig();
+    config.providers.append(ProviderConfig{.id = u"codex"_s,
+                                           .kind = QString(kKindCodex),
+                                           .name = u"Codex (ChatGPT)"_s,
+                                           .baseUrl = u"/opt/codex/bin/codex"_s,
+                                           .defaultModel = u"gpt-5"_s,
+                                           .requiresKey = false});
+    config.activeProvider = u"codex"_s;
+    REQUIRE(store.save(config).isOk());
+
+    const Result<Config> loaded = store.load();
+    REQUIRE(loaded.isOk());
+    REQUIRE(loaded.value().providers.size() == 3);
+    const ProviderConfig &codex = loaded.value().providers.at(2);
+    CHECK(codex == config.providers.at(2));
+    CHECK(codex.kind == kKindCodex);
+    CHECK(codex.baseUrl == u"/opt/codex/bin/codex"_s);
+    CHECK_FALSE(codex.requiresKey);
+    REQUIRE(loaded.value().active() != nullptr);
+    CHECK(loaded.value().active()->id == u"codex"_s);
+}

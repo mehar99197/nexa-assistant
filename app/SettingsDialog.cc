@@ -2,6 +2,8 @@
 
 #include "app/BrowserSettingsPage.h"
 #include "app/MemorySettingsPage.h"
+#include "app/ProviderGalleryDialog.h"
+#include "app/ProviderSignInBlock.h"
 #include "app/SkillsSettingsPage.h"
 
 #include "core/ai/IAiProvider.h"
@@ -40,6 +42,8 @@
 #include <QPointer>
 #include <QRegularExpression>
 #include <QDir>
+#include <QElapsedTimer>
+#include <QThread>
 #include <QFileInfo>
 #include <QPushButton>
 #include <QSignalBlocker>
@@ -54,6 +58,7 @@
 #include <QVBoxLayout>
 
 #include <algorithm>
+#include <functional>
 
 using namespace Qt::StringLiterals;
 
@@ -104,6 +109,11 @@ SettingsDialog::SettingsDialog(Config config, ProviderRegistry *registry, HttpCl
     tabs_->addTab(buildPolicyTab(), tr("Policy"));
     tabs_->addTab(buildGeneralTab(), tr("General"));
 
+    // Back on Providers: the sign-in shown there is looked at again (not within 20 s of the last look).
+    connect(tabs_, &QTabWidget::currentChanged, this, [this](int index) {
+        if (tabs_->widget(index) == providersPage_) checkSignIn();
+    });
+
     auto *buttons = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel, this);
     connect(buttons, &QDialogButtonBox::accepted, this, &SettingsDialog::accept);
     connect(buttons, &QDialogButtonBox::rejected, this, &SettingsDialog::reject);
@@ -121,7 +131,44 @@ void SettingsDialog::showTab(const QString &title) {
     }
 }
 
+namespace {
+
+// Lets the event loop run until `done` or `ms` pass: the pictures wait for a program's answer this way.
+void waitUntil(const std::function<bool()> &done, int ms) {
+    QElapsedTimer timer;
+    timer.start();
+    while (!done() && timer.elapsed() < ms) {
+        QCoreApplication::processEvents(QEventLoop::AllEvents, 50);
+        QThread::msleep(10);
+    }
+    QCoreApplication::processEvents();
+}
+
+} // namespace
+
 void SettingsDialog::snapshotTabs(const QString &directory) {
+    // Pictures change nothing outside the dialog: no login link is opened, the controller is told nothing.
+    snapshotting_ = true;
+    if (signIn_) signIn_->setOpensBrowser(false);
+    const auto programRows = [this] {
+        QList<int> rows;
+        for (int row = 0; row < config_.providers.size(); ++row) {
+            if (ProviderRegistry::isProgramKind(config_.providers.at(row).kind)) rows.append(row);
+        }
+        return rows;
+    };
+    const auto showRow = [this](int row) {
+        tabs_->setCurrentWidget(providersPage_);
+        providerList_->setCurrentRow(row);
+        if (signIn_) signIn_->setOpensBrowser(false);
+        // The check starts on the next turn of the event loop; wait for its answer.
+        QCoreApplication::processEvents();
+        waitUntil([this] { return !signIn_ || !signIn_->busy(); }, 8000);
+    };
+    // The Providers tab is taken with a program's form in it, its sign-in status read.
+    const QList<int> programs = programRows();
+    if (!programs.isEmpty()) showRow(programs.first());
+
     for (int i = 0; i < tabs_->count(); ++i) {
         tabs_->setCurrentIndex(i);
         QCoreApplication::processEvents();
@@ -129,6 +176,44 @@ void SettingsDialog::snapshotTabs(const QString &directory) {
         const QString name = tabs_->tabText(i).toLower().remove(u' ');
         grab().save(u"%1/settings-%2.png"_s.arg(directory, name));
     }
+
+    // Each program's form, and — only when NEXA_SNAPSHOT_SIGN_IN is set — a sign-in under way. Starting one is not
+    // harmless: agy opens the browser itself and any program's link would be written into the picture. So a picture
+    // taken with the owner's own config (status checks only read) never starts one; the pictures of a sign-in are
+    // taken against the fake programs (tests/fake-agy, fake-opencode, fake-codex) on a private config.
+    const bool signInPictures = qEnvironmentVariableIsSet("NEXA_SNAPSHOT_SIGN_IN");
+    for (const int row : programs) {
+        const QString kind = config_.providers.at(row).kind;
+        showRow(row);
+        grab().save(u"%1/settings-providers-%2.png"_s.arg(directory, kind));
+        if (!signInPictures || !signIn_ || !signIn_->view().canSignIn) continue;
+        signIn_->startSignIn();
+        // Several ways to sign in (agy, opencode): the menu that asks which is a picture too, and its first entry is taken.
+        waitUntil([this] { return !signIn_->busy() || signIn_->findChild<QMenu *>() != nullptr; }, 8000);
+        if (QMenu *menu = signIn_->findChild<QMenu *>(); menu && !menu->actions().isEmpty()) {
+            QCoreApplication::processEvents();
+            menu->grab().save(u"%1/settings-providers-%2-methods.png"_s.arg(directory, kind));
+            menu->actions().first()->trigger();
+        }
+        waitUntil([this] { return !signIn_->busy() || !signIn_->view().link.isEmpty() || signIn_->view().showCode; },
+                  8000);
+        if (signIn_->busy()) {
+            grab().save(u"%1/settings-providers-%2-signing-in.png"_s.arg(directory, kind));
+            signIn_->cancelSignIn();
+            waitUntil([this] { return !signIn_->busy(); }, 4000);
+        }
+    }
+
+    // The gallery of every preset, as it opens and searched.
+    ProviderGalleryDialog gallery(registry_->availablePresets(), ProviderRegistry::presetCategories(), this);
+    gallery.show();
+    QCoreApplication::processEvents();
+    QCoreApplication::processEvents();
+    gallery.grab().save(u"%1/provider-gallery.png"_s.arg(directory));
+    gallery.setQuery(u"free"_s);
+    QCoreApplication::processEvents();
+    gallery.grab().save(u"%1/provider-gallery-free.png"_s.arg(directory));
+    gallery.close();
 }
 
 SettingsDialog::~SettingsDialog() {
@@ -136,6 +221,12 @@ SettingsDialog::~SettingsDialog() {
     if (status_.discovery) status_.discovery->setWatched(false);
     // A pairing code lives only as long as it is on screen.
     if (status_.pairing) status_.pairing->stopPairing();
+}
+
+void SettingsDialog::done(int result) {
+    // A sign-in under way ends with the dialog; the program is let go of.
+    dropSignIn();
+    QDialog::done(result);
 }
 
 void SettingsDialog::accept() {
@@ -173,6 +264,7 @@ void SettingsDialog::accept() {
 
 QWidget *SettingsDialog::buildProvidersTab() {
     auto *page = new QWidget(this);
+    providersPage_ = page;
 
     activeCombo_ = new QComboBox(page);
     auto *activeRow = new QFormLayout;
@@ -181,16 +273,16 @@ QWidget *SettingsDialog::buildProvidersTab() {
                                 "out of quota — the others that allow it take over, in the order of the list."));
 
     providerList_ = new QListWidget(page);
+    providerList_->setObjectName(u"providerList"_s);
     providerList_->setMinimumWidth(210);
     connect(providerList_, &QListWidget::currentRowChanged, this, &SettingsDialog::showProvider);
 
     auto *addButton = new QToolButton(page);
+    addButton->setObjectName(u"providerAdd"_s);
     addButton->setText(tr("&Add"));
     addButton->setPopupMode(QToolButton::InstantPopup);
     auto *presetMenu = new QMenu(addButton);
-    for (const ProviderPreset &preset : registry_->availablePresets()) {
-        presetMenu->addAction(preset.name, this, [this, preset] { addProvider(preset); });
-    }
+    fillAddMenu(presetMenu);
     addButton->setMenu(presetMenu);
     auto *removeButton = new QPushButton(tr("&Remove"), page);
     connect(removeButton, &QPushButton::clicked, this, &SettingsDialog::removeProvider);
@@ -218,6 +310,7 @@ QWidget *SettingsDialog::buildProvidersTab() {
     kindLabel_ = new QLabel(providerForm_);
     nameEdit_ = new QLineEdit(providerForm_);
     baseUrlEdit_ = new QLineEdit(providerForm_);
+    baseUrlEdit_->setObjectName(u"providerBaseUrl"_s);
     baseUrlEdit_->setPlaceholderText(u"https://api.example.com/v1"_s);
     apiKeyEdit_ = new QLineEdit(providerForm_);
     apiKeyEdit_->setEchoMode(QLineEdit::Password);
@@ -254,6 +347,22 @@ QWidget *SettingsDialog::buildProvidersTab() {
     form->addRow(QString(), textToolsCheck_);
     form->addRow(QString(), fallbackCheck_);
     form->addRow(testButton_, testResult_);
+    // The program's own sign-in, under the other rows; a row of its own that only a program fills.
+    signInHolder_ = new QWidget(providerForm_);
+    signInLayout_ = new QVBoxLayout(signInHolder_);
+    signInLayout_->setContentsMargins(0, 0, 0, 0);
+    form->addRow(tr("Sign-in:"), signInHolder_);
+    form->setRowVisible(signInHolder_, false);
+    // A program named in another place: its sign-in is looked up there.
+    // (editingFinished also comes when focus merely passes through the field: only a change starts it afresh.)
+    const auto programChanged = [this] {
+        if (!signIn_ || signIn_->busy() || currentRow_ < 0 || currentRow_ >= config_.providers.size()) return;
+        if (baseUrlEdit_->text().trimmed() + u'\n' + apiKeyEdit_->text().trimmed() == signInSource_) return;
+        storeProvider();
+        showSignIn(config_.providers.at(currentRow_));
+    };
+    connect(baseUrlEdit_, &QLineEdit::editingFinished, this, programChanged);
+    connect(apiKeyEdit_, &QLineEdit::editingFinished, this, programChanged);
 
     connect(nameEdit_, &QLineEdit::textEdited, this, [this](const QString &name) {
         if (QListWidgetItem *item = providerList_->currentItem()) item->setText(name);
@@ -1367,6 +1476,11 @@ void SettingsDialog::showProvider(int row) {
     fallbackCheck_->setChecked(provider.fallback);
     showKeyCheck_->setChecked(false);
     showRowsFor(provider.kind);
+    if (valid) {
+        showSignIn(provider);
+    } else {
+        dropSignIn();
+    }
 }
 
 void SettingsDialog::storeProvider() {
@@ -1384,21 +1498,55 @@ void SettingsDialog::storeProvider() {
 void SettingsDialog::showRowsFor(const QString &kind) {
     const bool http = ProviderRegistry::isHttpKind(kind) || kind.isEmpty();
     const bool agy = kind == kKindAgy;
+    const bool codex = kind == kKindCodex;
     QFormLayout *form = providerFormLayout_;
     if (auto *label = qobject_cast<QLabel *>(form->labelForField(baseUrlEdit_))) {
-        label->setText(http ? tr("Base URL:") : agy ? tr("Program:") : tr("Server:"));
+        label->setText(http ? tr("Base URL:") : (agy || codex) ? tr("Program:") : tr("Server:"));
     }
-    baseUrlEdit_->setPlaceholderText(http  ? u"https://api.example.com/v1"_s
-                                     : agy ? tr("agy on PATH or in ~/.local/bin")
-                                           : tr("Nexa starts its own"));
-    // agy signs in by itself; a server of opencode's that the user runs has a password.
-    form->setRowVisible(keyRow_, !agy);
+    baseUrlEdit_->setPlaceholderText(http   ? u"https://api.example.com/v1"_s
+                                     : agy   ? tr("agy on PATH or in ~/.local/bin")
+                                     : codex ? tr("codex on PATH or in ~/.npm-global/bin")
+                                             : tr("Nexa starts its own"));
+    // agy and Codex sign in by themselves (Sign-in below); a server of opencode's that the user runs has a password.
+    form->setRowVisible(keyRow_, !agy && !codex);
     if (auto *label = qobject_cast<QLabel *>(form->labelForField(keyRow_))) {
         label->setText(http ? tr("API key:") : tr("Server password:"));
     }
     apiKeyEdit_->setPlaceholderText(http ? tr("not set") : tr("only for a server you run yourself"));
     // The programs take Nexa's tools as text whatever the box says.
     form->setRowVisible(textToolsCheck_, http);
+    if (!ProviderRegistry::isProgramKind(kind)) form->setRowVisible(signInHolder_, false);
+}
+
+void SettingsDialog::dropSignIn() {
+    if (!signIn_) return;
+    signInLayout_->removeWidget(signIn_);
+    signIn_->shutdown();    // cancels what runs, lets go of the program, deletes itself later
+    signIn_ = nullptr;
+}
+
+void SettingsDialog::showSignIn(const ProviderConfig &provider) {
+    dropSignIn();
+    signInSource_ = provider.baseUrl.trimmed() + u'\n' + provider.apiKey.trimmed();
+    std::unique_ptr<ISignIn> signIn = registry_->createSignIn(provider);
+    providerFormLayout_->setRowVisible(signInHolder_, signIn != nullptr);
+    if (!signIn) return;
+    signIn_ = new ProviderSignInBlock(provider.kind, std::move(signIn), status_.replyRunning, signInHolder_);
+    signIn_->setOpensBrowser(!snapshotting_);
+    signInLayout_->addWidget(signIn_);
+    // After a sign-in or sign-out the chat takes up the new state: the providers are built again.
+    connect(signIn_, &ProviderSignInBlock::providersChanged, this, [this] {
+        if (!snapshotting_ && status_.providersChanged) status_.providersChanged();
+    });
+    // Not inside the constructor or a row change: the tab in front is known by then.
+    QPointer<ProviderSignInBlock> shown = signIn_;
+    QTimer::singleShot(0, this, [this, shown] {
+        if (shown && shown == signIn_) checkSignIn();
+    });
+}
+
+void SettingsDialog::checkSignIn() {
+    if (signIn_ && tabs_ && tabs_->currentWidget() == providersPage_) signIn_->requestCheck();
 }
 
 void SettingsDialog::moveProvider(int by) {
@@ -1429,6 +1577,27 @@ void SettingsDialog::addProvider(const ProviderPreset &preset) {
     }
     refreshActiveCombo();
     providerList_->setCurrentRow(int(config_.providers.size()) - 1);
+}
+
+void SettingsDialog::fillAddMenu(QMenu *menu) {
+    // By category, the programs first; a category none of whose presets is available is left out, and a preset
+    // of a category nobody listed goes under "Other" at the end (the grouping is ProviderRegistry's, tested).
+    const QList<ProviderPreset> available = registry_->availablePresets();
+    for (const PresetGroup &group : ProviderRegistry::groupPresets(available, ProviderRegistry::presetCategories())) {
+        QMenu *submenu = menu->addMenu(group.title == u"Other" ? tr("Other") : group.title);
+        for (const int index : group.indices) {
+            const ProviderPreset &preset = available.at(index);
+            submenu->addAction(preset.name, this, [this, preset] { addProvider(preset); });
+        }
+    }
+    menu->addSeparator();
+    menu->addAction(tr("Browse all…"), this, &SettingsDialog::browseProviders);
+}
+
+void SettingsDialog::browseProviders() {
+    ProviderGalleryDialog gallery(registry_->availablePresets(), ProviderRegistry::presetCategories(), this);
+    if (gallery.exec() != QDialog::Accepted) return;
+    if (const std::optional<ProviderPreset> chosen = gallery.selectedPreset()) addProvider(*chosen);
 }
 
 void SettingsDialog::removeProvider() {

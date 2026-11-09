@@ -122,3 +122,14 @@ TEST_CASE("Without sherpa-onnx the front hears by loudness and says how to get t
     REQUIRE_FALSE(build.problems.isEmpty());
     CHECK(build.problems.join(u' ').contains(u"scripts/download-sherpa.sh"_s));
 }
+
+TEST_CASE("Codex has no speech models either") {
+    Config config;
+    config.providers = {ProviderConfig{.id = u"codex"_s, .kind = QString(kKindCodex), .name = u"Codex"_s,
+                                       .requiresKey = false}};
+    const QList<VoiceProviderChoice> choices = VoiceBackends::recognitionChoices(config);
+    REQUIRE(choices.size() == 1);
+    CHECK_FALSE(choices.first().usable);
+    CHECK(choices.first().reason == u"no speech models"_s);
+    CHECK(VoiceBackends::recognitionProviders(config).isEmpty());
+}

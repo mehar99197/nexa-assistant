@@ -7,6 +7,7 @@
 #include <QDialog>
 
 #include <memory>
+#include <optional>
 
 class QCheckBox;
 class QFormLayout;
@@ -15,12 +16,14 @@ class QComboBox;
 class QLabel;
 class QLineEdit;
 class QListWidget;
+class QMenu;
 class QPlainTextEdit;
 class QPushButton;
 class QSlider;
 class QSpinBox;
 class QTabWidget;
 class QTimer;
+class QVBoxLayout;
 
 namespace nexa {
 
@@ -33,6 +36,7 @@ class ITextToSpeech;
 // (system prompt). Edits a copy of the config; the caller applies config() after accept().
 class BrowserSettingsPage;
 class MemorySettingsPage;
+class ProviderSignInBlock;
 class SkillsSettingsPage;
 
 class SettingsDialog : public QDialog {
@@ -48,6 +52,7 @@ public:
     void snapshotTabs(const QString &directory);
 
     void accept() override;
+    void done(int result) override;     // lets go of a running sign-in
 
 private:
     QWidget *buildProvidersTab();
@@ -86,6 +91,11 @@ private:
     void storeProvider();
     void addProvider(const ProviderPreset &preset);
     void removeProvider();
+    void fillAddMenu(QMenu *menu);          // the presets by category, then Browse all…
+    void browseProviders();                 // the gallery of every preset
+    void showSignIn(const ProviderConfig &provider);    // the sign-in block of a program's form, or none
+    void dropSignIn();
+    void checkSignIn();                     // a status check, when the Providers tab is the one in front
     void moveProvider(int by);              // ▲ / ▼: the order the chain follows after the first choice
     void showRowsFor(const QString &kind);  // the fields a provider of this kind uses
     void refreshActiveCombo();
@@ -108,6 +118,7 @@ private:
     std::unique_ptr<IAiProvider> testProvider_;
     std::unique_ptr<ITextToSpeech> testSpeech_;
     int currentRow_{-1};
+    bool snapshotting_{false};          // pictures: the login link is not opened and nothing is told to the controller
 
     QTabWidget *tabs_{nullptr};
     QListWidget *providerList_{nullptr};
@@ -120,6 +131,11 @@ private:
     QCheckBox *showKeyCheck_{nullptr};
     QCheckBox *fallbackCheck_{nullptr};
     QFormLayout *providerFormLayout_{nullptr};
+    QWidget *providersPage_{nullptr};
+    QWidget *signInHolder_{nullptr};    // the form's row for the sign-in block of the program shown
+    QVBoxLayout *signInLayout_{nullptr};
+    ProviderSignInBlock *signIn_{nullptr};
+    QString signInSource_;              // the program path and server password the sign-in shown was made for
     QHBoxLayout *keyRow_{nullptr};
     QLineEdit *modelEdit_{nullptr};
     QCheckBox *textToolsCheck_{nullptr};

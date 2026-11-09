@@ -31,7 +31,7 @@ namespace {
 // voice speaks the OpenAI audio API).
 QString cannotSpeak(const ProviderConfig &provider) {
     if (provider.kind == kKindAgy) return u"takes text only"_s;
-    if (provider.kind == kKindOpenCode) return u"no speech models"_s;
+    if (provider.kind == kKindOpenCode || provider.kind == kKindCodex) return u"no speech models"_s;
     if (provider.kind == kKindGemini || provider.kind == kKindAnthropic) {
         return u"Nexa's cloud voice speaks the OpenAI audio API"_s;
     }

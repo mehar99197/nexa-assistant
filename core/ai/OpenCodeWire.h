@@ -1,10 +1,12 @@
 #pragma once
 
+#include "core/Result.h"
 #include "core/ai/ChatRequest.h"
 
 #include <QByteArray>
 #include <QHash>
 #include <QJsonObject>
+#include <QList>
 #include <QNetworkRequest>
 #include <QString>
 #include <QStringList>
@@ -30,6 +32,25 @@ struct OpenCodeEvent {
     QString toolInput;      // PartType "tool": its arguments, a JSON object as compact text
 };
 
+// One sign-in entry of GET /provider/auth: a way to connect one provider.
+struct OpenCodeAuthMethod {
+    QString providerId;
+    int index{0};           // its place in the provider's list — what authorize and callback call "method"
+    bool oauth{false};      // type "oauth" (a browser sign-in); the other kind is "api" (a pasted key)
+    QString label;          // opencode's own wording: "ChatGPT Pro/Plus (browser)"
+    bool hasPrompts{false}; // opencode wants answers first (an enterprise URL, an account name …)
+};
+
+// The reply of POST /provider/<id>/oauth/authorize.
+struct OpenCodeAuthorization {
+    QUrl url;               // where to sign in: http or https, and a secret (state, PKCE): never logged
+    bool needsCode{false};  // method "code": the browser ends at a code to paste back; "auto": opencode waits itself
+    QString instructions;   // opencode's words, often the device code of a headless flow
+};
+
+// Where a sign-in step failed, for the words of the failure.
+enum class OpenCodeAuthStep { Authorize, WaitForBrowser, SubmitCode };
+
 // opencode's server API (`opencode serve`), as Nexa uses it (pure): the prompt body — Nexa's system
 // prompt, opencode's own tools off — the events, the model list, and the authenticated request.
 class OpenCodeWire {
@@ -53,6 +74,29 @@ public:
     static QNetworkRequest request(const QUrl &base, const QString &path, const QString &password);
     // opencode's own tools (and the MCP resource tools it adds); a call to any other name is meant for Nexa.
     static bool isOwnTool(const QString &name);
+
+    // --- Signing in (opencode 1.19.3's /provider/auth, /provider/<id>/oauth/*; the Facade is OpenCodeSignIn) ---
+
+    // GET /provider/auth: {providerId: [{type, label, prompts?}]}, as a list by provider id, then index. Unknown
+    // fields and entries of an unknown shape are skipped; a body that is no JSON object is a Parse error.
+    static Result<QList<OpenCodeAuthMethod>> parseAuthMethods(const QByteArray &body);
+    // {"method": index}: the index into the provider's list, as authorize takes it (no `inputs`: Nexa offers
+    // no method that asks questions).
+    static QByteArray authorizeBody(int method);
+    // {"method": index} and, when given, "code": what the browser page showed.
+    static QByteArray callbackBody(int method, const QString &code = {});
+    // The authorize reply. A `null` body (HTTP 200: the index is not an oauth method) is NotSupported;
+    // anything else that is not {url, method: "auto"|"code", instructions} with an http(s) url is Parse.
+    static Result<OpenCodeAuthorization> parseAuthorization(const QByteArray &body);
+    // The callback reply: true when the body is `true`.
+    static bool isTrue(const QByteArray &body);
+    // The providers opencode calls connected: "connected" of GET /provider, or the ids of GET /config/providers'
+    // "providers" (the same list — Provider.list() — in 26 ms against 2 s for /provider's 7 MB). A body that
+    // has neither is a Parse error: an unknown reply must never read as "nothing connected".
+    static Result<QStringList> parseConnected(const QByteArray &body);
+    // The failure of a sign-in step as words for the person: opencode's error name (a 400 body {name, data},
+    // or Effect's {_tag, message}) turned into a sentence. Never carries a url, a code or a long server text.
+    static Error authFailure(int httpStatus, const QByteArray &body, OpenCodeAuthStep step);
 };
 
 } // namespace nexa

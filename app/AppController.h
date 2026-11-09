@@ -74,6 +74,9 @@ public:
 
     const Config &config() const { return config_; }
     void updateConfig(const Config &config);        // from Settings: saves, rebuilds, reloads models
+    // A program's sign-in or sign-out in Settings succeeded: the providers are built again and their models listed
+    // (the config itself is untouched). Does nothing while a reply is running.
+    void reloadProviders();
     void setTheme(const QString &theme);            // the toolbar toggle: saved, nothing rebuilt
     QString providerName() const;
     void setApiKey(const QString &key);             // for the active provider
@@ -126,7 +129,9 @@ signals:
     void modelsChanged(const QStringList &models, const QString &current);
     void modelsLoading(bool loading);                // the provider is being asked for its models (agy takes ~16 s)
     void statusChanged(const QString &message, bool isError);
-    void apiKeyRequired(const QString &providerName);
+    void apiKeyRequired(const QString &providerName);   // an API provider rejected, or lacks, its key
+    // A program provider (agy, opencode, Codex) is not signed in: Settings → Providers has its Sign in button.
+    void signInRequired(const QString &providerName);
     void userMessageAccepted(const QString &text, const QString &source);
     void replyStarted(const QString &source);       // "gui", "voice", …
     void replyRoute(const QString &route);          // "fast" (no model) or "agent"; may change mid-reply
@@ -165,6 +170,10 @@ private:
     void persist();
     void refreshCoreMode();
     void noteProviderError(const Error &error);
+    // The first choice is refused for want of credentials: a key to ask for (an API), or a sign-in (a program, when
+    // it says nobody is signed in).
+    // `told`: the chat already says so (a reply that failed), otherwise a note is added.
+    void credentialsRequired(const Error &error, bool told);
     void setOffline(bool offline, const QString &reason = {});
     ProviderConfig *activeProviderConfig();
     QString systemPrompt(const QString &source = QString()) const;   // the request's source shapes it

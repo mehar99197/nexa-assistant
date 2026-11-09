@@ -497,7 +497,9 @@ int main(int argc, char *argv[]) {
                                            return trouble.isEmpty() ? QObject::tr("fine")
                                                                     : trouble.section(u". "_s, 0, 0) + u'.';
                                        },
-                                   .lowerMicrophone = [&controller] { controller.lowerMicrophone(); }},
+                                   .lowerMicrophone = [&controller] { controller.lowerMicrophone(); },
+                                   .replyRunning = [&controller] { return controller.isBusy(); },
+                                   .providersChanged = [&controller] { controller.reloadProviders(); }},
                       AuditLog::defaultPath());
     if (!runDesign.isEmpty() || !runPalette.isEmpty()) window.wear(runPalette, runDesign);
     window.show();

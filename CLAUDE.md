@@ -34,7 +34,14 @@ requests are done and Nexa is idle, it saves a picture of the window and quits �
 `QT_QPA_PLATFORM=offscreen ./build/app/nexa-assistant --new-instance --theme light --ask "run uname -sr" --screenshot /tmp/nexa.png`
 shows the light scheme with a fast-path reply without touching the screen (`--theme <palette>` and `--design <design>`
 are for that run only and never reach the settings; `--design console` shows the terminal design in its own palette);
-`--screenshot-settings <dir>` saves every Settings tab the same way. **Without a phone**, `tests/fake-adb/adb` stands in
+`--screenshot-settings <dir>` saves every Settings tab the same way, then the Providers tab of each program (agy,
+opencode, Codex: its sign-in status read) and the provider gallery (`provider-gallery.png`, and searched for "free");
+the pictures of a sign-in under way (the method menu, the login link) need **`NEXA_SNAPSHOT_SIGN_IN=1` and a private
+config naming the fake programs** — `XDG_CONFIG_HOME=/tmp/x/config` with providers of kind `agy` and `codex` whose
+`baseUrl` is `tests/fake-agy/agy` / `tests/fake-codex/codex`, and `tests/fake-opencode` first on the `PATH` (opencode is
+found there; each fake's header says which `FAKE_*` file holds who is signed in) — because without the variable only
+status checks run: a started sign-in opens the real browser (agy does it itself) and puts the login link in the
+picture, so never set it against the owner's own config. **Without a phone**, `tests/fake-adb/adb` stands in
 for adb with a Pixel always connected: `PATH="$PWD/tests/fake-adb:$PATH"` before the command above, plus
 `--ask "on my phone open youtube"` so the phone is looked up, shows the Phone panel with a drawn screen in it.
 The phone app's screens come out of
@@ -58,7 +65,7 @@ models (`~/.local/share/nexa/sherpa`: the keyword spotter that hears the wake na
 noise reduction — loaded at run time with `QLibrary` against the vendored `voice/wake/sherpa/c-api.h`, nothing
 linked; without it the energy VAD and the whisper second net work alone), all into `~/.local/share/nexa`. The
 cloud recogniser and voice are the provider chosen in Settings → Voice, or automatically the first choice and then
-every provider with a speech model (agy and opencode have none). Local recognition is compiled in only with
+every provider with a speech model (agy, opencode and Codex have none). Local recognition is compiled in only with
 `-DNEXA_BUILD_WHISPER=ON` (on in the release and debug presets; whisper.cpp is fetched at configure time).
 `--hear <wav>` (with `--new-instance` implied) plays a recording into the microphone with the wake word on, so the
 whole wake → request → reply → follow-up path runs as if the room had said it; with
@@ -82,12 +89,22 @@ answer", each with its own model; the chain moves on only when one cannot answer
 signed in, out of quota) and nothing has streamed, and the reply's header then says `via <provider>`. The defaults
 are the owner's own programs, on their own sign-in and quota, no key in Nexa: **opencode** — Nexa starts its own
 `opencode serve` on loopback (password made per start, in the child's environment only; folder
-`~/.cache/nexa/opencode`; about 10 s to be ready; sign in with `opencode auth login`) — and **agy** (Google's
+`~/.cache/nexa/opencode`; about 10 s to be ready) — and **agy** (Google's
 Antigravity CLI, `~/.local/bin/agy`): one warm `agy --input-format stream-json` process per conversation, run with a
 home folder of Nexa's own (`~/.cache/nexa/agy/home`, whose `settings.json` denies agy's own tools — print mode would
-otherwise read files unasked) and an empty workspace (`~/.cache/nexa/agy/work`); sign in by running `agy` once;
-`agy models` takes about 16 s. Both take Nexa's tools as text (`<tool_call>`), and an empty model is their own
-default. OpenCode's hosted API (Console, Go) is a preset with a key. A test copy on private `XDG_CONFIG_HOME` /
+otherwise read files unasked) and an empty workspace (`~/.cache/nexa/agy/work`); `agy models` takes about 16 s. A third
+program, **Codex** (OpenAI's coding agent, on the owner's ChatGPT account), is added from Settings → Providers → Add →
+Programs, never a default: one warm `codex app-server` per conversation (`~/.cache/nexa/codex`, run in its empty `work`
+folder; found on the PATH, in `~/.local/bin` or `~/.npm-global/bin`), started with its own tools disabled. All three take
+Nexa's tools as text (`<tool_call>`), and an empty model is their own default (Codex: the first it lists). **They are
+signed in inside Nexa**, by the program's own flow: Settings → Providers → the program → Sign in… opens its login in the
+browser and shows the link. The sign-in is the program's own and shared with the terminal one — agy's lives in the
+system keyring, opencode's in `auth.json`, Codex's in `CODEX_HOME` — so `opencode auth login`, running `agy` once and
+`codex login` still work, and signing out in Nexa signs the terminal out too (so a test copy, whose private XDG
+folders do not isolate the keyring or Codex's own folder, must never sign out). For a sign-in that misbehaves,
+`QT_LOGGING_RULES="nexa.ai.debug=true"` logs the steps (never a link, a code or an account). OpenCode's hosted API (Console, Go) is a preset with a key, and
+Settings → Providers → Add has the catalogue of 179 (a key each, or none for a local server): the menu by category,
+**Browse all…** for the searchable gallery. A test copy on private `XDG_CONFIG_HOME` /
 `XDG_DATA_HOME` must link `~/.config/opencode` and `~/.local/share/opencode` into them, or opencode sees none of the
 user's providers, and needs the wake word off (`voice.wakeWord`), or `--ask` waits for an idle voice forever. A
 text-only model refuses images with a 400; the `Agent` then resends without them and remembers the model as blind.
@@ -97,9 +114,18 @@ text-only model refuses images with a 400; the `Agent` then resends without them
 - `core/` — no Qt Widgets, no syscalls: `Result.h`, `Logging`, `config/`, `net/` (HttpClient, SseParser),
   `ai/` (OpenAiProvider, AnthropicProvider, GeminiProvider — each maps ChatRequest to its own wire format and
   decodes its own events; SseChatStream is the stream all three share; ToolCallAccumulator; the registry, whose
-  `createChain` builds the `ProviderChain`; the programs: `AgyProvider` + `AgySession` + `AgyEvents` (agy's
-  stream-json), `OpenCodeProvider` + `OpenCodeServer` + `OpenCodeWire` (opencode's server API), with `TurnLedger`
-  deciding what a warm session still needs and `TranscriptWriter` the text of a turn; `ProgramLookup`),
+  `createChain` builds the `ProviderChain`, `createSignIn` the sign-in of a program, and `presets()` is the programs,
+  the hand-tuned entries, then the catalogue (187); the programs: `AgyProvider` + `AgySession` + `AgyEvents` (agy's
+  stream-json), `OpenCodeProvider` + `OpenCodeServer` + `OpenCodeWire` (opencode's server API), `CodexProvider` +
+  `CodexSession` (it also holds `CodexConnection`, one `codex app-server` and its JSON-RPC) + `CodexEvents` +
+  `CodexProtocol` (the wire, pure), with `TurnLedger` deciding what a warm session still needs and `TranscriptWriter`
+  the text of a turn; `ProgramLookup`; **sign-in**: `SignIn.h` (`ISignIn`, `SignInStatus` — a plan, never an email —
+  and `SignInMethod`), `AgySignIn` + `AgyAcp` (`agy acp`), `OpenCodeSignIn` (opencode's `/provider/auth` and OAuth
+  routes; an allow-list of the sign-ins a clean opencode offers), `CodexSignIn` (`account/login/*`), and
+  `SignInPresenter` (pure: what Settings shows of a sign-in); **the catalogue**: `ProviderCatalog` over the generated
+  `ProviderCatalogData.cc` (179 key-based and local providers from OmniRoute 3.8.51, MIT, in
+  `THIRD_PARTY_NOTICES.md`; never edit it by hand — `python3 -I scripts/generate-provider-catalog.py`, `--check` to see
+  if it is current) and `PresetFilter` (the gallery's search and ranking, pure)),
   `agent/` (Agent loop, Conversation, AppContext = the app Nexa opened last for the user — its kind from the desktop
   entry, a sentence for the model, and the fast path's `run <cmd>` typed into a terminal in front), `tools/` (ToolSpec, ITool, FunctionTool, ToolRegistry, ToolExecutor =
   policy → confirm → invoke → audit, TextToolParser for models without native tools), `intent/` (IntentRouter +
@@ -154,12 +180,20 @@ text-only model refuses images with a 400; the `Agent` then resends without them
   a monospace status bar, the sun/moon theme toggle; its pieces are built once and `applyDesign()` /
   `rebuildCentral()` arrange them for the design on — header beside or above the chat, a centred column, the
   Actions panel on a side or the bottom or hidden, tiles; SettingsDialog with the design and palette galleries,
-  TrayIcon) and the AppController mediator,
+  TrayIcon; `ProviderSignInBlock` = the sign-in row of a program's form in Settings → Providers (status line, Sign in… /
+  Sign out / Cancel, the login link as selectable text, a code field for a paste-the-code flow; it owns the `ISignIn`
+  and waits while a chat turn runs) and `ProviderGalleryDialog` = Add → Browse all… (search, category chips, one row per
+  preset); a **Sign in…** button in the status bar while a program provider says nobody is signed in) and the
+  AppController mediator,
   which also resolves the core's state from the voice pipeline, running tools, the fast path, the agent and a
-  provider out of reach (`coreModeChanged`, `litNodesChanged`); SingleInstance (one copy per user), RemoteBridge
+  provider out of reach (`coreModeChanged`, `litNodesChanged`), and asks for credentials: a key for an API provider
+  (`apiKeyRequired`), a sign-in for a program that says it is not signed in (`signInRequired`, never a key prompt;
+  `reloadProviders()` after a sign-in or out); SingleInstance (one copy per user), RemoteBridge
   (the web remote's view of the app); `main.cc` is the composition root and applies the theme first.
 - `tests/` — Catch2 v3 (custom `TestMain.cc` with a QCoreApplication), one `<Class>Test.cc` per tested
-  class; `FakeHttpServer.h` for provider tests; `AgentTest.cc` uses a scripted fake model.
+  class; `FakeHttpServer.h` for provider tests; `AgentTest.cc` uses a scripted fake model; the programs have stand-ins,
+  `tests/fake-agy/agy` (print mode and `agy acp`), `tests/fake-opencode/opencode` (`serve`, with the sign-in routes) and
+  `tests/fake-codex/codex` (`app-server`) — no test starts the real ones.
 - `voice/` — microphone to speech and back: `capture/` (AudioCapture, AudioConverter → 16 kHz mono Int16,
   EnergyVad, MicrophoneCheck = clipped or drowned sound and the steps of "Lower it", RecordedAudioInput for
   `--hear`), `listen/` (what hears speech and the name: `ListeningFront` = the Facade that runs a noise filter, a
@@ -257,6 +291,14 @@ text-only model refuses images with a 400; the `Agent` then resends without them
 - Nothing blocks the GUI thread: network via QNetworkAccessManager signals, processes via QProcess signals, heavy work in worker threads.
 - QObjects handed out as `shared_ptr` (e.g. `ChatStream`) use a `deleteLater()` deleter, so they can be released from their own signals.
 - Never log or display API keys/tokens.
+- **Nexa never touches a vendor program's token.** Signing in to agy, opencode or Codex is the program's own OAuth:
+  Nexa starts it, shows its link and reads its status (`ISignIn`); the program keeps the token. A status carries a plan,
+  never an email; no link, code or account is logged or shown, except the login link itself as one selectable line in
+  `ProviderSignInBlock`; `Error::message` of a sign-in is not shown as it is (`SignInPresenter` has a sentence per
+  code). An unknown reply is `failed(Parse)`, never "signed out". **No test starts a real vendor program in a way that
+  signs in or out** — the fakes in `tests/` stand in, and a probe of a real program only reads. Claude's subscription
+  login is not offered (Anthropic's terms forbid a third-party app offering it:
+  https://code.claude.com/docs/en/legal-and-compliance): Claude is the Anthropic API-key preset.
 - Every action goes through `ToolExecutor::execute` (fast path and agent alike) — never call a tool directly.
 - The app the user is in is **what Nexa opened last** (`AppContext`), never read from the desktop: GNOME's
   `org.gnome.Shell.Introspect` is denied to anything but the portals, and the helper is write-only. A command typed

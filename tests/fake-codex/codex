@@ -1,0 +1,327 @@
+#!/usr/bin/env python3
+"""Stands in for `codex app-server` (OpenAI's Codex CLI, codex-cli 0.163.0) in Nexa's tests.
+
+It speaks the newline-delimited JSON-RPC of the real server (no "jsonrpc" field) on stdin and stdout:
+initialize / initialized, account/read, account/login/start (+ the account/login/completed notification),
+account/login/cancel, account/logout, model/list, config/read, thread/start, turn/start, turn/interrupt.
+It never touches a real account, a network or the owner's CODEX_HOME.
+
+$FAKE_CODEX_STATE is a JSON file shared by every process of a test (the account changes with a login):
+  {"signedIn": false, "plan": "free", "email": "...",
+   "login": "success" | "failure" | "never",   what account/login/start ends in (default success)
+   "loginDelay": 0.2,                          seconds before account/login/completed
+   "mcp": ["alpha", "beta"],                   the MCP servers config/read lists
+   "models": [{"model": "fake-fast"}, {"model": "fake-hidden", "hidden": true}],
+   "paginate": true,                           model/list in two pages (cursor "p2")
+   "configFails": true,                        config/read answers with an error
+   "turnStartDelay": 0.5,                      seconds before turn/start is answered
+   "mode": "garbage" | "die"}                  garbage: print junk and exit 0; die: "Not logged in" on stderr, exit 1
+What each turn answers comes from the JSON list in $FAKE_CODEX_SCRIPT (the position is kept beside it, so a
+restarted server carries on with the next entry; an exhausted script answers "fake reply"):
+  {"text": "..."} or {"texts": ["a", "b"]}   agent messages (two deltas each), then turn/completed
+  {"noDeltas": true}                          with the above: only the item/completed carries the text
+  {"think": 3, "delay": 0.1}                  reasoning deltas first (activity without text)
+  {"tool": "commandExecution"}                Codex used its own tool: item/started, then waits 1.5 s for an
+                                              interrupt (answered with status interrupted); if none, carries on
+  {"error": {"message": "...", "info": "usageLimitExceeded"}}   an error notification, then a failed turn
+  {"hang": true}                              never completes; turn/interrupt completes it as interrupted
+  {"hang": true, "ignoreInterrupt": true}     never completes, whatever it is asked
+  {"crash": true}                             one delta, then dies with exit 3
+  {"garbage": true}                           junk lines on stdout before the turn goes on
+  {"serverRequest": true}                     asks the client to approve something (the answer is logged)
+Each start ({"argv", "pid", "cwd", "pdeathsig", "codexHome"}), each request ({"request", "params"}), each
+notification from the client ({"notification"}) and each turn's text ({"turn", "model"}) is appended to
+$FAKE_CODEX_LOG.
+"""
+import json
+import os
+import queue
+import sys
+import threading
+import time
+
+OUT_LOCK = threading.Lock()
+INBOX = queue.Queue()
+STATE = {"thread": 0, "turn": 0, "login_cancelled": False, "interrupted": False, "ignore_interrupt": False}
+
+
+def parent_death_signal():
+    """The signal this process gets when its parent dies (prctl PR_GET_PDEATHSIG), or None."""
+    try:
+        import ctypes
+        libc = ctypes.CDLL(None, use_errno=True)
+        signal = ctypes.c_int(0)
+        if libc.prctl(2, ctypes.byref(signal), 0, 0, 0) == 0:
+            return signal.value
+    except Exception:
+        pass
+    return None
+
+
+def log(entry):
+    path = os.environ.get("FAKE_CODEX_LOG")
+    if path:
+        with open(path, "a") as f:
+            f.write(json.dumps(entry) + "\n")
+
+
+def read_state():
+    path = os.environ.get("FAKE_CODEX_STATE")
+    if path and os.path.exists(path):
+        with open(path) as f:
+            return json.load(f)
+    return {}
+
+
+def write_state(state):
+    path = os.environ.get("FAKE_CODEX_STATE")
+    if path:
+        with open(path, "w") as f:
+            json.dump(state, f)
+
+
+def next_entry():
+    path = os.environ.get("FAKE_CODEX_SCRIPT")
+    if not path:
+        return {"text": "fake reply"}
+    with open(path) as f:
+        script = json.load(f)
+    position_file = path + ".pos"
+    position = int(open(position_file).read()) if os.path.exists(position_file) else 0
+    with open(position_file, "w") as f:
+        f.write(str(position + 1))
+    return script[position] if position < len(script) else {"text": "fake reply"}
+
+
+def emit(obj):
+    with OUT_LOCK:
+        sys.stdout.write(json.dumps(obj) + "\n")
+        sys.stdout.flush()
+
+
+def notify(method, params):
+    emit({"method": method, "params": params})
+
+
+def respond(msg_id, result):
+    emit({"id": msg_id, "result": result})
+
+
+def fail(msg_id, code, message):
+    emit({"id": msg_id, "error": {"code": code, "message": message}})
+
+
+def reader():
+    for line in sys.stdin:
+        if line.strip():
+            INBOX.put(line)
+    INBOX.put(None)
+
+
+def account_result():
+    state = read_state()
+    if state.get("signedIn"):
+        return {"account": {"type": "chatgpt", "email": state.get("email", "private.person@example.invalid"),
+                            "planType": state.get("plan", "free")},
+                "requiresOpenaiAuth": True, "workspaceRouting": None}
+    return {"account": None, "requiresOpenaiAuth": True, "workspaceRouting": None}
+
+
+def finish_login():
+    state = read_state()
+    kind = state.get("login", "success")
+    if kind == "never":
+        return
+    time.sleep(float(state.get("loginDelay", 0.2)))
+    if STATE["login_cancelled"]:
+        return
+    if kind == "success":
+        state["signedIn"] = True
+        write_state(state)
+        notify("account/login/completed", {"loginId": "login-1", "success": True, "error": None,
+                                           "onboardingEntrypoint": None})
+        notify("account/updated", {"authMode": "chatgpt", "planType": state.get("plan", "free")})
+    else:
+        notify("account/login/completed",
+               {"loginId": "login-1", "success": False,
+                "error": "Sign-in was denied. See https://auth.example.invalid/help?code=SECRET-CODE for details",
+                "onboardingEntrypoint": None})
+
+
+def model_list(params):
+    state = read_state()
+    models = state.get("models") or [{"model": "fake-fast"}, {"model": "fake-smart"},
+                                     {"model": "fake-hidden", "hidden": True}]
+    data = [{"id": m["model"], "model": m["model"], "displayName": m["model"], "hidden": bool(m.get("hidden")),
+             "isDefault": False} for m in models]
+    if state.get("paginate"):
+        if params.get("cursor") == "p2":
+            return {"data": data[1:], "nextCursor": None}
+        return {"data": data[:1], "nextCursor": "p2"}
+    return {"data": data, "nextCursor": None}
+
+
+def pump(timeout):
+    """Handles what arrives within `timeout` seconds (an interrupt among it); False once stdin is closed."""
+    try:
+        line = INBOX.get(timeout=timeout)
+    except queue.Empty:
+        return True
+    if line is None:
+        return False
+    handle(json.loads(line))
+    return True
+
+
+def wait(seconds):
+    """Sleeps `seconds`, still answering the client. True if the turn was interrupted meanwhile."""
+    end = time.time() + seconds
+    while time.time() < end:
+        if STATE["interrupted"]:
+            return True
+        if not pump(min(0.05, max(0.0, end - time.time()))):
+            os._exit(0)
+    return STATE["interrupted"]
+
+
+def turn_completed(thread_id, turn_id, status, error=None):
+    notify("turn/completed", {"threadId": thread_id,
+                              "turn": {"id": turn_id, "status": status, "items": [], "error": error}})
+
+
+def run_turn(entry, thread_id, turn_id):
+    STATE["interrupted"] = False
+    STATE["ignore_interrupt"] = bool(entry.get("ignoreInterrupt"))
+    base = {"threadId": thread_id, "turnId": turn_id}
+    notify("turn/started", {"threadId": thread_id, "turn": {"id": turn_id, "status": "inProgress"}})
+    if entry.get("garbage"):
+        with OUT_LOCK:
+            sys.stdout.write("this is not json at all\n{broken json\n")
+            sys.stdout.flush()
+    if entry.get("serverRequest"):
+        emit({"id": "srv-1", "method": "item/commandExecution/requestApproval",
+              "params": dict(base, itemId="tool-1", command="ls")})
+        wait(0.4)
+    delay = float(entry.get("delay", 0.0))
+    for i in range(int(entry.get("think", 0))):
+        notify("item/reasoning/summaryTextDelta", dict(base, itemId="reason-1", delta="thinking %d" % i,
+                                                      summaryIndex=0))
+        if wait(delay or 0.05):
+            return turn_completed(thread_id, turn_id, "interrupted")
+    if entry.get("tool"):
+        notify("item/started", dict(base, item={"type": entry["tool"], "id": "tool-1", "command": "ls"}))
+        if wait(1.5):
+            return turn_completed(thread_id, turn_id, "interrupted")
+        notify("item/completed", dict(base, item={"type": entry["tool"], "id": "tool-1", "command": "ls"}))
+    if entry.get("hang"):
+        wait(120)
+        return turn_completed(thread_id, turn_id, "interrupted")
+    if entry.get("crash"):
+        notify("item/agentMessage/delta", dict(base, itemId="msg-1", delta="Half an ans"))
+        sys.stderr.write("thread 'main' panicked: the fake crashed\n")
+        sys.stderr.flush()
+        os._exit(3)
+    if entry.get("error"):
+        error = {"message": entry["error"]["message"], "codexErrorInfo": entry["error"].get("info"),
+                 "additionalDetails": None}
+        notify("error", dict(base, error=error, willRetry=False))
+        return turn_completed(thread_id, turn_id, "failed", error)
+    texts = entry.get("texts") or [entry.get("text", "fake reply")]
+    for number, text in enumerate(texts, 1):
+        item_id = "msg-%d" % number
+        notify("item/started", dict(base, item={"type": "agentMessage", "id": item_id, "text": ""}))
+        if not entry.get("noDeltas"):
+            half = len(text) // 2
+            for piece in (text[:half], text[half:]):
+                notify("item/agentMessage/delta", dict(base, itemId=item_id, delta=piece))
+                if wait(delay):
+                    return turn_completed(thread_id, turn_id, "interrupted")
+        notify("item/completed", dict(base, item={"type": "agentMessage", "id": item_id, "text": text,
+                                                  "phase": "final_answer" if number == len(texts) else "commentary"}))
+    turn_completed(thread_id, turn_id, "completed")
+
+
+def handle(msg):
+    method = msg.get("method")
+    msg_id = msg.get("id")
+    params = msg.get("params") or {}
+    if method is None:
+        log({"response": msg})
+        return
+    if msg_id is None:
+        log({"notification": method})
+        return
+    log({"request": method, "params": params})
+    if method == "initialize":
+        respond(msg_id, {"userAgent": "fake-codex/0.0", "codexHome": os.environ.get("CODEX_HOME", "/nonexistent"),
+                         "platformFamily": "unix", "platformOs": "linux"})
+    elif method == "account/read":
+        respond(msg_id, account_result())
+    elif method == "account/login/start":
+        STATE["login_cancelled"] = False
+        respond(msg_id, {"type": "chatgpt", "loginId": "login-1",
+                         "authUrl": "https://auth.example.invalid/oauth/authorize?state=SECRET-STATE"})
+        threading.Thread(target=finish_login, daemon=True).start()
+    elif method == "account/login/cancel":
+        STATE["login_cancelled"] = True
+        respond(msg_id, {"status": "canceled"})
+    elif method == "account/logout":
+        state = read_state()
+        state["signedIn"] = False
+        write_state(state)
+        respond(msg_id, {})
+    elif method == "model/list":
+        respond(msg_id, model_list(params))
+    elif method == "config/read":
+        if read_state().get("configFails"):
+            return fail(msg_id, -32603, "config is unavailable")
+        names = read_state().get("mcp", [])
+        respond(msg_id, {"config": {"mcp_servers": {n: {"command": "x", "enabled": True} for n in names}},
+                         "origins": {}})
+    elif method == "thread/start":
+        STATE["thread"] += 1
+        thread_id = "thread-%d" % STATE["thread"]
+        respond(msg_id, {"thread": {"id": thread_id, "ephemeral": True}, "model": params.get("model") or "fake-default",
+                         "modelProvider": "openai", "cwd": params.get("cwd"), "approvalPolicy": "never"})
+        notify("thread/started", {"thread": {"id": thread_id}})
+    elif method == "turn/start":
+        STATE["turn"] += 1
+        turn_id = "turn-%d" % STATE["turn"]
+        text = "".join(i.get("text", "") for i in params.get("input", []))
+        log({"turn": text, "model": params.get("model"), "threadId": params.get("threadId")})
+        entry = next_entry()
+        time.sleep(float(read_state().get("turnStartDelay", 0)))
+        respond(msg_id, {"turn": {"id": turn_id, "status": "inProgress", "items": [], "error": None}})
+        run_turn(entry, params.get("threadId"), turn_id)
+    elif method == "turn/interrupt":
+        log({"interrupt": params})
+        respond(msg_id, {})
+        if not STATE["ignore_interrupt"]:
+            STATE["interrupted"] = True
+    else:
+        fail(msg_id, -32601, "unknown method " + method)
+
+
+def main():
+    args = sys.argv[1:]
+    log({"argv": args, "pid": os.getpid(), "cwd": os.getcwd(), "pdeathsig": parent_death_signal(),
+         "codexHome": os.environ.get("CODEX_HOME")})
+    mode = read_state().get("mode")
+    if mode == "garbage":
+        sys.stdout.write("Welcome to the fake\nnothing but noise\n")
+        sys.stdout.flush()
+        return 0
+    if mode == "die":
+        sys.stderr.write("Not logged in. Run codex login\n")
+        sys.stderr.flush()
+        return 1
+    threading.Thread(target=reader, daemon=True).start()
+    while True:
+        line = INBOX.get()
+        if line is None:
+            return 0
+        handle(json.loads(line))
+
+
+if __name__ == "__main__":
+    sys.exit(main())

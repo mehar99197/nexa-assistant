@@ -465,6 +465,18 @@ void MainWindow::buildStatusBar() {
         controller_->lowerMicrophone();
     });
     statusBar()->addWidget(lowerMicButton_);
+    // Shown when a program (agy, opencode, Codex) answers that it is not signed in: opens Settings → Providers,
+    // where its Sign in button is.
+    signInButton_ = new QToolButton(this);
+    signInButton_->setObjectName(u"signInRequired"_s);
+    signInButton_->setText(tr("Sign in…"));
+    signInButton_->setToolTip(tr("Open Settings → Providers, where the provider can be signed in"));
+    signInButton_->hide();
+    connect(signInButton_, &QToolButton::clicked, this, [this] {
+        signInButton_->hide();
+        openSettings(tr("Providers"));
+    });
+    statusBar()->addWidget(signInButton_);
 
     appLabel_ = new QLabel(this);
     statusBar()->addPermanentWidget(appLabel_);
@@ -542,6 +554,7 @@ QToolButton *MainWindow::makeIconButton(NexaIcons::Kind kind, const QString &obj
 void MainWindow::connectController() {
     connect(controller_, &AppController::providerChanged, this, [this](const QString &name) {
         providerLabel_->setText(name.isEmpty() ? tr("none") : name);
+        if (signInButton_) signInButton_->hide();   // the providers were built again: it is asked again if still not signed in
     });
     connect(controller_, &AppController::modelsChanged, this, &MainWindow::showModels);
     // An empty list while a program lists its models reads as broken; say what is happening instead.
@@ -552,6 +565,7 @@ void MainWindow::connectController() {
     connect(controller_, &AppController::microphoneOverloaded, this, &MainWindow::showMicrophoneTrouble);
     // Queued: the prompt is modal and must not run inside a network callback.
     connect(controller_, &AppController::apiKeyRequired, this, &MainWindow::promptForApiKey, Qt::QueuedConnection);
+    connect(controller_, &AppController::signInRequired, this, &MainWindow::showSignInRequired);
 
     connect(controller_, &AppController::userMessageAccepted, this, [this](const QString &text, const QString &source) {
         chatView_->addUserMessage(text, source);
@@ -824,6 +838,13 @@ void MainWindow::promptForApiKey(const QString &providerName) {
     } else {
         showStatus(tr("No API key set — add one in Settings → Providers."), true);
     }
+}
+
+void MainWindow::showSignInRequired(const QString &providerName) {
+    // Not an API key prompt: a program signs in through its own account. The chat has the sentence already (the
+    // controller's note or the failed reply); the status bar gets the way to the button.
+    showStatus(tr("%1 is not signed in — Settings → Providers → Sign in.").arg(providerName), true);
+    signInButton_->show();
 }
 
 void MainWindow::showModels(const QStringList &models, const QString &current) {
