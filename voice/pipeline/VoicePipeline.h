@@ -11,11 +11,13 @@
 #include <QObject>
 #include <QTimer>
 
+#include <functional>
 #include <memory>
 
 namespace nexa {
 
 class IAudioInput;
+class ISpeakerGate;
 class ListeningFront;
 class ISpeechRecognizer;
 class ITextToSpeech;
@@ -34,11 +36,14 @@ class VoicePipeline : public QObject {
     Q_OBJECT
 public:
     enum class SpeakMode { VoiceRequests, Always, Never };
+    // What interrupts the speech: the name (the spotter, which the owner's voice reaches and the speakers' "Nexa" is
+    // guarded against), any speech (with headphones), or nothing said.
+    enum class BargeIn { Name, Speech, Off };
 
     struct Settings {
         SpeakMode speak{SpeakMode::VoiceRequests};
         bool wakeWord{false};
-        bool bargeIn{false};
+        BargeIn bargeIn{BargeIn::Name};
         QString wakeName{QStringLiteral("Nexa")};
         int endPauseMs{1400};       // this much quiet ends a request (Settings → Voice → Pause before I'm done)
         bool followUps{true};       // after a spoken reply, listen for a follow-up without the name
@@ -55,6 +60,9 @@ public:
     // Replaces what hears speech and the name (an energy detector, inline, until one is set).
     void setListeningFront(std::unique_ptr<ListeningFront> front);
     void setSettings(Settings settings);
+    // Whose voice: what is said hands-free (after the name, in a follow-up, over the speech) goes on only when the gate
+    // says it is the owner's; push-to-talk never asks. Not owned; null: anyone.
+    void setSpeakerGate(ISpeakerGate *gate) { gate_ = gate; }
 
     VoiceState state() const { return state_; }
     bool canListen() const { return recognizer_ != nullptr; }
@@ -66,8 +74,11 @@ public:
     QString microphoneTrouble() const { return micCheck_.describe(); }
     // Keeps the microphone open for `ms` and measures what it hears (Settings' "Lower it").
     void measureLevels(int ms, std::function<void(MicrophoneCheck::Stats)> done);
+    // Keeps the microphone open for `ms` and hands back what it heard, as it came (enrolling the owner's voice).
+    void recordFor(int ms, std::function<void(QByteArray pcm16k)> done);
 
     static SpeakMode speakModeFromString(const QString &mode);
+    static BargeIn bargeInFromString(const QString &mode);
     // The spelling hint for a request: the name, and Roman-Urdu examples that pull Urdu towards Latin letters.
     static QString requestPrompt(const QString &wakeName);
 
@@ -79,6 +90,10 @@ public slots:
     void releaseHold();
     void stopListening();
     void cancel();                              // drop the utterance; stop transcribing and speaking
+    // "Stop talking": the voice goes quiet, the reply goes on (in the chat) and nothing else is dropped.
+    void stopSpeaking();
+    // "That's all": the conversation by voice ends — no follow-up, no request awaited after the name.
+    void endConversation();
     void speak(const QString &text);            // the speak tool, Settings → Test
     void submitRecording(const QByteArray &pcm16k);     // a whole utterance recorded elsewhere
 
@@ -89,6 +104,8 @@ public slots:
     void onReplyFailed(const QString &message);
 
 signals:
+    // A voice that is not the owner's was turned away (its score, for Settings).
+    void strangerIgnored(double score);
     void stateChanged(nexa::VoiceState state);
     void settingsChanged();                     // setSettings() applied (e.g. the wake word went on)
     void levelChanged(double level);            // 0 … 1 while the microphone is open
@@ -110,9 +127,13 @@ private:
     void finishListening();
     void transcribe(const QByteArray &pcm);
     // A request said to Nexa, through the request recogniser; `fallback` (the offline text after the name) is
-    // used when that recogniser fails or hears only the name.
-    void transcribeRequest(const QByteArray &pcm, const QString &fallback);
+    // used when that recogniser fails or hears only the name. `needsName`: the spotter's capture, which counts only
+    // when the words confirm the name (or a greeting) opens it.
+    void transcribeRequest(const QByteArray &pcm, const QString &fallback, bool needsName = false);
     void checkWakeWord(const QByteArray &utterance);
+    // `then` when it is the owner speaking in `pcm` (or no gate is on); else the utterance is dropped, quietly.
+    void fromOwner(const QByteArray &pcm, std::function<void()> then, std::function<void()> otherwise = {});
+    void transcribeRoom(const QByteArray &utterance);       // the second net's whisper
     void handleWakeTranscript(const QByteArray &utterance, const TimedTranscript &transcript);
     void awaitRequest();            // the name alone was said: listen for the request
     void submit(const QString &text);
@@ -123,6 +144,7 @@ private:
     void applyPauses();             // the front's pause and longest utterance for what is being listened for
 
     IAudioInput *input_;
+    ISpeakerGate *gate_{nullptr};
     std::unique_ptr<ISpeechRecognizer> recognizer_;
     std::unique_ptr<ISpeechRecognizer> wakeRecognizer_;
     std::unique_ptr<ITextToSpeech> speech_;

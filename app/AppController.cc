@@ -9,17 +9,20 @@
 #include "core/config/ConfigStore.h"
 #include "core/intent/IntentRouter.h"
 #include "core/memory/MemoryStore.h"
+#include "core/mission/TaskTarget.h"
 #include "core/policy/PanicController.h"
 #include "core/policy/PolicyEngine.h"
 #include "core/skills/SkillCatalog.h"
 #include "core/tools/ToolRegistry.h"
 #include "voice/VoiceBackends.h"
 #include "voice/listen/ListeningFront.h"
+#include "voice/listen/SpeakerGate.h"
 #include "voice/pipeline/VoicePipeline.h"
 #include "voice/stt/ISpeechRecognizer.h"
 #include "voice/tts/ITextToSpeech.h"
 
 #include <QElapsedTimer>
+#include <QScopeGuard>
 #include <QScopedValueRollback>
 
 #include <algorithm>
@@ -96,6 +99,30 @@ AppController::AppController(AppServices services, Config config, QString enviro
         emit replyStep(stepText(tool, summary, ms), ok);
     });
     connect(mission_.get(), &MissionControl::taskReplyFinished, this, &AppController::onTaskFinished);
+    connect(mission_.get(), &MissionControl::taskReplyFinished, this, [this](quint64 id, FinishReason reason) {
+        const Task *task = mission_->task(id);
+        if (!task || !shouldAnnounce(*task)) return;
+        if (task->state == TaskState::Done) {
+            announce(tr("%1 is done: %2.").arg(task->agentId, task->title));
+        } else if (task->state == TaskState::Stopped && reason == FinishReason::Cancelled) {
+            announce(tr("%1 stopped.").arg(task->agentId));
+        }
+    });
+    connect(mission_.get(), &MissionControl::taskReplyFailed, this, [this](quint64 id) {
+        if (const Task *task = mission_->task(id); task && shouldAnnounce(*task)) {
+            announce(tr("%1 could not finish %2.").arg(task->agentId, task->title));
+        }
+    });
+    connect(mission_.get(), &MissionControl::approvalRequested, this, [this](quint64 id, quint64 actionId) {
+        const Task *task = mission_->task(id);
+        if (!task || config_.voice.announceTasks == u"off"_s) return;
+        if (config_.voice.announceTasks == u"voice"_s && !task->source.contains(u"voice"_s)) return;
+        for (const Approval &approval : mission_->approvals()) {
+            if (approval.actionId == actionId) announce(tr("%1 needs your approval to use %2.").arg(task->agentId, approval.tool));
+        }
+    });
+    announcer_.setInterval(1'000);
+    connect(&announcer_, &QTimer::timeout, this, &AppController::sayNextAnnouncement);
     connect(mission_.get(), &MissionControl::taskReplyFailed, this, &AppController::onTaskFailed);
     connect(mission_.get(), &MissionControl::busyChanged, this, &AppController::busyChanged);
     connect(mission_.get(), &MissionControl::countsChanged, this, &AppController::refreshTaskActivity);
@@ -138,8 +165,8 @@ AppController::AppController(AppServices services, Config config, QString enviro
             mission_->noteVoice(u"heard › “%1”"_s.arg(text));
             submit(text, u"voice"_s);
         });
-        // Speaking over a reply replaces it; the new utterance itself must keep going.
-        connect(voice, &VoicePipeline::interruptRequested, this, &AppController::cancelReply);
+        // Speaking over a reply stops the voice (the pipeline does), never the task: with the mission board a new
+        // request runs beside the old one, and a wake word heard by mistake can no longer cancel work.
         connect(this, &AppController::replyStarted, voice, &VoicePipeline::onReplyStarted);
         connect(this, &AppController::replyDelta, voice, &VoicePipeline::onReplyDelta);
         connect(this, &AppController::replyFinished, voice, &VoicePipeline::onReplyFinished);
@@ -272,6 +299,11 @@ quint64 AppController::submit(const QString &text, const QString &source) {
         panic();
         return 0;
     }
+    if (match && match->control != Control::None && handlesControl(*match)) {
+        emit userMessageAccepted(prompt, source);
+        carryOut(*match, source);
+        return 0;
+    }
     TaskRequest request;
     request.text = prompt;
     request.source = source;
@@ -312,6 +344,9 @@ QList<quint64> AppController::addTasks(const QStringList &lines, const std::opti
     // On the board only: they do not take the chat over from the conversation.
     const QScopedValueRollback<bool> boardOnly(addingToBoard_, true);
     QList<quint64> added;
+    const auto remember = qScopeGuard([this, &added] {
+        for (const quint64 id : std::as_const(added)) boardOnly_.insert(id);
+    });
     for (const QString &line : lines) {
         const QString text = line.trimmed();
         if (text.isEmpty()) continue;
@@ -328,6 +363,105 @@ QList<quint64> AppController::addTasks(const QStringList &lines, const std::opti
         added.append(mission_->add(request));
     }
     return added;
+}
+
+bool AppController::handlesControl(const IntentMatch &match) const {
+    // A "yes" or a "no" with no question waiting is ordinary talk: the model's to read.
+    if (match.control == Control::Approve || match.control == Control::Deny) return !mission_->approvals().isEmpty();
+    return match.control != Control::None;
+}
+
+void AppController::carryOut(const IntentMatch &match, const QString &source) {
+    MissionControl *mission = mission_.get();
+    const auto agentOf = [mission](TaskId id) {
+        const Task *task = mission->task(id);
+        return task ? task->agentId : tr("the task");
+    };
+    const std::optional<TaskId> target = TaskTarget::resolve(match.target, mission->tasks(), shown_);
+    switch (match.control) {
+    case Control::None: return;
+    case Control::StopSpeaking:
+        if (services_.voice) services_.voice->stopSpeaking();
+        return;
+    case Control::StopTask:
+        if (!target) return acknowledge(tr("Nothing is running."), source);
+        mission->stop(*target);
+        return acknowledge(tr("Stopped %1.").arg(agentOf(*target)), source);
+    case Control::PauseTask:
+        if (!target) return acknowledge(tr("Nothing is running."), source);
+        mission->pause(*target);
+        return acknowledge(tr("Paused %1.").arg(agentOf(*target)), source);
+    case Control::ResumeTask:
+        if (!target) return acknowledge(tr("Nothing is paused."), source);
+        mission->resume(*target);
+        return acknowledge(tr("%1 goes on.").arg(agentOf(*target)), source);
+    case Control::PauseAll:
+        mission->pauseAll();
+        return acknowledge(tr("Paused every task."), source);
+    case Control::ResumeAll:
+        for (const Task &task : mission->tasks()) {
+            if (task.depth == 0 && task.state == TaskState::Paused) mission->resume(task.id);
+        }
+        return acknowledge(tr("Every paused task goes on."), source);
+    case Control::Approve:
+    case Control::Deny: {
+        // The question of the task in view first, else the one asked longest ago.
+        const QList<Approval> waiting = mission->approvals();
+        if (waiting.isEmpty()) return;
+        Approval chosen = waiting.first();
+        for (const Approval &approval : waiting) {
+            if (shown_ && approval.task == *shown_) chosen = approval;
+        }
+        if (match.control == Control::Approve) {
+            mission->approve(chosen.actionId);
+            return acknowledge(tr("Approved: %1 goes on.").arg(chosen.agentId), source);
+        }
+        mission->deny(chosen.actionId);
+        return acknowledge(tr("Denied: %1 will not do that.").arg(chosen.agentId), source);
+    }
+    case Control::Status: return acknowledge(mission->summary(), source);
+    case Control::AddTask:
+        addTasks({match.target}, std::nullopt, source);
+        return acknowledge(tr("Added to the board: %1").arg(titleFor(match.target)), source);
+    case Control::EndConversation:
+        if (services_.voice) services_.voice->endConversation();
+        return acknowledge(tr("Okay."), source);
+    }
+}
+
+// A board task that ends or asks for something is said aloud — never the one the chat shows (its answer is spoken
+// already), only tasks on the board: those asked for by voice, or every one (Settings → Voice → "Say when a task ends").
+bool AppController::shouldAnnounce(const Task &task) const {
+    if (task.depth > 0 || config_.voice.announceTasks == u"off"_s || !boardOnly_.contains(task.id)) return false;
+    return config_.voice.announceTasks == u"all"_s || task.source.contains(u"voice"_s);
+}
+
+void AppController::announce(const QString &sentence) {
+    emit announced(sentence);
+    if (!services_.voice) return;
+    announcements_.append(sentence);
+    if (!announcer_.isActive()) announcer_.start();
+    sayNextAnnouncement();
+}
+
+// One at a time, five seconds apart, and never over the user: not while they talk or Nexa reads a reply.
+void AppController::sayNextAnnouncement() {
+    if (announcements_.isEmpty()) {
+        announcer_.stop();
+        return;
+    }
+    const VoiceState state = services_.voice->state();
+    if (state == VoiceState::Listening || state == VoiceState::Transcribing || state == VoiceState::Speaking) return;
+    if (lastAnnouncement_.isValid() && lastAnnouncement_.elapsed() < 5'000) return;
+    lastAnnouncement_.start();
+    services_.voice->speak(announcements_.takeFirst());
+}
+
+// What a command did: said aloud when it was spoken, a line in the chat and the status bar either way.
+void AppController::acknowledge(const QString &text, const QString &source) {
+    emit replyNotice(text);
+    emit statusChanged(text, false);
+    if (services_.voice && (source == u"voice"_s || source == u"phone-voice"_s)) services_.voice->speak(text);
 }
 
 QString AppController::channelOf(const QString &source) {
@@ -601,11 +735,19 @@ void AppController::applyVoiceConfig() {
     const int endPauseMs = settings.endPause == u"short"_s ? 900 : settings.endPause == u"long"_s ? 2000 : 1400;
     voice->setSettings(VoicePipeline::Settings{.speak = VoicePipeline::speakModeFromString(settings.speakReplies),
                                                .wakeWord = wakeWord,
-                                               .bargeIn = settings.bargeIn,
+                                               .bargeIn = VoicePipeline::bargeInFromString(settings.bargeIn),
                                                .wakeName = settings.wakeName,
                                                .endPauseMs = endPauseMs,
-                                               .followUps = settings.followUps});
+                                               // A conversation keeps the window open longer, after every reply.
+                                               .followUps = settings.followUps || settings.conversation,
+                                               .followUpMs = settings.conversation ? 20'000 : 8'000});
     if (services_.router) services_.router->setAssistantName(settings.wakeName);
+    if (SpeakerGate *gate = services_.speakerGate) {
+        const Result<VoiceProfile> profile = VoiceProfile::load();
+        gate->setProfile(profile ? std::optional<VoiceProfile>(profile.value()) : std::nullopt);
+        gate->setOwnerOnly(settings.listenTo == u"owner"_s);
+        gate->setThreshold(SpeakerGate::thresholdFor(settings.ownerStrictness));
+    }
     qCDebug(lcApp) << "voice: recognition" << voice->recognizerName() << "| speech" << voice->speechName();
     if (!problems.isEmpty()) emit statusChanged(problems.join(u' '), true);
 }

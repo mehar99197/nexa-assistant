@@ -91,11 +91,20 @@ QString WakeWordDetector::soundKey(const QString &word) {
 
 std::optional<WakeWordDetector::Match> WakeWordDetector::find(const QString &transcript) const {
     const std::vector<Token> words = tokens(transcript);
-    // Sounds like the name: within one edit, and not shorter ("Nick" is not "Nexa"); a short name exactly.
+    // Sounds like the name: the same sounds, or one away — and then starting as the name does ("Max", "Rex" are not
+    // "Nexa"), not shorter ("Nick"), and not adding a hard stop ("next" is "Nexa" and a t) — a recogniser's slips of the
+    // name ("Nexus", "Nexer") stay in. A short name exactly.
     const auto soundsLikeName = [this](const QString &letters) {
         const QString key = soundKey(letters);
-        if (nameKey_.size() < 3) return key == nameKey_;
-        return key.size() >= nameKey_.size() && editDistance(key, nameKey_) <= 1;
+        if (key == nameKey_) return true;
+        if (nameKey_.size() < 3 || key.isEmpty() || key.front() != nameKey_.front()) return false;
+        if (key.size() < nameKey_.size() || editDistance(key, nameKey_) > 1) return false;
+        if (key.size() > nameKey_.size()) {
+            qsizetype at = 0;
+            while (at < nameKey_.size() && key.at(at) == nameKey_.at(at)) ++at;
+            if (QStringView(u"tdpbkg").contains(key.at(at))) return false;
+        }
+        return true;
     };
     // The words from `first` to `last` (inclusive), as the letters of one word.
     const auto joined = [&words](size_t first, size_t last) {

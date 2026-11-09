@@ -209,7 +209,9 @@ text-only model refuses images with a 400; the `Agent` then resends without them
   `--hear`), `listen/` (what hears speech and the name: `ListeningFront` = the Facade that runs a noise filter, a
   voice detector and the spotter inline or on a worker thread and reports sample positions; `AudioRing` = the raw
   audio requests are cut from; `IVoiceDetector` → EnergyVoiceDetector / SileroVoiceDetector; `IAudioFilter` →
-  NoiseReducer), `wake/` (WordPieces = a name in the spotter's SentencePiece pieces, WakePhrases = spellings,
+  NoiseReducer; `ISpeakerGate` → `SpeakerGate` = whose voice it is (sherpa's speaker embeddings against
+  `VoiceProfile`, the owner's enrolled voice in `~/.local/share/nexa/voice-profile.json`): hands-free requests go on only
+  in the owner's, push-to-talk is never asked), `wake/` (WordPieces = a name in the spotter's SentencePiece pieces, WakePhrases = spellings,
   keyword lines, tuning and the name check, `IWakeSpotter` → KeywordSpotter, SherpaRuntime + the vendored
   `sherpa/c-api.h`), `stt/` (ISpeechRecognizer with word times; CloudRecognizer for the provider, WhisperRecognizer
   for offline, RecognizerChain tries them in order, Transcript cleans the text), `tts/` (ITextToSpeech;
@@ -341,6 +343,12 @@ text-only model refuses images with a 400; the `Agent` then resends without them
   the one at the screen.
 - Keep the fast path's arguments matching the tool's schema; a mismatch there fails only at runtime, so
   `tests/IntentRouterTest.cc` asserts the argument shapes.
+- **Only the owner's voice, hands-free**: once a voice is enrolled (Settings → Voice → My voice) and "Listen to" is the
+  owner, `VoicePipeline` asks `ISpeakerGate` before any request it did not get from a key press — the spotter's
+  capture, the second net's sentence (before whisper hears it), the request after the name, a follow-up, a barge-in.
+  Interrupting Nexa is by its name by default (`voice.bargeIn`: name | speech | off): Nexa must not hear itself. "Stop
+  talking" stops the voice only, "stop" the task in view, "stop everything" is the panic. The voice profile is a
+  person's biometric data: 0600, never logged, never sent anywhere, and no recording is kept.
 - Nothing listens to the microphone unless the user asked: `VoicePipeline` opens it for a press of Talk, for the
   follow-up window after a spoken reply (when that setting is on), and continuously while the wake word is on —
   and then **only offline recognition hears the room** (the spotter and the local recogniser,

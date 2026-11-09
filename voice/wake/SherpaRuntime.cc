@@ -33,6 +33,10 @@ QString SherpaRuntime::gtcrnModel() const {
     return dir_ + u"/gtcrn_simple.onnx"_s;
 }
 
+QString SherpaRuntime::speakerModel() const {
+    return dir_ + u"/speaker/3dspeaker_speech_eres2net_sv_en_voxceleb_16k.onnx"_s;
+}
+
 bool SherpaRuntime::load() {
     if (attempted_) return loaded_;
     attempted_ = true;
@@ -92,6 +96,21 @@ bool SherpaRuntime::load() {
         library_.unload();
         return false;
     }
+    // Optional: telling the owner's voice from others. Missing, everything else still works.
+    QString speakerMissing;
+    const auto optional = [this, &speakerMissing](auto &function, const char *name) {
+        function = reinterpret_cast<std::remove_reference_t<decltype(function)>>(library_.resolve(name));
+        if (!function && speakerMissing.isEmpty()) speakerMissing = QString::fromLatin1(name);
+    };
+    optional(createSpeakerExtractor, "SherpaOnnxCreateSpeakerEmbeddingExtractor");
+    optional(destroySpeakerExtractor, "SherpaOnnxDestroySpeakerEmbeddingExtractor");
+    optional(speakerDim, "SherpaOnnxSpeakerEmbeddingExtractorDim");
+    optional(speakerCreateStream, "SherpaOnnxSpeakerEmbeddingExtractorCreateStream");
+    optional(speakerIsReady, "SherpaOnnxSpeakerEmbeddingExtractorIsReady");
+    optional(speakerCompute, "SherpaOnnxSpeakerEmbeddingExtractorComputeEmbedding");
+    optional(speakerDestroyEmbedding, "SherpaOnnxSpeakerEmbeddingExtractorDestroyEmbedding");
+    optional(inputFinished, "SherpaOnnxOnlineStreamInputFinished");
+    speakers_ = speakerMissing.isEmpty() && QFileInfo::exists(speakerModel());
     loaded_ = true;
     problem_.clear();
     return true;

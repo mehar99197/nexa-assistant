@@ -795,6 +795,9 @@ QString MainWindow::hintFor(CoreMode mode) const {
         }
         return tr("Say “Hey %1” and your request, type one, or hold Talk.").arg(controller_->config().voice.wakeName);
     case CoreMode::Listening:
+        if (controller_->config().voice.conversation) {
+            return tr("Listening to you — no name needed. Say “that's all” to end the conversation.");
+        }
         return tr("Speak now. Let go of Talk, or pause, to send.");
     case CoreMode::Transcribing:
         return voice ? tr("Recognising what you said with %1…").arg(voice->recognizerName())

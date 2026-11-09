@@ -15,6 +15,9 @@ add_library(nexa_voice STATIC
     listen/ListeningFront.h listen/ListeningFront.cc
     listen/NoiseReducer.h listen/NoiseReducer.cc
     listen/SileroVoiceDetector.h listen/SileroVoiceDetector.cc
+    listen/ISpeakerGate.h
+    listen/SpeakerGate.h listen/SpeakerGate.cc
+    listen/VoiceProfile.h listen/VoiceProfile.cc
     pipeline/VoicePipeline.h pipeline/VoicePipeline.cc
     pipeline/WakeWordDetector.h pipeline/WakeWordDetector.cc
     stt/CloudRecognizer.h stt/CloudRecognizer.cc

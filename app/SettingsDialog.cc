@@ -6,6 +6,7 @@
 #include "app/ProviderGalleryDialog.h"
 #include "app/ProviderSignInBlock.h"
 #include "app/SkillsSettingsPage.h"
+#include "app/VoiceEnrolmentDialog.h"
 
 #include "core/ai/IAiProvider.h"
 #include "app/GlobalShortcuts.h"
@@ -21,6 +22,8 @@
 #include "ui/NexaDesigns.h"
 #include "ui/NexaThemes.h"
 #include "voice/VoiceBackends.h"
+#include "voice/listen/SpeakerGate.h"
+#include "voice/listen/VoiceProfile.h"
 #include "voice/tts/CloudVoices.h"
 #include "voice/tts/ITextToSpeech.h"
 #include "voice/tts/SpeechdTtsBackend.h"
@@ -35,6 +38,7 @@
 #include <QLabel>
 #include <QLineEdit>
 #include <QListWidget>
+#include <QLocale>
 #include <QMenu>
 #include <QMessageBox>
 #include <QPainter>
@@ -510,8 +514,68 @@ QWidget *SettingsDialog::buildVoiceTab() {
         if (status_.lowerMicrophone) status_.lowerMicrophone();
         micStatus_->setText(tr("Microphone: lowering its input volume — the result appears in the status bar."));
     });
-    bargeInCheck_ = new QCheckBox(tr("Stop speaking when I start talking (use headphones, or Nexa hears itself)"), page);
-    bargeInCheck_->setChecked(voice.bargeIn);
+    bargeInCombo_ = new QComboBox(page);
+    bargeInCombo_->setObjectName(u"bargeIn"_s);
+    bargeInCombo_->addItem(tr("When I say its name"), u"name"_s);
+    bargeInCombo_->addItem(tr("When I start talking (with headphones only, or Nexa hears itself)"), u"speech"_s);
+    bargeInCombo_->addItem(tr("Never — Esc or Talk stops it"), u"off"_s);
+    selectData(bargeInCombo_, voice.bargeIn);
+    conversationCheck_ = new QCheckBox(tr("Keep the conversation going: after each spoken reply, listen to me again "
+                                          "without the name, until I say \"that's all\""), page);
+    conversationCheck_->setObjectName(u"conversation"_s);
+    conversationCheck_->setChecked(voice.conversation);
+    announceCombo_ = new QComboBox(page);
+    announceCombo_->setObjectName(u"announceTasks"_s);
+    announceCombo_->addItem(tr("Tasks I asked for by voice"), u"voice"_s);
+    announceCombo_->addItem(tr("Every task"), u"all"_s);
+    announceCombo_->addItem(tr("Never"), u"off"_s);
+    selectData(announceCombo_, voice.announceTasks);
+    listenToCombo_ = new QComboBox(page);
+    listenToCombo_->setObjectName(u"listenTo"_s);
+    listenToCombo_->addItem(tr("Only my voice (once it is enrolled below)"), u"owner"_s);
+    listenToCombo_->addItem(tr("Anyone"), u"anyone"_s);
+    selectData(listenToCombo_, voice.listenTo);
+    strictnessCombo_ = new QComboBox(page);
+    strictnessCombo_->setObjectName(u"ownerStrictness"_s);
+    strictnessCombo_->addItem(tr("Low — lets a cold or a far microphone through"), u"low"_s);
+    strictnessCombo_->addItem(tr("Normal"), u"normal"_s);
+    strictnessCombo_->addItem(tr("High — someone with a voice like mine is turned away too"), u"high"_s);
+    selectData(strictnessCombo_, voice.ownerStrictness);
+    myVoiceStatus_ = new QLabel(page);
+    myVoiceStatus_->setObjectName(u"myVoiceStatus"_s);
+    myVoiceStatus_->setWordWrap(true);
+    enrolButton_ = new QPushButton(tr("Enrol my voice…"), page);
+    enrolButton_->setObjectName(u"enrolVoice"_s);
+    enrolButton_->setAutoDefault(false);
+    forgetVoiceButton_ = new QPushButton(tr("Forget my voice"), page);
+    forgetVoiceButton_->setObjectName(u"forgetVoice"_s);
+    forgetVoiceButton_->setAutoDefault(false);
+    connect(enrolButton_, &QPushButton::clicked, this, [this] {
+        if (!status_.voice || !status_.speakerGate) return;
+        const QString name = wakeNameEdit_->text().trimmed().isEmpty() ? VoiceConfig{}.wakeName : wakeNameEdit_->text().trimmed();
+        VoiceEnrolmentDialog dialog(status_.voice, status_.speakerGate, name, this);
+        if (dialog.exec() != QDialog::Accepted || !dialog.profile()) return;
+        if (const Result<void> saved = dialog.profile()->save(); !saved) {
+            QMessageBox::warning(this, tr("My voice"), saved.error().message);
+            return;
+        }
+        status_.speakerGate->setProfile(dialog.profile());
+        refreshMyVoice();
+    });
+    connect(forgetVoiceButton_, &QPushButton::clicked, this, [this] {
+        if (QMessageBox::question(this, tr("Forget my voice"),
+                                  tr("Forget your voice? Nexa then answers anyone hands-free until you enrol again."),
+                                  QMessageBox::Yes | QMessageBox::No, QMessageBox::No)
+            != QMessageBox::Yes) {
+            return;
+        }
+        if (const Result<void> forgotten = VoiceProfile::forget(); !forgotten) {
+            QMessageBox::warning(this, tr("My voice"), forgotten.error().message);
+            return;
+        }
+        if (status_.speakerGate) status_.speakerGate->setProfile(std::nullopt);
+        refreshMyVoice();
+    });
 
     auto *listening = new QFormLayout;
     listening->addRow(tr("Speech recognition:"), sttCombo_);
@@ -548,7 +612,17 @@ QWidget *SettingsDialog::buildVoiceTab() {
     waking->addRow(QString(), noiseCheck_);
     waking->addRow(QString(), spotterStatus_);
     waking->addRow(micRow);
-    waking->addRow(QString(), bargeInCheck_);
+    waking->addRow(tr("Stop speaking:"), bargeInCombo_);
+    waking->addRow(QString(), conversationCheck_);
+    waking->addRow(tr("Say when a task ends:"), announceCombo_);
+    waking->addRow(tr("Listen to:"), listenToCombo_);
+    waking->addRow(tr("How sure it is me:"), strictnessCombo_);
+    auto *myVoiceRow = new QHBoxLayout;
+    myVoiceRow->addWidget(myVoiceStatus_, 1);
+    myVoiceRow->addWidget(enrolButton_);
+    myVoiceRow->addWidget(forgetVoiceButton_);
+    waking->addRow(tr("My voice:"), myVoiceRow);
+    refreshMyVoice();
 
     auto *note = new QLabel(tr("Talk: click the Talk button (the request ends when you pause), hold it to talk, or "
                                "press Ctrl+M. Esc stops the speech. The cloud voice can be any provider with an "
@@ -695,6 +769,27 @@ void SettingsDialog::updateVoiceStatus() {
     }
 }
 
+void SettingsDialog::refreshMyVoice() {
+    SpeakerGate *gate = status_.speakerGate;
+    const bool canTell = gate && gate->canTell();
+    const Result<VoiceProfile> profile = VoiceProfile::load();
+    const bool enrolled = canTell && profile && profile.value().model == gate->modelName();
+    enrolButton_->setEnabled(canTell && status_.voice);
+    enrolButton_->setText(enrolled ? tr("Enrol again…") : tr("Enrol my voice…"));
+    forgetVoiceButton_->setEnabled(profile.isOk());
+    if (!canTell) {
+        myVoiceStatus_->setText(tr("Telling your voice from others needs the speaker model — run "
+                                   "scripts/download-sherpa.sh, then reopen Settings."));
+    } else if (!enrolled) {
+        myVoiceStatus_->setText(tr("Not enrolled: hands-free, Nexa answers anyone."));
+    } else {
+        myVoiceStatus_->setText(tr("Enrolled %1 from %n recording(s); %2 other voice(s) ignored since Nexa started.", nullptr,
+                                   profile.value().samples)
+                                    .arg(QLocale().toString(profile.value().enrolled.toLocalTime().date(), QLocale::ShortFormat))
+                                    .arg(gate->turnedAway()));
+    }
+}
+
 void SettingsDialog::storeVoice() {
     VoiceConfig &voice = config_.voice;
     keepCloudModels();
@@ -710,7 +805,11 @@ void SettingsDialog::storeVoice() {
     voice.ttsRate = rateSlider_->value() / 100.0;
     voice.speakReplies = speakCombo_->currentData().toString();
     voice.wakeWord = wakeCheck_->isChecked();
-    voice.bargeIn = bargeInCheck_->isChecked();
+    voice.bargeIn = bargeInCombo_->currentData().toString();
+    voice.conversation = conversationCheck_->isChecked();
+    voice.announceTasks = announceCombo_->currentData().toString();
+    voice.listenTo = listenToCombo_->currentData().toString();
+    voice.ownerStrictness = strictnessCombo_->currentData().toString();
     voice.wakeName = wakeNameEdit_->text().trimmed().isEmpty() ? VoiceConfig{}.wakeName : wakeNameEdit_->text().trimmed();
     voice.wakeSensitivity = sensitivityCombo_->currentData().toString();
     voice.endPause = endPauseCombo_->currentData().toString();

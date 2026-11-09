@@ -78,7 +78,9 @@ std::optional<IntentMatch> IntentRouter::route(const QString &text) const {
     for (const auto &handler : handlers_) {
         std::optional<IntentMatch> match = handler->match(input);
         if (!match) continue;
-        if (!match->panic && !match->verbatimPayload && isCompound(input.normalized)) return std::nullopt;
+        if (!match->panic && match->control == Control::None && !match->verbatimPayload && isCompound(input.normalized)) {
+            return std::nullopt;
+        }
         if (!match->toolName.isEmpty() && available_ && !available_(match->toolName)) continue;
         return match;
     }

@@ -18,6 +18,9 @@ namespace nexa {
 
 namespace {
 
+constexpr double kNoSpeech = 0.6;      // whisper's no_speech_thold
+constexpr double kUnsure = 0.4;        // ≈ its logprob_thold of −1 as a mean probability
+
 constexpr int kUnloadAfterMs = 10 * 60 * 1000;
 constexpr int kSampleRate = 16'000;
 
@@ -114,6 +117,21 @@ public:
 
         TimedTranscript transcript;
         const int segments = whisper_full_n_segments(context_);
+        // How sure whisper is that there was speech, and of the words: its own figures, kept with the text.
+        double noSpeech = 0;
+        double probability = 0;
+        int tokens = 0;
+        const whisper_token textEnd = whisper_token_eot(context_);
+        for (int i = 0; i < segments; ++i) {
+            noSpeech = std::max(noSpeech, double(whisper_full_get_segment_no_speech_prob(context_, i)));
+            for (int j = 0; j < whisper_full_n_tokens(context_, i); ++j) {
+                if (whisper_full_get_token_id(context_, i, j) >= textEnd) continue;     // timestamps, markers
+                probability += double(whisper_full_get_token_p(context_, i, j));
+                ++tokens;
+            }
+        }
+        transcript.noSpeech = noSpeech;
+        transcript.confidence = tokens > 0 ? probability / tokens : 0.0;
         for (int i = 0; i < segments; ++i) {
             const QString segment = QString::fromUtf8(whisper_full_get_segment_text(context_, i));
             transcript.text += segment;
@@ -125,8 +143,16 @@ public:
             }
         }
         transcript.text = transcript.text.trimmed();
-        qCDebug(lcVoice) << "whisper:" << pcm.size() / 32 << "ms of audio in" << timer.elapsed() << "ms with"
-                         << params.n_threads << "threads";
+        qCDebug(lcVoice).nospace() << "whisper: " << pcm.size() / 32 << " ms of audio in " << timer.elapsed() << " ms with "
+                                   << params.n_threads << " threads; no speech " << transcript.noSpeech
+                                   << ", confidence " << transcript.confidence;
+        // Whisper's own rule of thumb (its no-speech and log-probability thresholds): likely no speech, and words it
+        // was unsure of — what it wrote is made up from the noise.
+        if (transcript.noSpeech > kNoSpeech && transcript.confidence < kUnsure) {
+            qCDebug(lcVoice) << "whisper: no speech, dropped:" << transcript.text;
+            transcript.text.clear();
+            transcript.words.clear();
+        }
         return transcript;
     }
 

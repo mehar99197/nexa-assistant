@@ -7,6 +7,7 @@
 #include "core/audit/AuditLog.h"
 #include "core/config/ConfigStore.h"
 #include "core/intent/IntentRouter.h"
+#include "core/intent/MissionIntents.h"
 #include "core/intent/PcIntents.h"
 #include "core/net/HttpClient.h"
 #include "core/policy/PanicController.h"
@@ -54,6 +55,7 @@ struct ControllerRig {
                 if (pendingSlow) std::exchange(pendingSlow, nullptr)(Error{ErrorCode::Cancelled, u"Cancelled"_s});
             }));
         router.add(std::make_unique<ControlIntent>());
+        router.add(std::make_unique<TaskIntent>());
         router.add(std::make_unique<ScreenIntent>());
         // A model kind of the test's own: every instance the app makes takes the next script.
         providers.registerKind(u"scripted"_s, [this](const ProviderConfig &, HttpClient *) {
@@ -215,4 +217,65 @@ TEST_CASE("Sharing the screen is answered as a task, and Esc stops the reply in 
     CHECK(rig.controller->mission()->task(other)->state == TaskState::Running);
     rig.controller->panic();
     CHECK(rig.controller->mission()->task(other)->state == TaskState::Stopped);
+}
+
+TEST_CASE("Spoken or typed commands act on the board: stop one task, pause by number, approve only what waits") {
+    ControllerRig rig;
+    rig.scripts = {{}, {}, {}, {}, {}};     // every model hangs until told
+    rig.controller->start();
+    TaskRequest background;
+    background.text = u"keep thinking"_s;
+    const quint64 other = rig.controller->mission()->add(background);
+    const quint64 shown = rig.controller->submit(u"think about this"_s);
+    REQUIRE(QTest::qWaitFor([&rig] { return rig.controller->isReplying(); }, kWaitMs));
+
+    CHECK(rig.controller->submit(u"be quiet"_s) == 0);       // the voice only: nothing stops
+    CHECK(rig.controller->mission()->task(shown)->state == TaskState::Running);
+
+    CHECK(rig.controller->submit(u"pause task %1"_s.arg(other)) == 0);
+    CHECK(rig.controller->mission()->task(other)->state == TaskState::Paused);
+    CHECK(rig.controller->submit(u"stop"_s) == 0);            // the task in view
+    CHECK(rig.controller->mission()->task(shown)->state == TaskState::Stopped);
+    CHECK(rig.controller->mission()->task(other)->state == TaskState::Paused);
+
+    // "yes" with no question waiting is an answer for the model, as a request of its own.
+    const quint64 answer = rig.controller->submit(u"yes"_s);
+    CHECK(answer != 0);
+    QSignalSpy notices(rig.controller.get(), &AppController::replyNotice);
+    CHECK(rig.controller->submit(u"what are you doing"_s) == 0);
+    REQUIRE_FALSE(notices.isEmpty());
+    CHECK(notices.last().at(0).toString().contains(u"running"_s));
+    const qsizetype before = rig.controller->mission()->tasks().size();
+    CHECK(rig.controller->submit(u"add a task: write the release notes and send them"_s) == 0);
+    CHECK(rig.controller->mission()->tasks().size() == before + 1);
+    CHECK(rig.controller->mission()->tasks().last().text == u"write the release notes and send them"_s);
+    rig.controller->panic();
+}
+
+TEST_CASE("Yes approves the question a task waits on") {
+    ControllerRig rig;
+    rig.policy.setMode(PolicyMode::ConfirmAll);
+    rig.scripts = {{}, {Reply{{}, {ToolCall{u"c1"_s, u"run_command"_s, u"{}"_s}}, {}}, Reply{u"done"_s, {}, {}}}};
+    rig.controller->start();
+    const quint64 id = rig.controller->submit(u"run something"_s);
+    REQUIRE(QTest::qWaitFor([&rig] { return !rig.controller->mission()->approvals().isEmpty(); }, kWaitMs));
+    CHECK(rig.controller->submit(u"yes, do it"_s) == 0);
+    REQUIRE(QTest::qWaitFor([&rig, id] { return rig.controller->mission()->task(id)->state == TaskState::Done; }, kWaitMs));
+}
+
+TEST_CASE("A board task asked for by voice says when it is done; the chat's own reply does not") {
+    ControllerRig rig;
+    rig.scripts = {{}, {Reply{u"Chat answer."_s, {}, {}}}, {Reply{u"Board answer."_s, {}, {}}}};
+    rig.controller->start();
+    QSignalSpy announced(rig.controller.get(), &AppController::announced);
+    const quint64 chat = rig.controller->submit(u"what is the weather"_s, u"voice"_s);
+    REQUIRE(QTest::qWaitFor([&rig, chat] { return rig.controller->mission()->task(chat)->state == TaskState::Done; }, kWaitMs));
+    CHECK(announced.isEmpty());
+
+    const QList<quint64> board = rig.controller->addTasks({u"summarise my notes"_s}, std::nullopt, u"voice"_s);
+    REQUIRE(board.size() == 1);
+    REQUIRE(QTest::qWaitFor([&rig, &board] { return rig.controller->mission()->task(board.first())->state == TaskState::Done; },
+                            kWaitMs));
+    REQUIRE(announced.size() == 1);
+    CHECK(announced.at(0).at(0).toString().contains(u"is done"_s));
 }

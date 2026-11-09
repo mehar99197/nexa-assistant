@@ -18,6 +18,8 @@ class PairingManager;
 class PhoneLink;
 class RemoteServer;
 class SherpaRuntime;
+class SpeakerGate;
+class VoicePipeline;
 class SkillCatalog;
 
 // What the GUI needs to show about the parts of Nexa that live outside it: the root helper,
@@ -39,6 +41,8 @@ struct SystemStatus {
     MemoryStore *memory{nullptr};           // Settings → Memory
     SkillCatalog *skills{nullptr};          // Settings → Skills
     SherpaRuntime *sherpa{nullptr};         // instant spotting installed? (Settings → Voice)
+    VoicePipeline *voice{nullptr};          // records the owner's voice for enrolment
+    SpeakerGate *speakerGate{nullptr};      // and turns it into their profile
     std::function<QString()> microphoneSummary;     // "fine", or what is wrong with its sound
     std::function<void()> lowerMicrophone;          // Settings → Voice → Lower it
     // Settings → Providers → sign-in: a chat turn is in flight (opencode's event stream and agy's app-data folder

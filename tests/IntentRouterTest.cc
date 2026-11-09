@@ -1,4 +1,5 @@
 #include "core/intent/IntentRouter.h"
+#include "core/intent/MissionIntents.h"
 #include "core/intent/PcIntents.h"
 
 #include "QtStringMakers.h"
@@ -25,6 +26,7 @@ struct Fixture {
                                             u"media_control"_s, u"take_screenshot"_s, u"run_command"_s})
         : available(std::move(tools)), router([this](const QString &tool) { return available.contains(tool); }) {
         router.add(std::make_unique<ControlIntent>());
+        router.add(std::make_unique<TaskIntent>());
         router.add(std::make_unique<MediaIntent>());
         router.add(std::make_unique<AudioIntent>());
         router.add(std::make_unique<ScreenIntent>());
@@ -117,14 +119,29 @@ TEST_CASE("IntentRouter recognises media phrases but not bare chat words") {
     CHECK(action(u"back"_s) == u"<none>"_s);
 }
 
-TEST_CASE("IntentRouter treats stop words as panic") {
+TEST_CASE("IntentRouter tells stopping the talk, the task and everything apart") {
     Fixture f;
-    for (const QString &text : {u"stop"_s, u"Cancel."_s, u"never mind"_s, u"stop everything"_s, u"Nexa, stop!"_s}) {
+    const auto control = [&f](const QString &text) {
+        const auto match = f.router.route(text);
+        return match ? match->control : Control::None;
+    };
+    for (const QString &text : {u"stop everything"_s, u"Nexa, stop all!"_s, u"panic"_s, u"halt"_s, u"stop all tasks"_s}) {
         INFO(text.toStdString());
         const auto match = f.router.route(text);
         REQUIRE(match.has_value());
         CHECK(match->panic);
     }
+    for (const QString &text : {u"stop talking"_s, u"Be quiet."_s, u"shut up"_s, u"hush"_s, u"that's enough"_s,
+                                u"Nexa, stop speaking"_s}) {
+        INFO(text.toStdString());
+        CHECK(control(text) == Control::StopSpeaking);
+    }
+    for (const QString &text : {u"stop"_s, u"Cancel."_s, u"never mind"_s, u"Nexa, stop!"_s, u"cancel that"_s}) {
+        INFO(text.toStdString());
+        CHECK(control(text) == Control::StopTask);
+        CHECK_FALSE(f.router.route(text)->panic);
+    }
+    CHECK(f.router.route(u"stop the music"_s)->toolName == u"media_control"_s);
 }
 
 TEST_CASE("IntentRouter sends screen questions to the model with a screenshot") {
@@ -235,4 +252,48 @@ TEST_CASE("The word type only starts typing when it means typing") {
     // But a real instruction still works, even one that starts with a different word.
     CHECK(toolOf(f.router, u"type offer accepted"_s) == u"type_text"_s);
     CHECK(toolOf(f.router, u"type out my address"_s) == u"type_text"_s);
+}
+
+TEST_CASE("Tasks are paused, resumed, stopped, approved and asked about by voice") {
+    Fixture f;
+    const auto routed = [&f](const QString &text) { return f.router.route(text); };
+    const auto pause2 = routed(u"pause task two"_s);
+    REQUIRE(pause2);
+    CHECK(pause2->control == Control::PauseTask);
+    CHECK(pause2->target == u"2"_s);
+    CHECK(routed(u"Pause the browser task"_s)->target == u"browser"_s);
+    CHECK(routed(u"resume the code agent"_s)->control == Control::ResumeTask);
+    CHECK(routed(u"resume the code agent"_s)->target == u"code"_s);
+    CHECK(routed(u"stop browser 01"_s)->control == Control::StopTask);
+    CHECK(routed(u"stop browser 01"_s)->target == u"browser 01"_s);
+    CHECK(routed(u"cancel task 3"_s)->target == u"3"_s);
+    CHECK(routed(u"pause all tasks"_s)->control == Control::PauseAll);
+    CHECK(routed(u"resume everything"_s)->control == Control::ResumeAll);
+    for (const QString &text : {u"approve"_s, u"Yes, do it"_s, u"go ahead"_s, u"allow it"_s, u"yes"_s}) {
+        INFO(text.toStdString());
+        CHECK(routed(text)->control == Control::Approve);
+    }
+    for (const QString &text : {u"deny"_s, u"No, don't"_s, u"don't do it"_s, u"no"_s}) {
+        INFO(text.toStdString());
+        CHECK(routed(text)->control == Control::Deny);
+    }
+    for (const QString &text : {u"what are you doing?"_s, u"status"_s, u"how are my tasks going"_s, u"what's running"_s}) {
+        INFO(text.toStdString());
+        CHECK(routed(text)->control == Control::Status);
+    }
+    const auto add = routed(u"add a task: write unit tests and run them"_s);
+    REQUIRE(add);
+    CHECK(add->control == Control::AddTask);
+    CHECK(add->target == u"write unit tests and run them"_s);
+    CHECK(routed(u"that's all"_s)->control == Control::EndConversation);
+    CHECK(routed(u"go to sleep"_s)->control == Control::EndConversation);
+
+    // Ordinary talk is not a command.
+    for (const QString &text : {u"pause the video"_s, u"no problem, thanks"_s, u"yes I know the answer is four"_s,
+                                u"what are you doing tomorrow in Lahore"_s, u"add salt to the task list on my phone app"_s,
+                                u"stop the music"_s}) {
+        INFO(text.toStdString());
+        const auto match = routed(text);
+        CHECK((!match || match->control == Control::None));
+    }
 }

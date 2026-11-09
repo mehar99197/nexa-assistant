@@ -52,6 +52,16 @@ Not to be confused with Nexa Download Manager: this is a separate program, named
   voice come from the provider you pick in Settings → Voice (Groq's whisper, for example), with
   whisper.cpp and Piper as the offline fallback. Nexa says when the microphone is overloaded and can
   lower its input volume for you.
+- **Listens to you, not the room** — enrol your voice once (Settings → Voice → My voice: read three sentences)
+  and Nexa answers hands-free to your voice alone: a TV, someone else or its own speakers saying "Nexa" are
+  ignored, and a stranger's sentence is not even transcribed. Pressing Talk always works. A wake word the words
+  do not confirm asks nothing, and "next", "Max" or "Rex" are no longer taken for "Nexa". By default only its
+  name interrupts Nexa while it speaks, so it never interrupts itself.
+- **Voice control** — "stop talking" stops the voice and leaves the work going; "stop" stops the task you are
+  looking at, "stop everything" every task. "Pause task two", "resume the code agent", "approve" / "deny" (when a
+  task waits for you), "what are you doing?", "add a task: …". With **Keep the conversation going** on, Nexa
+  keeps listening to you after each reply until you say "that's all", and tasks on the board say aloud when they
+  are done or need you.
 - **Controls your phone** (over USB or Wi-Fi, no app on the phone) — opens apps, taps, swipes and
   types, takes screenshots and describes them, reads notifications and text messages, starts calls
   and messages, controls music and volume, and copies files both ways. While a phone is connected, a

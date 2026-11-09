@@ -1,10 +1,11 @@
 #!/usr/bin/env bash
 # Installs sherpa-onnx (k2-fsa, v2.0.1, x86_64) and the models Nexa uses with it into ~/.local/share/nexa/sherpa:
-# the keyword spotter that hears the wake name (gigaspeech 3.3M, int8), the Silero voice detector, and the GTCRN
-# noise reducer. Nexa loads the library at run time; without it, the wake name is found by whisper alone and
+# the keyword spotter that hears the wake name (gigaspeech 3.3M, int8), the Silero voice detector, the GTCRN
+# noise reducer, and the speaker-embedding model that tells the owner's voice from others (3D-Speaker ERes2Net,
+# VoxCeleb). Nexa loads the library at run time; without it, the wake name is found by whisper alone and
 # speech is told by loudness. No sudo.
 #
-#   scripts/download-sherpa.sh              # install (about 27 MB of downloads)
+#   scripts/download-sherpa.sh              # install (about 53 MB of downloads)
 #   scripts/download-sherpa.sh --uninstall  # remove ~/.local/share/nexa/sherpa
 set -euo pipefail
 
@@ -29,10 +30,14 @@ KWS_ARCHIVE="$KWS_NAME.tar.bz2"
 KWS_SHA256="f170013b4716e41b62b9bfd809687c207cef798ef9bc6534d524e17af9b6561a"
 SILERO_SHA256="9e2449e1087496d8d4caba907f23e0bd3f78d91fa552479bb9c23ac09cbb1fd6"
 GTCRN_SHA256="e77603ac0c23dac3227dd2d7135b3a585cbee2679048aecfa886657d3ae1b534"
+SPEAKER_MODEL="3dspeaker_speech_eres2net_sv_en_voxceleb_16k.onnx"
+# GitHub lists no digest for this release's assets: pinned to the file downloaded on 2026-11-10 (26 485 263 bytes, the
+# size the release lists).
+SPEAKER_SHA256="c59158379255ad66e161679cca6af8d52d51e389e3224ab7d7a7baae295c2db5"
 KWS_FILES=(encoder-epoch-12-avg-2-chunk-16-left-64.int8.onnx decoder-epoch-12-avg-2-chunk-16-left-64.int8.onnx
            joiner-epoch-12-avg-2-chunk-16-left-64.int8.onnx tokens.txt bpe.model)
 
-mkdir -p "$DEST/lib" "$DEST/kws" "$CACHE"
+mkdir -p "$DEST/lib" "$DEST/kws" "$DEST/speaker" "$CACHE"
 
 # Downloads $1 to $2 unless it is already there, then checks the SHA-256 $3.
 fetch() {
@@ -72,5 +77,7 @@ install -m 0644 "$CACHE/silero_vad.onnx" "$DEST/silero_vad.onnx"
 fetch "$RELEASES/speech-enhancement-models/gtcrn_simple.onnx" "$CACHE/gtcrn_simple.onnx" "$GTCRN_SHA256"
 install -m 0644 "$CACHE/gtcrn_simple.onnx" "$DEST/gtcrn_simple.onnx"
 
+fetch "$RELEASES/speaker-recongition-models/$SPEAKER_MODEL" "$CACHE/$SPEAKER_MODEL" "$SPEAKER_SHA256"
+install -m 0644 "$CACHE/$SPEAKER_MODEL" "$DEST/speaker/$SPEAKER_MODEL"
 echo "Installed sherpa-onnx 2.0.1 and its models into $DEST"
-echo "Restart Nexa (or close Settings with OK) to use instant name spotting, Silero and noise reduction."
+echo "Restart Nexa (or close Settings with OK) to use instant name spotting, Silero, noise reduction and your voice."

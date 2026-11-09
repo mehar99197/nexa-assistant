@@ -25,6 +25,10 @@ public:
     QString kwsDir() const;         // the keyword spotter: encoder, decoder, joiner, tokens.txt, bpe.model
     QString sileroModel() const;
     QString gtcrnModel() const;
+    QString speakerModel() const;   // the speaker-embedding model (speaker/…onnx)
+    // The owner's voice can be told: the library has the speaker-embedding functions and the model is installed.
+    // Optional — without it the spotter, Silero and the noise reducer still work.
+    bool canTellSpeakers() const { return loaded_ && speakers_; }
 
     // The keyword spotter.
     decltype(&SherpaOnnxCreateKeywordSpotter) createKeywordSpotter{nullptr};
@@ -53,12 +57,22 @@ public:
     decltype(&SherpaOnnxOnlineSpeechDenoiserRun) runDenoiser{nullptr};
     decltype(&SherpaOnnxOnlineSpeechDenoiserReset) resetDenoiser{nullptr};
     decltype(&SherpaOnnxDestroyDenoisedAudio) destroyDenoisedAudio{nullptr};
+    // Speaker embeddings (whose voice it is).
+    decltype(&SherpaOnnxCreateSpeakerEmbeddingExtractor) createSpeakerExtractor{nullptr};
+    decltype(&SherpaOnnxDestroySpeakerEmbeddingExtractor) destroySpeakerExtractor{nullptr};
+    decltype(&SherpaOnnxSpeakerEmbeddingExtractorDim) speakerDim{nullptr};
+    decltype(&SherpaOnnxSpeakerEmbeddingExtractorCreateStream) speakerCreateStream{nullptr};
+    decltype(&SherpaOnnxSpeakerEmbeddingExtractorIsReady) speakerIsReady{nullptr};
+    decltype(&SherpaOnnxSpeakerEmbeddingExtractorComputeEmbedding) speakerCompute{nullptr};
+    decltype(&SherpaOnnxSpeakerEmbeddingExtractorDestroyEmbedding) speakerDestroyEmbedding{nullptr};
+    decltype(&SherpaOnnxOnlineStreamInputFinished) inputFinished{nullptr};
 
 private:
     QString dir_;
     QLibrary library_;
     bool attempted_{false};
     bool loaded_{false};
+    bool speakers_{false};
     QString problem_;
 };
 

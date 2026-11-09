@@ -16,10 +16,28 @@ struct IntentInput {
     QString raw;
 };
 
+// A command about Nexa itself or the tasks on its board, not a tool (AppController carries it out).
+enum class Control {
+    None,
+    StopSpeaking,       // "stop talking", "be quiet": the voice stops, the work goes on
+    StopTask,           // "stop", "cancel", "stop task two": one task (`target`; none: the one in view)
+    PauseTask,
+    ResumeTask,
+    PauseAll,
+    ResumeAll,
+    Approve,            // "yes, do it": the question a task waits on (when none waits, it is ordinary talk)
+    Deny,
+    Status,             // "what are you doing?": a sentence about the board
+    AddTask,            // "add a task: …" (`target` holds the task's words)
+    EndConversation,    // "that's all", "go to sleep": the conversation by voice ends
+};
+
 struct IntentMatch {
     QString toolName;           // empty for control intents
     QJsonObject arguments;
-    bool panic{false};          // "stop", "cancel": stop everything instead of running a tool
+    bool panic{false};          // "stop everything", "panic": stop everything instead of running a tool
+    Control control{Control::None};
+    QString target;             // which task ("2", "browser", "browser 01"), or AddTask's words
     bool forwardToAgent{false}; // run the tool, then let the model answer with its result attached
     QString agentPrompt;        // what the model is asked when forwarding
     bool verbatimPayload{false};// the payload is user text (a command, text to type): skip the compound check

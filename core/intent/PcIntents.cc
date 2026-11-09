@@ -23,10 +23,19 @@ IntentMatch toolMatch(const QString &tool, const QJsonObject &arguments) {
 } // namespace
 
 std::optional<IntentMatch> ControlIntent::match(const IntentInput &input) const {
-    static const QRegularExpression expression(
-        u"^(?:stop|cancel|abort|panic|halt|stop everything|stop it|shut up|be quiet|quiet|never ?mind|forget it)$"_s);
-    if (!expression.match(input.normalized).hasMatch()) return std::nullopt;
-    return IntentMatch{.panic = true};
+    // Everything: every task, every tool, every child process.
+    static const QRegularExpression everything(
+        u"^(?:stop (?:everything|all(?: (?:tasks|agents))?|it all)|panic|halt|emergency stop|kill everything)$"_s);
+    // The voice only: the work goes on.
+    static const QRegularExpression talking(
+        u"^(?:stop (?:talking|speaking|reading)|be quiet|quiet|shut up|hush|silence|(?:that'?s )?enough|"
+        "(?:ok(?:ay)?,? )?(?:you can )?stop talking)$"_s);
+    // The task in view.
+    static const QRegularExpression task(u"^(?:stop|cancel|abort|stop (?:it|that)|cancel (?:it|that)|never ?mind|forget it)$"_s);
+    if (everything.match(input.normalized).hasMatch()) return IntentMatch{.panic = true};
+    if (talking.match(input.normalized).hasMatch()) return IntentMatch{.control = Control::StopSpeaking};
+    if (task.match(input.normalized).hasMatch()) return IntentMatch{.control = Control::StopTask};
+    return std::nullopt;
 }
 
 std::optional<IntentMatch> MediaIntent::match(const IntentInput &input) const {

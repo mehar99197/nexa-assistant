@@ -15,6 +15,7 @@
 #include "core/config/ConfigStore.h"
 #include "core/intent/IntentRouter.h"
 #include "core/intent/MemoryIntents.h"
+#include "core/intent/MissionIntents.h"
 #include "core/intent/PcIntents.h"
 #include "core/intent/PhoneIntents.h"
 #include "core/net/HttpClient.h"
@@ -59,6 +60,7 @@
 #include "voice/capture/AudioCapture.h"
 #include "voice/capture/AudioConverter.h"
 #include "voice/capture/RecordedAudioInput.h"
+#include "voice/listen/SpeakerGate.h"
 #include "voice/pipeline/VoicePipeline.h"
 #include "voice/wake/SherpaRuntime.h"
 
@@ -339,6 +341,9 @@ int main(int argc, char *argv[]) {
         microphone = std::move(played);
     }
     VoicePipeline voice(microphone.get());
+    // Whose voice it is: hands-free requests go on only in the owner's, once it is enrolled (Settings → Voice).
+    SpeakerGate speakerGate(&sherpa);
+    voice.setSpeakerGate(&speakerGate);
     registerVoiceTools(tools, &voice);
     panic.addHandler([&voice] { voice.cancel(); });
 
@@ -366,6 +371,7 @@ int main(int argc, char *argv[]) {
     // Fast path (no model) for common phrases; order = priority
     IntentRouter router([&tools](const QString &tool) { return tools.contains(tool); });
     router.add(std::make_unique<ControlIntent>());
+    router.add(std::make_unique<TaskIntent>());      // the mission board: "pause task two", "approve", "status"
     router.add(std::make_unique<MemoryIntent>());    // after the stops: "forget it" stays one
     router.add(std::make_unique<PhoneIntent>());     // before the PC's: "open youtube on my phone"
     router.add(std::make_unique<MediaIntent>());
@@ -388,6 +394,7 @@ int main(int argc, char *argv[]) {
                     .http = &http,
                     .microphoneVolume = &microphoneVolume,
                     .sherpa = &sherpa,
+                    .speakerGate = &speakerGate,
                     .context = &appContext,
                     // Typing goes to the window with the keyboard: when that is Nexa's own, it
                     // must not be done.
@@ -486,6 +493,8 @@ int main(int argc, char *argv[]) {
                                    .memory = &memory,
                                    .skills = &skills,
                                    .sherpa = &sherpa,
+                                   .voice = &voice,
+                                   .speakerGate = &speakerGate,
                                    .microphoneSummary =
                                        [&voice] {
                                            const QString trouble = voice.microphoneTrouble();

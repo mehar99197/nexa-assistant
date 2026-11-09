@@ -22,6 +22,8 @@ struct TimedWord {
 struct TimedTranscript {
     QString text;
     QList<TimedWord> words;
+    double noSpeech{0};         // whisper: how likely the audio holds no speech (0 … 1); 0 when unknown
+    double confidence{1};       // whisper: the mean probability of the words it wrote (0 … 1); 1 when unknown
 };
 
 // Speech → text (Strategy): local whisper.cpp or a cloud endpoint.

@@ -31,6 +31,7 @@ qt_add_executable(nexa_assistant
     TaskListModel.h TaskListModel.cc
     TaskStrip.h TaskStrip.cc
     TaskTranscriptDrawer.h TaskTranscriptDrawer.cc
+    VoiceEnrolmentDialog.h VoiceEnrolmentDialog.cc
 )
 
 set_target_properties(nexa_assistant PROPERTIES OUTPUT_NAME nexa-assistant)

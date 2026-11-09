@@ -107,10 +107,11 @@ TEST_CASE("Chat about remembering and forgetting is left to the model") {
     none(u"forget everything"_s);
     none(u"what do you know about quantum physics"_s);
     none(u"can you remember things?"_s);
-    // "forget it" is still a stop.
+    // "forget it" is still a stop — of the task in view (M19), not a panic.
     const auto stop = f.router.route(u"forget it"_s);
     REQUIRE(stop.has_value());
-    CHECK(stop->panic);
+    CHECK(stop->control == Control::StopTask);
+    CHECK_FALSE(stop->panic);
 }
 
 TEST_CASE("With memory off, its phrases go to the model") {

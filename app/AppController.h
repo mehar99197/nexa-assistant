@@ -10,6 +10,7 @@
 #include "core/tools/ToolExecutor.h"
 #include "ui/NexaCoreSpec.h"
 
+#include <QElapsedTimer>
 #include <QHash>
 #include <QObject>
 #include <QSet>
@@ -33,6 +34,7 @@ class ToolRegistry;
 class VoicePipeline;
 class WpctlAudioController;
 class SherpaRuntime;
+class SpeakerGate;
 class MicrophoneLeveler;
 
 // Everything the controller coordinates; owned by the composition root (app/main.cc).
@@ -48,6 +50,7 @@ struct AppServices {
     HttpClient *http{nullptr};          // for the cloud voice backends
     WpctlAudioController *microphoneVolume{nullptr};    // the input's volume, for "Lower it" only
     SherpaRuntime *sherpa{nullptr};     // the spotter, Silero and noise reduction, when installed
+    SpeakerGate *speakerGate{nullptr};  // whose voice it is (the owner's profile, Settings → Voice)
     AppContext *context{nullptr};       // the app the user is in (filled by open_app, close_app)
     std::function<bool()> windowActive; // Nexa's own window has the keyboard focus
     std::function<bool()> canType;      // an input backend can type (the helper, or the portal)
@@ -165,6 +168,7 @@ signals:
     void busyChanged(bool busy);                    // the board: something runs or waits
     void replyingChanged(bool replying);            // the reply in view started or ended
     void lastHeardChanged(const QString &text);
+    void announced(const QString &sentence);        // a board task said aloud that it ended or needs the user
     void conversationCleared();
     void panicked();
     void microphoneOverloaded(const QString &notice);   // with a "Lower it" button beside it
@@ -175,6 +179,12 @@ signals:
     void appContextChanged(const QString &name, const QString &hint);
 
 private:
+    bool handlesControl(const IntentMatch &match) const;
+    void carryOut(const IntentMatch &match, const QString &source);
+    void acknowledge(const QString &text, const QString &source);
+    bool shouldAnnounce(const Task &task) const;
+    void announce(const QString &sentence);
+    void sayNextAnnouncement();
     void onTaskAdded(quint64 id);
     void onTaskFinished(quint64 id, FinishReason reason, bool empty);
     void onTaskFailed(quint64 id, const Error &error);
@@ -218,6 +228,10 @@ private:
     QList<quint64> backlog_;                    // finished in the background; shown once the chat is free
     bool replying_{false};
     bool addingToBoard_{false};
+    QSet<quint64> boardOnly_;                   // tasks added to the board (Add tasks, "add a task"): not the chat's
+    QStringList announcements_;
+    QTimer announcer_;
+    QElapsedTimer lastAnnouncement_;
     QString lastHeard_;
     CoreActivity activity_;
     CoreMode coreMode_{CoreMode::Idle};

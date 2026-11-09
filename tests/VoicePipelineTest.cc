@@ -6,6 +6,7 @@
 #include "voice/capture/MicrophoneCheck.h"
 #include "voice/listen/EnergyVoiceDetector.h"
 #include "voice/listen/IAudioFilter.h"
+#include "voice/listen/ISpeakerGate.h"
 #include "voice/listen/ListeningFront.h"
 #include "voice/pipeline/VoicePipeline.h"
 #include "voice/stt/ISpeechRecognizer.h"
@@ -276,7 +277,7 @@ TEST_CASE("Pressing the key while Nexa talks cuts the speech and replaces the re
 
 TEST_CASE("Barge-in by voice stops the speech when enabled") {
     Rig rig;
-    rig.pipeline.setSettings({.bargeIn = true});
+    rig.pipeline.setSettings({.bargeIn = VoicePipeline::BargeIn::Speech});
     rig.pipeline.speak(u"Here is a long story."_s);
     CHECK(rig.pipeline.state() == VoiceState::Speaking);
     CHECK(rig.microphone.active);       // listening for the user while speaking
@@ -576,7 +577,7 @@ TEST_CASE("A hit while speaking stops the speech; Nexa's own name in its speech 
     rig.microphone.play(testaudio::quiet(1000) + testaudio::speech(1200));
     CHECK(rig.pipeline.state() == VoiceState::Listening);
     CHECK(rig.voice->stops >= 1);
-    CHECK(rig.interrupts == 1);
+    CHECK(rig.interrupts == 0);     // the reply goes on until the words confirm the name
 
     SpotterRig own(u"HEY_NEXA"_s, 15 * kSecond / 10);
     own.pipeline.onReplyStarted(u"voice"_s);
@@ -757,4 +758,105 @@ TEST_CASE("Failures are reported and leave the pipeline idle") {
     rig.pipeline.startListening(false);
     CHECK(notices.size() == 3);
     CHECK_FALSE(rig.pipeline.canListen());
+}
+
+TEST_CASE("With interruption by name, talking over Nexa does nothing; with none, not even the name") {
+    Rig rig;        // barge-in by name, the default
+    rig.pipeline.speak(u"Here is a long story."_s);
+    REQUIRE(rig.pipeline.state() == VoiceState::Speaking);
+    CHECK_FALSE(rig.microphone.active);         // no wake word: nothing to listen for while it speaks
+    rig.microphone.play(testaudio::quiet(800) + testaudio::speech(700));
+    CHECK(rig.voice->speaking);
+    CHECK(rig.pipeline.state() == VoiceState::Speaking);
+
+    SpotterRig off(u"HEY_NEXA"_s, 15 * kSecond / 10);
+    off.pipeline.setSettings({.wakeWord = true, .bargeIn = VoicePipeline::BargeIn::Off});
+    off.pipeline.onReplyStarted(u"voice"_s);
+    off.pipeline.onReplyDelta(u"The weather is fine today. It is"_s);
+    REQUIRE(off.pipeline.state() == VoiceState::Speaking);
+    off.microphone.play(testaudio::quiet(1000) + testaudio::speech(1200));
+    CHECK(off.pipeline.state() == VoiceState::Speaking);
+}
+
+TEST_CASE("A spotter hit the words do not confirm is dropped, and the reply it heard over goes on") {
+    SpotterRig rig(u"HEY_NEXA"_s, 2 * kSecond);
+    rig.pipeline.onReplyStarted(u"gui"_s);          // a reply still being written
+    rig.microphone.play(testaudio::quiet(1000) + talking(2000));
+    CHECK(rig.pipeline.state() == VoiceState::Listening);
+    rig.microphone.play(talking(1000) + testaudio::quiet(1600));
+    REQUIRE(rig.recognizer->pending());
+    rig.recognizer->answer(u"and that is the news for tonight"_s);
+    CHECK(rig.requests.isEmpty());
+    CHECK(rig.interrupts == 0);
+    CHECK(rig.pipeline.state() == VoiceState::Idle);
+
+    SpotterRig greeted(u"HEY_NEXA"_s, 2 * kSecond);
+    greeted.microphone.play(testaudio::quiet(1000) + talking(3000) + testaudio::quiet(1600));
+    REQUIRE(greeted.recognizer->pending());
+    greeted.recognizer->answer(u"Hey Necks, what time is it?"_s);     // the name spelled otherwise, a greeting first
+    CHECK(greeted.requests.size() == 1);
+}
+
+namespace {
+
+// Says, per recording, whether it is the owner's — later, as the real gate does on its thread.
+class ScriptedGate : public ISpeakerGate {
+public:
+    bool active() const override { return on; }
+    void check(const QByteArray &, std::function<void(bool, double)> done) override {
+        ++checks;
+        const bool owner = owners.isEmpty() ? true : owners.takeFirst();
+        QTimer::singleShot(0, this, [done = std::move(done), owner] { done(owner, owner ? 0.8 : 0.1); });
+    }
+    bool on{true};
+    QList<bool> owners;     // the next answers; true once they run out
+    int checks{0};
+};
+
+} // namespace
+
+TEST_CASE("Only the owner's voice: a stranger's follow-up, name and sentence go nowhere; Talk is never asked") {
+    // A follow-up from someone else.
+    Rig rig;
+    ScriptedGate gate;
+    rig.pipeline.setSpeakerGate(&gate);
+    QSignalSpy strangers(&rig.pipeline, &VoicePipeline::strangerIgnored);
+    rig.pipeline.setSettings({.followUpMs = 2000});
+    askAndHear(rig);                        // pressed Talk: not asked
+    CHECK(gate.checks == 0);
+    QTest::qWait(250);
+    REQUIRE(rig.pipeline.state() == VoiceState::Listening);
+    gate.owners = {false};
+    rig.microphone.play(testaudio::quiet(500) + testaudio::speech(800) + testaudio::quiet(1600));
+    REQUIRE(QTest::qWaitFor([&gate] { return gate.checks == 1; }, 2000));
+    QTest::qWait(50);
+    CHECK(rig.recognizer->requests == 1);   // only the first, the owner's own
+    CHECK(strangers.size() == 1);
+    CHECK(rig.pipeline.state() == VoiceState::Idle);
+
+    // The name, said by someone else: the spotter's capture is dropped before any recogniser hears it.
+    SpotterRig spotted(u"HEY_NEXA"_s, 2 * kSecond);
+    ScriptedGate other;
+    other.owners = {false};
+    spotted.pipeline.setSpeakerGate(&other);
+    spotted.microphone.play(testaudio::quiet(1000) + talking(3000) + testaudio::quiet(1600));
+    REQUIRE(QTest::qWaitFor([&other] { return other.checks == 1; }, 2000));
+    QTest::qWait(50);
+    CHECK_FALSE(spotted.recognizer->pending());
+    CHECK(spotted.requests.isEmpty());
+
+    // A sentence in the room from a stranger: the second net does not even transcribe it.
+    WakeRig room;
+    ScriptedGate tv;
+    tv.owners = {false};
+    room.pipeline.setSpeakerGate(&tv);
+    room.pipeline.setSettings({.wakeWord = true});
+    room.microphone.play(testaudio::quiet(800) + testaudio::speech(900) + testaudio::quiet(1200));
+    REQUIRE(QTest::qWaitFor([&tv] { return tv.checks == 1; }, 2000));
+    QTest::qWait(50);
+    CHECK(room.local->requests == 0);
+    // …and the owner's next sentence is checked and transcribed.
+    room.microphone.play(testaudio::speech(900) + testaudio::quiet(1200));
+    REQUIRE(QTest::qWaitFor([&room] { return room.local->pending(); }, 2000));
+    CHECK(tv.checks == 2);
 }

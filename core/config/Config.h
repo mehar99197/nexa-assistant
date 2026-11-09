@@ -53,7 +53,9 @@ struct VoiceConfig {
     double ttsRate{0.0};                                // -1 (slow) … 1 (fast)
     QString speakReplies{QStringLiteral("voice")};      // voice (replies to spoken requests) | always | never
     bool wakeWord{false};                               // listen for the wake name (local recognition only)
-    bool bargeIn{false};                                // talking interrupts the speech (best with headphones)
+    // What interrupts Nexa while it speaks: name (saying its name — the owner's voice, not the speakers'), speech (any
+    // voice: with headphones only, or Nexa hears itself) or off. Until v5 a switch: on and off both became "name".
+    QString bargeIn{QStringLiteral("name")};
     QString wakeName{QStringLiteral("Nexa")};           // what the owner calls Nexa ("Hey Jarvis")
     QString wakeSensitivity{QStringLiteral("normal")};  // low | normal | high: how easily the name wakes Nexa
     QString endPause{QStringLiteral("normal")};         // short (0.9 s) | normal (1.4 s) | long (2 s) of quiet ends a request
@@ -61,6 +63,10 @@ struct VoiceConfig {
     bool noiseReduction{true};                          // clean the sound for the speech detector and the spotter
     QString sttProvider;                                // the provider that recognises requests; empty: automatic
     QString ttsProvider;                                // the provider whose voice speaks; empty: automatic
+    QString listenTo{QStringLiteral("owner")};          // owner (once the voice is enrolled) | anyone
+    QString ownerStrictness{QStringLiteral("normal")};  // low | normal | high: how sure "it is the owner" must be
+    bool conversation{false};                           // keep listening to the owner after each reply, no name needed
+    QString announceTasks{QStringLiteral("voice")};     // off | voice (tasks asked by voice) | all: said aloud when they end
 
     QJsonObject toJson() const;
     static VoiceConfig fromJson(const QJsonObject &json);

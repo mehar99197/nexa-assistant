@@ -28,6 +28,9 @@ add_executable(nexa_tests
     TaskTest.cc
     TaskTranscriptTest.cc
     TaskRunnerTest.cc
+    TaskTargetTest.cc
+    WhisperGateTest.cc
+    SpeakerGateTest.cc
     ProcessStatsTest.cc
     MissionControlTest.cc
     SignInPresenterTest.cc
@@ -82,7 +85,7 @@ add_executable(nexa_tests
     # The dialog itself, for the sign-in block it holds per program row, built from app/ with its pages.
     SettingsDialogProvidersTest.cc ../app/SettingsDialog.cc ../app/BrowserSettingsPage.cc
         ../app/MemorySettingsPage.cc ../app/MissionSettingsPage.cc ../app/SkillsSettingsPage.cc ../app/PhoneLink.cc
-        ../app/GlobalShortcuts.cc
+        ../app/GlobalShortcuts.cc ../app/VoiceEnrolmentDialog.cc
     SkillCatalogTest.cc
     SkillParserTest.cc
     PortalInputBackendTest.cc

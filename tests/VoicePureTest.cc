@@ -303,10 +303,14 @@ TEST_CASE("WakeWordDetector finds any name anywhere") {
     CHECK_FALSE(nexa.find(u"Nexa open files"_s)->greeted);
     for (const QString &text : {u"Next song please"_s, u"The Nexus phone is really good"_s, u"I need an extra hour"_s,
                                 u"I told Nexa nothing"_s, u"Hey Nick, can you pass the salt?"_s,
-                                u"Hey, can you hear me?"_s}) {
+                                u"Hey, can you hear me?"_s,
+                                // One sound away from "Nexa", but another word: a greeting before them is common talk.
+                                u"Okay, next song please"_s, u"Hey Max, come here"_s, u"Hey Rex, sit"_s,
+                                u"Hi six people came"_s, u"OK next one"_s}) {
         INFO(text.toStdString());
         CHECK_FALSE(nexa.find(text));
     }
+    CHECK(nexa.find(u"Hey Nexer, lights off"_s));       // a recogniser's slip of the name itself still counts
 
     const WakeWordDetector jarvis(u"Jarvis"_s);
     CHECK(jarvis.find(u"Hey Jervis, open YouTube"_s)->command == u"open YouTube"_s);
@@ -386,6 +390,23 @@ TEST_CASE("cleanTranscript drops non-speech annotations") {
     CHECK(cleanTranscript(u" ..."_s).isEmpty());
     CHECK(cleanTranscript(u"  Open   the [noise] calculator. "_s) == u"Open the calculator."_s);
     CHECK(cleanTranscript(u"*laughs* Pause it"_s) == u"Pause it"_s);
+}
+
+TEST_CASE("What whisper makes up from noise is not a request") {
+    for (const QString &made : {u"Thank you."_s, u"Thanks for watching!"_s, u" you "_s, u"Thank you for watching."_s,
+                                u"Subtitles by the Amara.org community"_s, u"Bye."_s, u"Please subscribe."_s}) {
+        INFO(made.toStdString());
+        CHECK(looksMadeUp(made));
+        CHECK(cleanTranscript(made).isEmpty());
+    }
+    // The prompt it was given, read back from silence.
+    CHECK(looksMadeUp(u"Hey Nexa. Ammi ko call karo. Volume kam karo."_s));
+    for (const QString &said : {u"Thank you, now open Firefox"_s, u"you can turn it down"_s, u"open YouTube"_s,
+                                u"Ammi ko call karo"_s}) {
+        INFO(said.toStdString());
+        CHECK_FALSE(looksMadeUp(said));
+        CHECK_FALSE(cleanTranscript(said).isEmpty());
+    }
 }
 
 TEST_CASE("MultipartForm builds a form-data body") {

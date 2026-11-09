@@ -101,6 +101,10 @@ QJsonObject VoiceConfig::toJson() const {
         {u"speakReplies"_s, speakReplies},
         {u"wakeWord"_s, wakeWord},
         {u"bargeIn"_s, bargeIn},
+        {u"listenTo"_s, listenTo},
+        {u"ownerStrictness"_s, ownerStrictness},
+        {u"conversation"_s, conversation},
+        {u"announceTasks"_s, announceTasks},
         {u"wakeName"_s, wakeName},
         {u"wakeSensitivity"_s, wakeSensitivity},
         {u"endPause"_s, endPause},
@@ -123,7 +127,18 @@ VoiceConfig VoiceConfig::fromJson(const QJsonObject &json) {
     config.ttsRate = std::clamp(json.value(u"ttsRate"_s).toDouble(0.0), -1.0, 1.0);
     config.speakReplies = json.value(u"speakReplies"_s).toString(defaults.speakReplies);
     config.wakeWord = json.value(u"wakeWord"_s).toBool(false);
-    config.bargeIn = json.value(u"bargeIn"_s).toBool(false);
+    // A switch before v5: off still let the name stop the speech, on let any voice — Nexa's own included.
+    const QJsonValue bargeIn = json.value(u"bargeIn"_s);
+    if (bargeIn.isString() && QStringList{u"name"_s, u"speech"_s, u"off"_s}.contains(bargeIn.toString())) {
+        config.bargeIn = bargeIn.toString();
+    }
+    const QString listenTo = json.value(u"listenTo"_s).toString(config.listenTo);
+    if (listenTo == u"owner"_s || listenTo == u"anyone"_s) config.listenTo = listenTo;
+    const QString strictness = json.value(u"ownerStrictness"_s).toString(config.ownerStrictness);
+    if (QStringList{u"low"_s, u"normal"_s, u"high"_s}.contains(strictness)) config.ownerStrictness = strictness;
+    config.conversation = json.value(u"conversation"_s).toBool(false);
+    const QString announce = json.value(u"announceTasks"_s).toString(config.announceTasks);
+    if (QStringList{u"off"_s, u"voice"_s, u"all"_s}.contains(announce)) config.announceTasks = announce;
     const QString name = json.value(u"wakeName"_s).toString().trimmed();
     config.wakeName = name.isEmpty() ? defaults.wakeName : name;
     const QString sensitivity = json.value(u"wakeSensitivity"_s).toString();

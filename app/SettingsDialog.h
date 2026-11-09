@@ -103,6 +103,7 @@ private:
     void testConnection();
     void showTestResult(const QString &text, bool ok);
     void storeVoice();
+    void refreshMyVoice();
     void refreshVoiceProviders();       // the provider lists, from the providers as they are now
     void showCloudProvider(bool recognition);
     void keepCloudModels();             // the shown provider's model (and voice) back into its settings
@@ -152,7 +153,14 @@ private:
     QSlider *rateSlider_{nullptr};
     QComboBox *speakCombo_{nullptr};
     QCheckBox *wakeCheck_{nullptr};
-    QCheckBox *bargeInCheck_{nullptr};
+    QComboBox *bargeInCombo_{nullptr};
+    QCheckBox *conversationCheck_{nullptr};
+    QComboBox *announceCombo_{nullptr};
+    QComboBox *listenToCombo_{nullptr};
+    QComboBox *strictnessCombo_{nullptr};
+    QLabel *myVoiceStatus_{nullptr};
+    QPushButton *enrolButton_{nullptr};
+    QPushButton *forgetVoiceButton_{nullptr};
     // Settings → Voice: the cloud voice, chosen from the providers there are.
     QComboBox *sttProviderCombo_{nullptr};
     QComboBox *sttModelCombo_{nullptr};

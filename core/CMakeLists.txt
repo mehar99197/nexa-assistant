@@ -50,11 +50,13 @@ add_library(nexa_core STATIC
     mission/RoleClassifier.h mission/RoleClassifier.cc
     mission/Task.h mission/Task.cc
     mission/TaskRunner.h mission/TaskRunner.cc
+    mission/TaskTarget.h mission/TaskTarget.cc
     mission/TaskTranscript.h mission/TaskTranscript.cc
     audit/AuditLog.h audit/AuditLog.cc
     intent/IIntentHandler.h
     intent/IntentRouter.h intent/IntentRouter.cc
     intent/MemoryIntents.h intent/MemoryIntents.cc
+    intent/MissionIntents.h intent/MissionIntents.cc
     intent/PcIntents.h intent/PcIntents.cc
     intent/PhoneIntents.h intent/PhoneIntents.cc
     memory/MemoryStore.h memory/MemoryStore.cc
