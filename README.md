@@ -30,6 +30,16 @@ Not to be confused with Nexa Download Manager: this is a separate program, named
 - **Fast path** — common requests ("open firefox", "volume 30", "pause music", "run df -h", "what's on
   my screen?", "on my phone open youtube") run directly in milliseconds, without waiting for a model.
 - **Agent** — anything else goes to the model, which calls the same tools step by step.
+- **Mission Control: many tasks at once** — every request is a task with an agent of its own, and several run
+  at the same time (3 by default, up to 8 in Settings → Mission; the rest wait in a queue). Add a list at once
+  with **+ Add tasks** (Ctrl+T, one per line). Each task gets a kind of agent from its words — web, code, screen,
+  phone or general — and the model that kind is given: Auto sends code to Codex, opencode or agy and the screen
+  and the phone to a provider that can see, or choose one per kind, or for a batch. A lead agent can hand part of
+  its task to another kind (`delegate_task`), which works on that kind's model and answers back. The control room
+  shows the agents at work, the board (pause, resume, stop, clear; the queue), the live activity by lane, and a
+  card for every question the policy asks, with Approve and Deny — no task waits behind a dialog, and stopping
+  one stops nothing else. The latency, tokens per second, CPU and memory are measured live. A conversation still
+  carries on: the next request sees the last one, on the same warm program.
 - **Types and clicks for you** — in any window, including native Wayland ones. Point at anything you
   can see: coordinates are read straight off the screenshot Nexa last took, and land on the exact
   pixel even with fractional scaling.

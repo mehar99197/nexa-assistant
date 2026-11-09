@@ -128,9 +128,13 @@ text-only model refuses images with a 400; the `Agent` then resends without them
   `ProviderCatalogData.cc` (179 key-based and local providers from OmniRoute 3.8.51, MIT, in
   `THIRD_PARTY_NOTICES.md`; never edit it by hand — `python3 -I scripts/generate-provider-catalog.py`, `--check` to see
   if it is current) and `PresetFilter` (the gallery's search and ranking, pure)),
-  `agent/` (Agent loop, Conversation, AppContext = the app Nexa opened last for the user — its kind from the desktop
+  `mission/` (**Mission Control**, every request a task: `MissionControl` = the board (Mediator: slots and the queue,
+  pause / resume / stop, the policy's questions routed to the task that asked, `delegate_task`, the live activity),
+  `TaskRunner` = one task's Agent, Conversation, provider instance and model, `ITaskEnvironment` = what the app gives
+  every task (AppController), `RoleClassifier` (the kind of agent from the words), `ModelFit` (the model a kind gets),
+  `AgentRole`, `Task`, `TaskTranscript`, `ActivityFeed`, `DelegateTool`), `agent/` (Agent loop, Conversation, AppContext = the app Nexa opened last for the user — its kind from the desktop
   entry, a sentence for the model, and the fast path's `run <cmd>` typed into a terminal in front), `tools/` (ToolSpec, ITool, FunctionTool, ToolRegistry, ToolExecutor =
-  policy → confirm → invoke → audit, TextToolParser for models without native tools), `intent/` (IntentRouter +
+  policy → confirm → invoke → audit, every action carrying its task (`ToolContext`; `cancelTask` stops one task's), TextToolParser for models without native tools), `intent/` (IntentRouter +
   PC and phone fast-path handlers), `policy/` (PolicyEngine, PanicController), `audit/` (AuditLog), `mcp/`
   (MCP connectors — Model Context Protocol: `McpClient` speaks JSON-RPC 2.0 over an `IMcpTransport`, a server
   process on its standard streams or a URL posted to; `McpConnectors` keeps one client per server in
@@ -145,7 +149,8 @@ text-only model refuses images with a 400; the `Agent` then resends without them
   (privileged)); `intent/MemoryIntents` is memory's fast path, right after the stops.
 - `system/` — touches the PC: `commands/` (LocalCommandRunner, process groups), `apps/` (DesktopEntry,
   DesktopEntryIndex = IAppCatalog, AppLauncher), `audio/` (wpctl), `media/` (MPRIS), `screen/` (portal
-  screenshots), `files/` (FileAccess, confined to home and /tmp), `info/` (SystemInfo); `SystemTools.cc`
+  screenshots), `files/` (FileAccess, confined to home and /tmp), `info/` (SystemInfo; ProcessStats = Nexa and every
+  program it started, from /proc, for the CPU and memory tiles); `SystemTools.cc`
   defines every PC tool the model sees; `office/` (`OdfWriter` builds flat OpenDocument XML — Writer from Markdown,
   Impress from slides, Calc from rows with A1 formulas; `OfficeTools` = `create_document`, which writes the file under
   `~/Documents` and opens it in LibreOffice, or has LibreOffice headless convert it to docx/pptx/xlsx/pdf);
@@ -182,7 +187,10 @@ text-only model refuses images with a 400; the `Agent` then resends without them
   a monospace status bar, the sun/moon theme toggle; its pieces are built once and `applyDesign()` /
   `rebuildCentral()` arrange them for the design on — header beside or above the chat, a centred column, the
   Actions panel on a side or the bottom or hidden, tiles; SettingsDialog with the design and palette galleries,
-  TrayIcon; `ProviderSignInBlock` = the sign-in row of a program's form in Settings → Providers (status line, Sign in… /
+  TrayIcon; **Mission Control**, the default design (`mission`): `AgentsRail`, `CoreCard` + `MetricsTiles`, `MissionBoard`,
+  `ActivityStream` (approval cards), `TaskTranscriptDrawer`, `AddTasksDialog` (Ctrl+T), `MissionSettingsPage`, all
+  `MissionPanel`s (their colours from theme.qss, a token per lane and state) over `TaskListModel` + `TaskFilter`, and
+  `TaskStrip` (the tasks in the other designs' Actions panel); `ProviderSignInBlock` = the sign-in row of a program's form in Settings → Providers (status line, Sign in… /
   Sign out / Cancel, the login link as selectable text, a code field for a paste-the-code flow; it owns the `ISignIn`
   and waits while a chat turn runs) and `ProviderGalleryDialog` = Add → Browse all… (search, category chips, one row per
   preset); a **Sign in…** button in the status bar while a program provider says nobody is signed in) and the
