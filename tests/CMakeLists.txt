@@ -85,7 +85,8 @@ add_executable(nexa_tests
     ProviderGalleryDialogTest.cc ../app/ProviderGalleryDialog.cc
     ProviderRegistryTest.cc
     # The dialog itself, for the sign-in block it holds per program row, built from app/ with its pages.
-    SettingsDialogProvidersTest.cc ../app/SettingsDialog.cc ../app/BrowserSettingsPage.cc ../app/RemoteAccess.cc
+    SettingsDialogProvidersTest.cc SettingsDialogThemesTest.cc
+        ../app/SettingsDialog.cc ../app/BrowserSettingsPage.cc ../app/RemoteAccess.cc
         ../app/MemorySettingsPage.cc ../app/MissionSettingsPage.cc ../app/SkillsSettingsPage.cc ../app/PhoneLink.cc
         ../app/GlobalShortcuts.cc ../app/VoiceEnrolmentDialog.cc
     SkillCatalogTest.cc

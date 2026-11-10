@@ -32,6 +32,7 @@
 #include "voice/wake/SherpaRuntime.h"
 #include "voice/wake/WakePhrases.h"
 
+#include <QButtonGroup>
 #include <QCheckBox>
 #include <QComboBox>
 #include <QDialogButtonBox>
@@ -39,6 +40,7 @@
 #include <QGroupBox>
 #include <QDesktopServices>
 #include <QFormLayout>
+#include <QGridLayout>
 #include <QHBoxLayout>
 #include <QLabel>
 #include <QLineEdit>
@@ -281,7 +283,7 @@ void SettingsDialog::accept() {
     config_.activeProvider = activeCombo_->currentData().toString();
     config_.systemPrompt = systemPromptEdit_->toPlainText().trimmed();
     config_.policyMode = policyCombo_->currentData().toString();
-    if (const QListWidgetItem *theme = themeGallery_->currentItem()) config_.ui.theme = theme->data(Qt::UserRole).toString();
+    if (!themeChoice_.isEmpty()) config_.ui.theme = themeChoice_;
     if (const QListWidgetItem *design = designGallery_->currentItem()) config_.ui.design = design->data(Qt::UserRole).toString();
     storeConnector();
     if (const QString name = wakeNameEdit_->text().trimmed(); !name.isEmpty()) {
@@ -1636,10 +1638,38 @@ QWidget *SettingsDialog::buildGeneralTab() {
     hotkeyLabel->setWordWrap(true);
     hotkeyLabel->setTextInteractionFlags(Qt::TextSelectableByMouse);
 
-    // The theme gallery: Nexa's own pair following the desktop, and every other pack — a colour
-    // family in dark or light, each with its motion style. The toolbar's sun/moon button swaps
-    // the scheme within the family.
+    // The theme gallery: every pack is dark; the chips above it are the categories, and the tile names
+    // the pack and its motion style. The toolbar's palette button steps through the category of the
+    // theme on. The choice is kept apart from the tiles, so a chip that hides it does not lose it.
+    themeChoice_ = NexaThemes::resolve(config_.ui.theme).id;
+    auto *chipRow = new QWidget(page);
+    auto *chipGrid = new QGridLayout(chipRow);
+    chipGrid->setContentsMargins(0, 0, 0, 0);
+    chipGrid->setHorizontalSpacing(6);
+    chipGrid->setVerticalSpacing(4);
+    themeChips_ = new QButtonGroup(chipRow);
+    themeChips_->setExclusive(true);
+    const QStringList categories = QStringList{QString()} + NexaThemes::categories();
+    constexpr int kChipColumns = 6;
+    for (int i = 0; i < categories.size(); ++i) {
+        // "Fire & Ember": a button reads a lone & as a shortcut mark, so it is doubled.
+        const QString label = categories.at(i).isEmpty() ? tr("All") : QString(categories.at(i)).replace(u'&', u"&&"_s);
+        auto *chip = new QPushButton(label, chipRow);
+        chip->setObjectName(u"galleryChip"_s);
+        chip->setCheckable(true);
+        chip->setFocusPolicy(Qt::TabFocus);
+        chip->setProperty("category", categories.at(i));
+        themeChips_->addButton(chip, i);
+        chipGrid->addWidget(chip, i / kChipColumns, i % kChipColumns);
+        if (i == 0) chip->setChecked(true);
+    }
+    chipGrid->setColumnStretch(kChipColumns, 1);
+    connect(themeChips_, &QButtonGroup::buttonClicked, this, [this](QAbstractButton *chip) {
+        themeCategory_ = chip->property("category").toString();
+        fillThemeGallery();
+    });
     themeGallery_ = new QListWidget(page);
+    themeGallery_->setObjectName(u"themeGallery"_s);
     themeGallery_->setViewMode(QListView::IconMode);
     themeGallery_->setIconSize(QSize(96, 64));
     themeGallery_->setGridSize(QSize(142, 112));
@@ -1650,6 +1680,9 @@ QWidget *SettingsDialog::buildGeneralTab() {
     themeGallery_->setUniformItemSizes(true);
     themeGallery_->setMinimumHeight(240);
     themeGallery_->setToolTip(tr("Every theme is the same design in other colours; its motion style is named under it."));
+    connect(themeGallery_, &QListWidget::currentItemChanged, this, [this](QListWidgetItem *current, QListWidgetItem *) {
+        if (current) themeChoice_ = current->data(Qt::UserRole).toString();
+    });
     fillThemeGallery();
 
     // The designs: each a different arrangement, core and type; choosing one brings the palette
@@ -1668,17 +1701,16 @@ QWidget *SettingsDialog::buildGeneralTab() {
     fillDesignGallery();
     connect(designGallery_, &QListWidget::currentItemChanged, this, [this](QListWidgetItem *current, QListWidgetItem *) {
         if (!current) return;
-        const DesignSpec design = NexaDesigns::resolve(current->data(Qt::UserRole).toString());
-        for (int i = 0; i < themeGallery_->count(); ++i) {
-            if (themeGallery_->item(i)->data(Qt::UserRole).toString() == design.palette) themeGallery_->setCurrentRow(i);
-        }
+        showTheme(NexaDesigns::resolve(current->data(Qt::UserRole).toString()).palette);
     });
 
     auto *layout = new QVBoxLayout(page);
     layout->addWidget(new QLabel(tr("Design (%n, each its own arrangement and core):", nullptr, int(NexaDesigns::all().size())), page));
     layout->addWidget(designGallery_);
     layout->addSpacing(6);
-    layout->addWidget(new QLabel(tr("Palette (%n of them, in eight motion styles):", nullptr, int(NexaThemes::all().size()) + 1), page));
+    layout->addWidget(new QLabel(tr("Theme (%n of them, all dark, in %1 categories, each with its own motion):", nullptr,
+                                    int(NexaThemes::all().size())).arg(NexaThemes::categories().size()), page));
+    layout->addWidget(chipRow);
     layout->addWidget(themeGallery_, 2);
     layout->addSpacing(8);
     layout->addWidget(new QLabel(tr("System prompt (sent at the start of every conversation):"), page));
@@ -2119,23 +2151,30 @@ void SettingsDialog::fillDesignGallery() {
 }
 
 void SettingsDialog::fillThemeGallery() {
+    // Clearing and refilling must not count as a choice: the chosen pack stays what it was, with its
+    // tile current again if the chip pressed shows it.
+    const QSignalBlocker blocker(themeGallery_);
     themeGallery_->clear();
-    const QString current = config_.ui.theme;
-    auto *system = new QListWidgetItem(tr("Follow the system\nNexa · Classic"));
-    system->setData(Qt::UserRole, u"system"_s);
-    system->setToolTip(tr("Nexa's own dark or light look, as the desktop is set."));
-    system->setIcon(themeSwatch(NexaThemes::resolve(u"system"_s)));
-    themeGallery_->addItem(system);
-    if (current == u"system"_s) themeGallery_->setCurrentItem(system);
     for (const ThemePack &pack : NexaThemes::all()) {
+        if (!themeCategory_.isEmpty() && pack.category != themeCategory_) continue;
         auto *item = new QListWidgetItem(u"%1\n%2"_s.arg(pack.name, coreStyleName(pack.style)));
         item->setData(Qt::UserRole, NexaThemes::settingFor(pack));
-        item->setToolTip(coreStyleBlurb(pack.style));
+        item->setToolTip(u"%1 · %2"_s.arg(pack.category, coreStyleBlurb(pack.style)));
         item->setIcon(themeSwatch(pack));
         themeGallery_->addItem(item);
-        if (NexaThemes::settingFor(pack) == current) themeGallery_->setCurrentItem(item);
+        if (pack.id == themeChoice_) themeGallery_->setCurrentItem(item);
     }
-    if (!themeGallery_->currentItem()) themeGallery_->setCurrentRow(0);
+    if (QListWidgetItem *current = themeGallery_->currentItem()) themeGallery_->scrollToItem(current);
+}
+
+void SettingsDialog::showTheme(const QString &setting) {
+    const ThemePack pack = NexaThemes::resolve(setting);
+    themeChoice_ = pack.id;
+    if (!themeCategory_.isEmpty() && pack.category != themeCategory_) {
+        themeCategory_.clear();
+        if (QAbstractButton *all = themeChips_->button(0)) all->setChecked(true);
+    }
+    fillThemeGallery();
 }
 
 // Settings → Connectors: MCP servers whose tools the model may call. The form edits config_.mcp
