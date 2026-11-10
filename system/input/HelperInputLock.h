@@ -33,6 +33,7 @@ private:
     HelperClient *helper_;
     ScreenAwake *awake_;
     bool held_{false};
+    bool unlocking_{false};     // an unlock is on its way to the helper: going away, Nexa waits for it
     QTimer heartbeat_;
 };
 

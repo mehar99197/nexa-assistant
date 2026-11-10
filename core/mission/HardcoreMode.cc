@@ -108,6 +108,7 @@ void HardcoreMode::beginLock() {
     }
     if (QString why; !lock_->canLock(&why)) {
         reason_ = why;
+        qCWarning(lcApp).noquote() << "hardcore: cannot lock:" << why;
         setState(State::Failed);
         return;
     }
@@ -154,11 +155,11 @@ void HardcoreMode::unlockNow(const QString &why) {
         switch_ = false;
         emit switchChanged(false);
     }
-    setState(State::Off);
     if (held) {
         qCInfo(lcApp).noquote() << "hardcore: unlocked early:" << why;
-        emit unlocked(why);
+        emit unlocked(why);     // before the state: whoever shows it tells why, not just that it ended
     }
+    setState(State::Off);
 }
 
 void HardcoreMode::settle() {
@@ -167,6 +168,8 @@ void HardcoreMode::settle() {
 
 void HardcoreMode::setState(State state) {
     if (state_ == state) return;
+    static const char *const names[] = {"off", "armed", "counting", "locking", "locked", "failed"};
+    qCDebug(lcApp) << "hardcore:" << names[int(state_)] << "->" << names[int(state)];
     state_ = state;
     emit stateChanged(state_);
 }

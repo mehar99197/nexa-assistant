@@ -24,7 +24,7 @@ HelperInputLock::HelperInputLock(HelperClient *helper, ScreenAwake *awake, QObje
 }
 
 HelperInputLock::~HelperInputLock() {
-    if (held_) helper_->unlockInputAndWait();
+    if (held_ || unlocking_) helper_->unlockInputAndWait();
 }
 
 bool HelperInputLock::canLock(QString *why) const {
@@ -52,7 +52,10 @@ void HelperInputLock::unlock() {
     awake_->release();
     if (!held_) return;
     held_ = false;
-    helper_->unlockInput([](Result<void> done) {
+    unlocking_ = true;
+    const QPointer<HelperInputLock> self(this);
+    helper_->unlockInput([self](Result<void> done) {
+        if (self) self->unlocking_ = false;
         if (!done) qCWarning(lcApp).noquote() << "hardcore: the helper did not take the unlock:" << done.error().message;
     });
 }

@@ -67,6 +67,7 @@ AppController::AppController(AppServices services, Config config, QString enviro
     services_.policy->setMode(PolicyEngine::modeFromString(config_.policyMode));
 
     mission_ = std::make_unique<MissionControl>(services_.executor, services_.tools, this, config_.mission, this);
+    if (services_.inputLock) hardcore_ = std::make_unique<HardcoreMode>(mission_.get(), services_.inputLock, this);
     // The policy's questions go to the task that asked (its card, the live activity); one of no task to the window.
     services_.executor->setConfirmer([this](const ConfirmRequest &request, std::function<void(bool)> answer) {
         mission_->confirm(request, std::move(answer));
@@ -115,7 +116,16 @@ AppController::AppController(AppServices services, Config config, QString enviro
     });
     connect(mission_.get(), &MissionControl::approvalRequested, this, [this](quint64 id, quint64 actionId) {
         const Task *task = mission_->task(id);
-        if (!task || config_.voice.announceTasks == u"off"_s) return;
+        if (!task) return;
+        // A hardcore task's question is always said: the keyboard and mouse that would answer it are locked.
+        if (task->hardcore) {
+            for (const Approval &approval : mission_->approvals()) {
+                if (approval.actionId != actionId) continue;
+                announce(tr("%1 needs your approval to use %2. Say approve or deny.").arg(task->agentId, approval.tool));
+            }
+            return;
+        }
+        if (config_.voice.announceTasks == u"off"_s) return;
         if (config_.voice.announceTasks == u"voice"_s && !task->source.contains(u"voice"_s)) return;
         for (const Approval &approval : mission_->approvals()) {
             if (approval.actionId == actionId) announce(tr("%1 needs your approval to use %2.").arg(task->agentId, approval.tool));
@@ -307,6 +317,7 @@ quint64 AppController::submit(const QString &text, const QString &source) {
     TaskRequest request;
     request.text = prompt;
     request.source = source;
+    request.hardcore = hardcore_ && hardcore_->isSwitchOn();
     // A request from the chat, the voice or the phone carries on that conversation (a task of its own, which sees what
     // was said before); "New chat" starts a fresh one.
     if (const auto head = heads_.constFind(channelOf(source)); head != heads_.cend() && mission_->task(*head)) {
@@ -340,7 +351,7 @@ quint64 AppController::submit(const QString &text, const QString &source) {
 }
 
 QList<quint64> AppController::addTasks(const QStringList &lines, const std::optional<ModelChoice> &model,
-                                       const QString &source) {
+                                       const QString &source, bool hardcore) {
     // On the board only: they do not take the chat over from the conversation.
     const QScopedValueRollback<bool> boardOnly(addingToBoard_, true);
     QList<quint64> added;
@@ -354,6 +365,7 @@ QList<quint64> AppController::addTasks(const QStringList &lines, const std::opti
         request.text = text;
         request.source = source;
         request.model = model;
+        request.hardcore = hardcore || (hardcore_ && hardcore_->isSwitchOn());
         if (!model) {
             if (const std::optional<IntentMatch> match = services_.router->route(text); match && !match->panic
                                                                                       && !match->shareScreen) {
@@ -426,7 +438,45 @@ void AppController::carryOut(const IntentMatch &match, const QString &source) {
     case Control::EndConversation:
         if (services_.voice) services_.voice->endConversation();
         return acknowledge(tr("Okay."), source);
+    case Control::Unlock: {
+        if (!hardcore_ || hardcore_->state() == HardcoreMode::State::Off) {
+            return acknowledge(tr("Nothing is locked."), source);
+        }
+        const bool armedOnly = hardcore_->state() == HardcoreMode::State::Armed;
+        unlockHardcore(source);
+        return acknowledge(armedOnly ? tr("Hardcore mode is off.") : tr("Your keyboard and mouse are back. The tasks go on."),
+                           source);
     }
+    case Control::HardcoreOn: {
+        QString why;
+        if (!hardcore_ || !hardcore_->canLock(&why)) {
+            return acknowledge(why.isEmpty() ? tr("Hardcore mode is not available here.") : why, source);
+        }
+        hardcore_->setSwitch(true);
+        return acknowledge(tr("Hardcore mode is on: the next task locks your keyboard and mouse until it is done. %1")
+                               .arg(hardcoreWaysOut()),
+                           source);
+    }
+    }
+}
+
+void AppController::unlockHardcore(const QString &source) {
+    if (!hardcore_) return;
+    const QString why = source.startsWith(u"phone"_s) ? tr("Unlocked from the phone.")
+                        : source == u"voice"_s        ? tr("You said unlock.")
+                                                      : tr("Unlocked.");
+    hardcore_->unlockNow(why);
+}
+
+QString AppController::hardcoreWaysOut() const {
+    QStringList ways;
+    if (config_.voice.wakeWord || wakeForced_) ways.append(tr("say “%1, unlock”").arg(config_.voice.wakeName));
+    if (config_.remote.enabled) ways.append(tr("press Unlock PC on your phone"));
+    if (ways.isEmpty()) {
+        return tr("Nothing can end it early — the wake word and the web remote are both off — so only the task's end "
+                  "(or holding the power button) gives the keyboard and mouse back.");
+    }
+    return tr("To end it early, %1.").arg(ways.join(tr(" or ")));
 }
 
 // A board task that ends or asks for something is said aloud — never the one the chat shows (its answer is spoken
@@ -668,6 +718,7 @@ void AppController::cancelReply() {
 
 void AppController::panic() {
     if (services_.voice) services_.voice->cancel();
+    if (hardcore_) hardcore_->unlockNow(tr("You said stop everything."));
     mission_->stopAll();
     services_.panic->panic();
     emit panicked();

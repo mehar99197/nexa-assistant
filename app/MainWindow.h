@@ -67,6 +67,8 @@ public:
     void snapshotSettings(const QString &directory, std::function<void()> done = {});
     // Wears a palette and a design for this run, without touching the settings (--theme, --design).
     void wear(const QString &palette, const QString &design);
+    // The Hardcore switch: on asks first (and names the ways out), unless `ask` is false (--hardcore).
+    void setHardcore(bool on, bool ask = true);
     // Asked when the window is closed: true means "hidden to the tray, keep running".
     void setCloseToTray(std::function<bool()> hide) { closeToTray_ = std::move(hide); }
     NexaCoreWidget *presence() const { return presence_; }    // the core beside the chat (the tray copies it)
@@ -87,6 +89,7 @@ private:
     QWidget *makePill(const QString &label, QWidget *value);
     QToolButton *makeIconButton(NexaIcons::Kind kind, const QString &objectName, QAction *action);
     void showCoreMode(CoreMode mode);
+    void showHardcore();                    // the switch and the banner, from HardcoreMode's state
     QString titleFor(CoreMode mode) const;
     QString hintFor(CoreMode mode) const;
     void showHotkeys();
@@ -154,6 +157,8 @@ private:
     QPushButton *stopAllButton_{nullptr};
     QAction *themeAction_{nullptr};
     QAction *shareScreenAction_{nullptr};
+    QAction *hardcoreAction_{nullptr};      // the Hardcore switch beside Share screen
+    QLabel *hardcoreBanner_{nullptr};       // the countdown, the lock and its ways out, at the top of every design
     QLabel *statusLabel_{nullptr};
     QToolButton *lowerMicButton_{nullptr};
     QToolButton *signInButton_{nullptr};    // in the status bar while a program provider needs its sign-in

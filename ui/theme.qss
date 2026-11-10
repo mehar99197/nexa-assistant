@@ -437,3 +437,14 @@ QLabel#metaPill { color: @muted@; font-family: "@mono@"; font-size: 11px; paddin
 QLabel#drawerAgent { font-family: "@mono@"; font-weight: 700; background: transparent; }
 QLabel#drawerState { font-family: "@mono@"; font-size: 11px; font-weight: 700; background: transparent; }
 QLabel#drawerTitle { font-weight: 600; background: transparent; }
+
+/* Hardcore mode: the switch is on (armed), the keyboard and mouse are locked or about to be, or it could not lock. */
+QLabel#hardcoreBanner {
+    padding: 8px 20px;
+    font-weight: 600;
+    border-bottom: 1px solid @line@;
+    background: @panel2@;
+    color: @text@;
+}
+QLabel#hardcoreBanner[level="locked"] { background: @errorSoft@; color: @text@; border-bottom: 1px solid @errorLine@; }
+QLabel#hardcoreBanner[level="failed"] { background: @panel2@; color: @act@; border-bottom: 1px solid @act@; }

@@ -44,12 +44,14 @@
 #include "system/commands/LocalCommandRunner.h"
 #include "system/commands/RootCommandRunner.h"
 #include "system/helper/HelperClient.h"
+#include "system/input/HelperInputLock.h"
 #include "system/input/IInputBackend.h"
 #include "system/input/InputBackendSelector.h"
 #include "system/input/RemoteDesktopSession.h"
 #include "system/files/FileAccess.h"
 #include "system/info/SystemInfo.h"
 #include "system/media/MprisController.h"
+#include "system/screen/ScreenAwake.h"
 #include "system/screen/ScreenCapture.h"
 #include "core/mcp/McpConnectors.h"
 #include "ui/NexaDesigns.h"
@@ -213,6 +215,11 @@ int main(int argc, char *argv[]) {
         u"pair-phone"_s,
         u"Pair Nexa Phone on the phone connected through adb: a pairing code is started here and handed to the app over adb."_s);
     parser.addOption(pairPhoneOption);
+    const QCommandLineOption hardcoreOption(
+        u"hardcore"_s,
+        u"Switch hardcore mode on without asking: the requests of this run lock the laptop's keyboard and mouse while "
+        "they run."_s);
+    parser.addOption(hardcoreOption);
     parser.process(app);
 
     // One Nexa per user: a second start hands what it was asked to do to the running one and
@@ -225,7 +232,8 @@ int main(int argc, char *argv[]) {
         const QJsonObject handOver{{u"say"_s, QJsonArray::fromStringList(parser.values(sayOption))},
                                    {u"voiceFile"_s, voiceFiles},
                                    {u"ask"_s, QJsonArray::fromStringList(parser.values(askOption))},
-                                   {u"pairPhone"_s, parser.isSet(pairPhoneOption)}};
+                                   {u"pairPhone"_s, parser.isSet(pairPhoneOption)},
+                                   {u"hardcore"_s, parser.isSet(hardcoreOption)}};
         if (instance.handOver(handOver)) {
             qCInfo(lcApp) << "Nexa is already running: handed over to it";
             return 0;
@@ -288,6 +296,10 @@ int main(int argc, char *argv[]) {
     panic.addHandler([&remoteDesktop] { remoteDesktop.close(); });
     QObject::connect(&helperClient, &HelperClient::readyChanged, &app, [&input] { input.reselect(); });
     panic.addHandler([&helperClient] { helperClient.cancelAllJobs(); });
+    // Hardcore mode's lock on the laptop's own keyboard and mouse, through the same helper; the screen stays on
+    // while it is held.
+    ScreenAwake screenAwake;
+    HelperInputLock inputLock(&helperClient, &screenAwake);
 
     // The phone, through adb: over USB, or over Wi-Fi once paired in Settings → Android. Nothing
     // here starts adb until a phone is remembered or a phone tool is used.
@@ -402,7 +414,8 @@ int main(int argc, char *argv[]) {
                     .canType = [&input] { return input.current() != nullptr; },
                     .memory = &memory,
                     .skills = &skills,
-                    .browserTarget = [&browser] { return browser.targetPhrase(); }},
+                    .browserTarget = [&browser] { return browser.targetPhrase(); },
+                    .inputLock = &inputLock},
         std::move(config), SystemInfo::summary());
     QObject::connect(&browser, &BrowserService::notice, &controller, &AppController::notify);
 
@@ -523,6 +536,7 @@ int main(int argc, char *argv[]) {
     });
 
     if (!startupWarning.isEmpty()) QMessageBox::warning(&window, QObject::tr("Nexa settings"), startupWarning);
+    if (parser.isSet(hardcoreOption)) window.setHardcore(true, false);
     if (recording) controller.setWakeWordForced(true);     // --hear: the room is listened to, this run only
     QTimer::singleShot(0, &controller, &AppController::start);
 
@@ -607,6 +621,7 @@ int main(int argc, char *argv[]) {
         };
         const QStringList say = strings(u"say"_s), voiceFiles = strings(u"voiceFile"_s), asks = strings(u"ask"_s);
         const bool pairThePhone = message.value(u"pairPhone"_s).toBool();
+        if (message.value(u"hardcore"_s).toBool()) window.setHardcore(true, false);
         if (say.isEmpty() && voiceFiles.isEmpty() && asks.isEmpty() && !pairThePhone) {
             window.show();
             window.raise();

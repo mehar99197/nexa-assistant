@@ -6,6 +6,7 @@
 #include "core/ai/ChatStream.h"
 #include "core/config/Config.h"
 #include "core/intent/IIntentHandler.h"
+#include "core/mission/HardcoreMode.h"
 #include "core/mission/MissionControl.h"
 #include "core/tools/ToolExecutor.h"
 #include "ui/NexaCoreSpec.h"
@@ -58,6 +59,7 @@ struct AppServices {
     SkillCatalog *skills{nullptr};      // the skills the model may load (Settings → Skills)
     // Where the browser_* tools work, in words for the prompt; empty while they are not there.
     std::function<QString()> browserTarget;
+    IInputLock *inputLock{nullptr};     // hardcore mode's lock on the laptop's keyboard and mouse (the root helper)
 };
 
 // Mediator between the GUI, voice and core. Every request is a task on the mission board (MissionControl, which it
@@ -97,9 +99,17 @@ public:
     quint64 submit(const QString &text, const QString &source = QStringLiteral("gui"));
     // Several at once (Add tasks): one task per line that says something, independent of the conversation, on
     // `model` when one is given (else what each role is given).
+    // `hardcore`: they lock the laptop's keyboard and mouse while they run (Add tasks' box).
     QList<quint64> addTasks(const QStringList &lines, const std::optional<ModelChoice> &model,
-                            const QString &source = QStringLiteral("gui"));
+                            const QString &source = QStringLiteral("gui"), bool hardcore = false);
     MissionControl *mission() const { return mission_.get(); }
+    // Hardcore mode: the switch, the lock and its state; null without an input lock to hold (no helper wired).
+    HardcoreMode *hardcore() const { return hardcore_.get(); }
+    // The keyboard and mouse back now ("unlock" by voice, Unlock PC on the phone); the tasks go on.
+    void unlockHardcore(const QString &source);
+    // How the owner can end a lock early, in a sentence: the voice when the wake word is on, the phone when the web
+    // remote is; otherwise that only the task's end (or the power button) will.
+    QString hardcoreWaysOut() const;
     // Takes a screenshot of the phone and asks the model about it (default: describe it).
     void askAboutPhone(const QString &question);
     // The Share screen switch. Off at every start: the model is not offered take_screenshot and is
@@ -219,6 +229,7 @@ private:
     Config config_;
     QString environment_;
     std::unique_ptr<MissionControl> mission_;
+    std::unique_ptr<HardcoreMode> hardcore_;
     std::unique_ptr<IAiProvider> provider_;     // the first choice's chain, for the model list
     std::shared_ptr<IAiProvider> spare_;        // made and warmed up for the next Auto task
     QStringList models_;

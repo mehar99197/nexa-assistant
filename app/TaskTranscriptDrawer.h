@@ -27,6 +27,7 @@ public:
 
 signals:
     void backRequested();
+    void followedUp(quint64 task);          // the owner asked the task something more
 
 protected:
     bool eventFilter(QObject *watched, QEvent *event) override;

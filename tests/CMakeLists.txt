@@ -34,6 +34,7 @@ add_executable(nexa_tests
     ProcessStatsTest.cc
     MissionControlTest.cc
     HardcoreModeTest.cc
+    FakeInputLock.h
     SignInPresenterTest.cc
     ProviderCatalogTest.cc
     AgyProviderTest.cc

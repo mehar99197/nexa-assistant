@@ -32,6 +32,7 @@ private:
     QSystemTrayIcon *icon_{nullptr};
     QAction *showAction_{nullptr};
     bool told_{false};
+    bool wasLocked_{false};     // hardcore mode held the keyboard and mouse: say when they are back
 };
 
 } // namespace nexa

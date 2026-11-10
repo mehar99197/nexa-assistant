@@ -175,6 +175,17 @@ void NexaIcons::paint(QPainter &p, Kind kind, const QRectF &box, const QColor &c
         p.drawLine(QPointF(-0.28 * s, 0), QPointF(0.28 * s, 0));
         p.drawLine(QPointF(0, -0.28 * s), QPointF(0, 0.28 * s));
         break;
+    case Kind::Lock: {
+        p.drawRoundedRect(QRectF(-0.3 * s, -0.04 * s, 0.6 * s, 0.42 * s), 0.07 * s, 0.07 * s);
+        QPainterPath shackle;
+        shackle.moveTo(-0.17 * s, -0.04 * s);
+        shackle.lineTo(-0.17 * s, -0.17 * s);
+        shackle.arcTo(QRectF(-0.17 * s, -0.34 * s, 0.34 * s, 0.34 * s), 180, -180);
+        shackle.lineTo(0.17 * s, -0.04 * s);
+        p.drawPath(shackle);
+        p.drawLine(QPointF(0, 0.1 * s), QPointF(0, 0.22 * s));
+        break;
+    }
     }
     p.restore();
 }

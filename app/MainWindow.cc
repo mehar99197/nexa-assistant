@@ -252,6 +252,11 @@ void MainWindow::buildCentral() {
 
     chatView_ = new ChatView(this);
 
+    hardcoreBanner_ = new QLabel(this);
+    hardcoreBanner_->setObjectName(u"hardcoreBanner"_s);
+    hardcoreBanner_->setWordWrap(true);
+    hardcoreBanner_->hide();
+
     QWidget *bar = inputBar_ = new QWidget(this);
     bar->setObjectName(u"inputBar"_s);
     auto *inputRow = new QHBoxLayout(bar);
@@ -281,6 +286,18 @@ void MainWindow::buildCentral() {
                                 : tr("Screen sharing stopped — Nexa works without looking at the screen."));
     });
     inputRow->addWidget(makeIconButton(NexaIcons::Kind::Pc, u"inputButton"_s, shareScreenAction_));
+
+    // Hardcore: a switch, off at every start. On, every task started locks this laptop's own keyboard and mouse while
+    // it runs, so nothing typed or clicked here gets in its way; the screen stays on.
+    hardcoreAction_ = new QAction(tr("Hardcore"), this);
+    hardcoreAction_->setObjectName(u"hardcoreSwitch"_s);
+    hardcoreAction_->setCheckable(true);
+    hardcoreAction_->setToolTip(tr("Hardcore mode: while a task you start runs, your keyboard and mouse are locked until "
+                                   "it is done, and the screen stays on · Ctrl+Shift+H"));
+    hardcoreAction_->setShortcut(QKeySequence(u"Ctrl+Shift+H"_s));
+    hardcoreAction_->setEnabled(controller_->hardcore() != nullptr);
+    connect(hardcoreAction_, &QAction::toggled, this, [this](bool on) { setHardcore(on); });
+    inputRow->addWidget(makeIconButton(NexaIcons::Kind::Lock, u"inputButton"_s, hardcoreAction_));
 
     auto *seePhone = new QAction(tr("See phone"), this);
     seePhone->setToolTip(tr("Take a screenshot of the phone and ask about it (the text in the box is the question) · "
@@ -340,7 +357,7 @@ void MainWindow::rebuildCentral() {
     // A piece the new arrangement leaves out (Console has no header) must not go down with the
     // old central widget: every piece is taken back first, and placed again below.
     for (QWidget *piece : std::initializer_list<QWidget *>{header_, chatView_, inputBar_, rail_, coreCard_, centreStack_,
-                                                           stream_}) {
+                                                           stream_, hardcoreBanner_}) {
         if (piece->parentWidget() != this) piece->setParent(this);
     }
     const bool mission = layout == WindowLayout::MissionControl;
@@ -406,6 +423,8 @@ void MainWindow::rebuildCentral() {
         return frame;
     };
 
+    column->addWidget(hardcoreBanner_);     // every design: what hardcore mode holds is never out of sight
+
     switch (layout) {
     case WindowLayout::Studio:
     case WindowLayout::Bottom:
@@ -469,6 +488,7 @@ void MainWindow::rebuildCentral() {
     }
     // The pieces have moved into the new central widget; the old one, empty now, goes with it.
     setCentralWidget(central);
+    showHardcore();
 
     // The Actions panel: on a side, along the bottom, or out of sight until asked (Ctrl+L).
     const Qt::DockWidgetArea area = (layout == WindowLayout::Console || layout == WindowLayout::Bottom)
@@ -627,6 +647,22 @@ QToolButton *MainWindow::makeIconButton(NexaIcons::Kind kind, const QString &obj
 }
 
 void MainWindow::connectController() {
+    if (HardcoreMode *hardcore = controller_->hardcore()) {
+        connect(hardcore, &HardcoreMode::stateChanged, this, [this, hardcore](HardcoreMode::State state) {
+            showHardcore();
+            if (state == HardcoreMode::State::Locked) {
+                chatView_->addNotice(tr("Keyboard and mouse locked: %1.").arg(hardcore->devices().join(u", "_s)));
+            } else if (state == HardcoreMode::State::Failed) {
+                chatView_->addError(tr("Hardcore mode could not lock the keyboard and mouse, so the task runs "
+                                       "unlocked: %1").arg(hardcore->reason()));
+            }
+        });
+        connect(hardcore, &HardcoreMode::switchChanged, this, &MainWindow::showHardcore);
+        connect(hardcore, &HardcoreMode::countdownTick, this, &MainWindow::showHardcore);
+        connect(hardcore, &HardcoreMode::unlocked, this, [this](const QString &why) {
+            chatView_->addNotice(tr("Your keyboard and mouse are back: %1").arg(why));
+        });
+    }
     connect(controller_, &AppController::providerChanged, this, [this](const QString &name) {
         providerLabel_->setText(name.isEmpty() ? tr("none") : name);
         if (signInButton_) signInButton_->hide();   // the providers were built again: it is asked again if still not signed in
@@ -1116,6 +1152,10 @@ void MainWindow::buildMission() {
     coreCard_ = new CoreCard(this);
     board_ = new MissionBoard(tasks_, this);
     drawer_ = new TaskTranscriptDrawer(mission, this);
+    // A question asked more of a task, with Hardcore on, locks the laptop as a new request would.
+    connect(drawer_, &TaskTranscriptDrawer::followedUp, this, [this](quint64 id) {
+        if (controller_->hardcore() && controller_->hardcore()->isSwitchOn()) controller_->mission()->setHardcore(id, true);
+    });
     centreStack_ = new QStackedWidget(this);
     centreStack_->setObjectName(u"missionCentre"_s);
     centreStack_->addWidget(board_);
@@ -1192,11 +1232,84 @@ void MainWindow::openTask(quint64 id) {
 void MainWindow::openAddTasks() {
     AddTasksDialog dialog(controller_->config(), this);
     if (!input_->toPlainText().trimmed().isEmpty()) dialog.setText(input_->toPlainText());
+    if (HardcoreMode *hardcore = controller_->hardcore()) {
+        QString why;
+        const bool available = hardcore->canLock(&why);
+        dialog.setHardcore(hardcore->isSwitchOn(), available, controller_->hardcoreWaysOut(), why);
+    } else {
+        dialog.setHardcore(false, false, {}, tr("Hardcore mode needs the root helper."));
+    }
     if (dialog.exec() != QDialog::Accepted) return;
-    const QList<quint64> added = controller_->addTasks(dialog.lines(), dialog.model());
+    const QList<quint64> added =
+        controller_->addTasks(dialog.lines(), dialog.model(), u"gui"_s, dialog.hardcore());
     if (!added.isEmpty() && dialog.lines().join(u'\n') == input_->toPlainText().trimmed()) input_->clear();
     if (inMission()) centreStack_->setCurrentWidget(board_);
     showStatus(tr("%n task(s) added to the board.", nullptr, int(added.size())), false);
+}
+
+void MainWindow::setHardcore(bool on, bool ask) {
+    HardcoreMode *hardcore = controller_->hardcore();
+    const auto untick = [this] {
+        const QSignalBlocker blocker(hardcoreAction_);
+        hardcoreAction_->setChecked(false);
+    };
+    if (!hardcore) {
+        untick();
+        return;
+    }
+    if (!on) {
+        if (!hardcore->isSwitchOn()) return;
+        hardcore->setSwitch(false);
+        chatView_->addNotice(tr("Hardcore mode is off: tasks no longer lock the keyboard and mouse."));
+        return;
+    }
+    if (hardcore->isSwitchOn()) return;
+    if (QString why; !hardcore->canLock(&why)) {
+        untick();
+        QMessageBox::warning(this, tr("Hardcore mode"), why);
+        return;
+    }
+    if (ask) {
+        QMessageBox box(QMessageBox::Warning, tr("Hardcore mode"), tr("Lock your keyboard and mouse while tasks run?"),
+                        QMessageBox::NoButton, this);
+        box.setInformativeText(
+            tr("Every task you start while hardcore mode is on locks this laptop's keyboard and touchpad from a moment "
+               "after it starts until it is done — its questions are answered by voice or from the phone. The screen "
+               "stays on so you can watch.\n\n%1\n\nNexa closing always gives them back.")
+                .arg(controller_->hardcoreWaysOut()));
+        QPushButton *lock = box.addButton(tr("Lock while tasks run"), QMessageBox::AcceptRole);
+        QPushButton *cancel = box.addButton(QMessageBox::Cancel);
+        box.setDefaultButton(cancel);
+        box.exec();
+        if (box.clickedButton() != lock) {
+            untick();
+            return;
+        }
+    }
+    hardcore->setSwitch(true);
+    chatView_->addNotice(tr("Hardcore mode is on: the next task locks your keyboard and mouse until it is done. %1")
+                             .arg(controller_->hardcoreWaysOut()));
+}
+
+void MainWindow::showHardcore() {
+    HardcoreMode *hardcore = controller_->hardcore();
+    if (!hardcore) {
+        hardcoreBanner_->hide();
+        return;
+    }
+    {
+        const QSignalBlocker blocker(hardcoreAction_);
+        hardcoreAction_->setChecked(hardcore->isSwitchOn());
+    }
+    using State = HardcoreMode::State;
+    const State state = hardcore->state();
+    QString text = hardcore->banner();
+    const bool holding = state == State::Counting || state == State::Locking || state == State::Locked;
+    if (holding) text += u' ' + controller_->hardcoreWaysOut();
+    hardcoreBanner_->setText(text);
+    hardcoreBanner_->setProperty("level", holding ? u"locked"_s : state == State::Failed ? u"failed"_s : u"armed"_s);
+    repolish(hardcoreBanner_);
+    hardcoreBanner_->setVisible(!text.isEmpty());
 }
 
 void MainWindow::showMetrics() {

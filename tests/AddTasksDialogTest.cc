@@ -4,6 +4,7 @@
 
 #include "QtStringMakers.h"
 
+#include <QCheckBox>
 #include <QComboBox>
 #include <QLineEdit>
 #include <QPlainTextEdit>
@@ -36,4 +37,20 @@ TEST_CASE("Add tasks counts its lines and gives Auto or the provider chosen") {
     model->setText(u"gpt-6-luna"_s);
     REQUIRE(dialog.model().has_value());
     CHECK(*dialog.model() == ModelChoice{u"codex"_s, u"gpt-6-luna"_s});
+}
+
+TEST_CASE("Add tasks' hardcore box follows the switch, says the ways out, and is off without the helper") {
+    AddTasksDialog dialog(Config{});
+    auto *box = dialog.findChild<QCheckBox *>(u"hardcoreCheck"_s);
+    REQUIRE(box);
+    CHECK_FALSE(dialog.hardcore());
+    dialog.setHardcore(true, true, u"To end it early, say “Nexa, unlock”."_s);
+    CHECK(box->isChecked());
+    CHECK(dialog.hardcore());
+    box->setChecked(false);
+    CHECK_FALSE(dialog.hardcore());
+    dialog.setHardcore(true, false, {}, u"Hardcore mode needs the root helper."_s);
+    CHECK_FALSE(box->isEnabled());
+    CHECK_FALSE(dialog.hardcore());
+    CHECK(box->toolTip().contains(u"root helper"_s));
 }

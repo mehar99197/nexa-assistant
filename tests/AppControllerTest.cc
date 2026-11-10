@@ -15,6 +15,7 @@
 #include "core/tools/FunctionTool.h"
 #include "core/tools/ToolRegistry.h"
 
+#include "FakeInputLock.h"
 #include "QtStringMakers.h"
 #include "ScriptedProvider.h"
 
@@ -40,7 +41,7 @@ Config withScriptedModel() {
 }
 
 struct ControllerRig {
-    ControllerRig()
+    explicit ControllerRig(Config config = withScriptedModel())
         : store(dir.filePath(u"config.json"_s)),
           providers(&http),
           audit(dir.filePath(u"audit.jsonl"_s)),
@@ -71,8 +72,10 @@ struct ControllerRig {
                                                                  .router = &router,
                                                                  .panic = &panic,
                                                                  .policy = &policy,
-                                                                 .context = &context},
-                                                     withScriptedModel(), u"a test machine"_s);
+                                                                 .context = &context,
+                                                                 .inputLock = &lock},
+                                                     std::move(config), u"a test machine"_s);
+        controller->hardcore()->setCountdownMs(20);
     }
 
     // Runs a tool the way the fast path and the agent do; true once it reported back.
@@ -93,6 +96,7 @@ struct ControllerRig {
     IntentRouter router;
     PanicController panic;
     AppContext context;
+    test::FakeLock lock;
     ITool::Done pendingSlow;
     QList<QList<test::ScriptedProvider::Reply>> scripts;      // for the model instances, in the order they are made
     QList<QPointer<test::ScriptedProvider>> made;
@@ -278,4 +282,82 @@ TEST_CASE("A board task asked for by voice says when it is done; the chat's own 
                             kWaitMs));
     REQUIRE(announced.size() == 1);
     CHECK(announced.at(0).at(0).toString().contains(u"is done"_s));
+}
+
+TEST_CASE("Hardcore on, a request locks the keyboard and mouse, and 'unlock' gives them back while it runs") {
+    ControllerRig rig;
+    rig.scripts = {{}, {}, {}};     // the task's model hangs until told
+    rig.controller->start();
+    CHECK(rig.controller->submit(u"hardcore on"_s, u"voice"_s) == 0);
+    CHECK(rig.controller->hardcore()->isSwitchOn());
+    const quint64 id = rig.controller->submit(u"tidy my downloads folder"_s);
+    REQUIRE(id != 0);
+    CHECK(rig.controller->mission()->task(id)->hardcore);
+    REQUIRE(QTest::qWaitFor([&rig] { return rig.lock.held; }, kWaitMs));
+
+    QSignalSpy notices(rig.controller.get(), &AppController::replyNotice);
+    CHECK(rig.controller->submit(u"Nexa, unlock"_s, u"voice"_s) == 0);
+    CHECK_FALSE(rig.lock.held);
+    CHECK_FALSE(rig.controller->hardcore()->isSwitchOn());
+    CHECK(rig.controller->mission()->task(id)->state == TaskState::Running);
+    REQUIRE_FALSE(notices.isEmpty());
+    CHECK(notices.last().at(0).toString().contains(u"keyboard and mouse are back"_s));
+    rig.controller->panic();
+}
+
+TEST_CASE("Stop everything ends hardcore mode as well as the tasks") {
+    ControllerRig rig;
+    rig.scripts = {{}, {}};
+    rig.controller->start();
+    rig.controller->hardcore()->setSwitch(true);
+    rig.controller->submit(u"tidy my downloads folder"_s);
+    REQUIRE(QTest::qWaitFor([&rig] { return rig.lock.held; }, kWaitMs));
+    rig.controller->panic();
+    CHECK_FALSE(rig.lock.held);
+    CHECK(rig.controller->hardcore()->state() == HardcoreMode::State::Off);
+    CHECK_FALSE(rig.controller->hardcore()->isSwitchOn());
+}
+
+TEST_CASE("A hardcore task's approval is said aloud even with announcements off") {
+    Config config = withScriptedModel();
+    config.voice.announceTasks = u"off"_s;
+    ControllerRig rig(config);
+    rig.policy.setMode(PolicyMode::ConfirmAll);
+    rig.scripts = {{}, {Reply{{}, {ToolCall{u"c1"_s, u"run_command"_s, u"{}"_s}}, {}}, Reply{u"done"_s, {}, {}}}};
+    rig.controller->start();
+    QSignalSpy announced(rig.controller.get(), &AppController::announced);
+    rig.controller->hardcore()->setSwitch(true);
+    const quint64 id = rig.controller->submit(u"run something"_s);
+    REQUIRE(QTest::qWaitFor([&rig] { return !rig.controller->mission()->approvals().isEmpty(); }, kWaitMs));
+    REQUIRE(announced.size() == 1);
+    CHECK(announced.at(0).at(0).toString().contains(u"Say approve or deny"_s));
+    CHECK(rig.controller->submit(u"approve"_s, u"voice"_s) == 0);
+    REQUIRE(QTest::qWaitFor([&rig, id] { return rig.controller->mission()->task(id)->state == TaskState::Done; }, kWaitMs));
+    REQUIRE(QTest::qWaitFor([&rig] { return !rig.lock.held; }, kWaitMs));
+}
+
+TEST_CASE("Add tasks with the hardcore box makes hardcore tasks; without it they are ordinary") {
+    ControllerRig rig;
+    rig.scripts = {{}, {}, {}};
+    rig.controller->start();
+    const QList<quint64> hard = rig.controller->addTasks({u"sort the photos"_s}, std::nullopt, u"gui"_s, true);
+    const QList<quint64> soft = rig.controller->addTasks({u"summarise my notes"_s}, std::nullopt);
+    REQUIRE(hard.size() == 1);
+    REQUIRE(soft.size() == 1);
+    CHECK(rig.controller->mission()->task(hard.first())->hardcore);
+    CHECK_FALSE(rig.controller->mission()->task(soft.first())->hardcore);
+    rig.controller->panic();
+}
+
+TEST_CASE("The ways out are named from what is switched on") {
+    Config config = withScriptedModel();
+    {
+        ControllerRig rig(config);
+        CHECK(rig.controller->hardcoreWaysOut().contains(u"power button"_s));
+    }
+    config.voice.wakeWord = true;
+    config.remote.enabled = true;
+    ControllerRig rig(config);
+    CHECK(rig.controller->hardcoreWaysOut().contains(u"“Nexa, unlock”"_s));
+    CHECK(rig.controller->hardcoreWaysOut().contains(u"Unlock PC"_s));
 }

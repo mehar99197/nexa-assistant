@@ -51,6 +51,27 @@ TrayIcon::TrayIcon(MainWindow *window, AppController *controller, QObject *paren
     showMode(controller->coreMode());
     connect(controller, &AppController::coreModeChanged, this, showMode);
     connect(controller, &AppController::themeChanged, this, [controller, showMode] { showMode(controller->coreMode()); });
+    // Hardcore mode says so on the desktop, where it is seen whatever window is in front.
+    if (HardcoreMode *hardcore = controller->hardcore()) {
+        connect(hardcore, &HardcoreMode::stateChanged, this, [this, hardcore, controller](HardcoreMode::State state) {
+            using State = HardcoreMode::State;
+            if (state == State::Locked) {
+                wasLocked_ = true;
+                icon_->showMessage(tr("Keyboard and mouse locked"), hardcore->banner() + u' ' + controller->hardcoreWaysOut(),
+                                   QSystemTrayIcon::Warning, 8'000);
+            } else if (state == State::Failed) {
+                icon_->showMessage(tr("Hardcore mode could not lock"), hardcore->reason(), QSystemTrayIcon::Warning, 8'000);
+            } else if ((state == State::Armed || state == State::Off) && std::exchange(wasLocked_, false)) {
+                icon_->showMessage(tr("Keyboard and mouse are back"), tr("No hardcore task is running any more."),
+                                   QSystemTrayIcon::Information, 5'000);
+            }
+        });
+        // An early end says why (it comes before the state goes back to off).
+        connect(hardcore, &HardcoreMode::unlocked, this, [this](const QString &why) {
+            if (!std::exchange(wasLocked_, false)) return;
+            icon_->showMessage(tr("Keyboard and mouse are back"), why, QSystemTrayIcon::Information, 5'000);
+        });
+    }
     icon_->show();
 }
 

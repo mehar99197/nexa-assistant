@@ -7,7 +7,9 @@
 
 #include <optional>
 
+class QCheckBox;
 class QComboBox;
+class QLabel;
 class QLineEdit;
 class QPlainTextEdit;
 class QPushButton;
@@ -24,6 +26,10 @@ public:
     QStringList lines() const;                      // the lines that say something
     std::optional<ModelChoice> model() const;       // none: Auto
     void setText(const QString &text);
+    // Hardcore mode's box: ticked as the window's switch is; unavailable (and why) without the root helper. `waysOut`
+    // is said under it while it is ticked.
+    void setHardcore(bool ticked, bool available, const QString &waysOut, const QString &unavailableWhy = {});
+    bool hardcore() const;                          // lock the keyboard and mouse while these run
 
 private:
     void refresh();
@@ -31,6 +37,8 @@ private:
     QPlainTextEdit *text_;
     QComboBox *provider_;
     QLineEdit *model_;
+    QCheckBox *hardcore_;
+    QLabel *hardcoreNote_;
     QPushButton *add_;
 };
 

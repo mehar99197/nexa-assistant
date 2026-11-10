@@ -1,5 +1,6 @@
 #include "app/AddTasksDialog.h"
 
+#include <QCheckBox>
 #include <QComboBox>
 #include <QDialogButtonBox>
 #include <QFormLayout>
@@ -40,6 +41,18 @@ AddTasksDialog::AddTasksDialog(const Config &config, QWidget *parent) : QDialog(
     form->addRow(tr("Model:"), model_);
     column->addLayout(form);
 
+    hardcore_ = new QCheckBox(tr("Hardcore: lock my keyboard and mouse until these are done"), this);
+    hardcore_->setObjectName(u"hardcoreCheck"_s);
+    column->addWidget(hardcore_);
+    hardcoreNote_ = new QLabel(this);
+    hardcoreNote_->setObjectName(u"sectionNote"_s);
+    hardcoreNote_->setWordWrap(true);
+    hardcoreNote_->hide();
+    column->addWidget(hardcoreNote_);
+    connect(hardcore_, &QCheckBox::toggled, hardcoreNote_, [this](bool on) {
+        hardcoreNote_->setVisible(on && !hardcoreNote_->text().isEmpty());
+    });
+
     auto *buttons = new QDialogButtonBox(QDialogButtonBox::Cancel, this);
     add_ = buttons->addButton(tr("Add tasks"), QDialogButtonBox::AcceptRole);
     add_->setObjectName(u"addTasks"_s);
@@ -52,6 +65,18 @@ AddTasksDialog::AddTasksDialog(const Config &config, QWidget *parent) : QDialog(
     connect(provider_, &QComboBox::currentIndexChanged, this, &AddTasksDialog::refresh);
     refresh();
     text_->setFocus();
+}
+
+void AddTasksDialog::setHardcore(bool ticked, bool available, const QString &waysOut, const QString &unavailableWhy) {
+    hardcore_->setEnabled(available);
+    hardcore_->setChecked(available && ticked);
+    hardcore_->setToolTip(available ? waysOut : unavailableWhy);
+    hardcoreNote_->setText(waysOut);
+    hardcoreNote_->setVisible(hardcore_->isChecked() && !waysOut.isEmpty());
+}
+
+bool AddTasksDialog::hardcore() const {
+    return hardcore_->isEnabled() && hardcore_->isChecked();
 }
 
 QStringList AddTasksDialog::lines() const {

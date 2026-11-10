@@ -191,6 +191,7 @@ void TaskTranscriptDrawer::send() {
     chat_->addUserMessage(text, u"gui"_s);
     input_->clear();
     mission_->followUp(task_, text, u"gui"_s);
+    emit followedUp(task_);
 }
 
 } // namespace nexa
