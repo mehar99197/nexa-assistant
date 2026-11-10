@@ -11,6 +11,7 @@ add_executable(nexa_tests
     ScriptedProvider.h
     MissionRig.h
     AgentTest.cc
+    AttachmentsTest.cc
     AgyEventsTest.cc
     AgyAcpTest.cc
     AgySignInTest.cc

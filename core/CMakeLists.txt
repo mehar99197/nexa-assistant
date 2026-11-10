@@ -40,6 +40,7 @@ add_library(nexa_core STATIC
     ai/SseChatStream.h ai/SseChatStream.cc
     agent/Agent.h agent/Agent.cc
     agent/AppContext.h agent/AppContext.cc
+    agent/Attachments.h agent/Attachments.cc
     agent/Conversation.h agent/Conversation.cc
     agent/VoicePrompt.h agent/VoicePrompt.cc
     mission/ActivityFeed.h mission/ActivityFeed.cc

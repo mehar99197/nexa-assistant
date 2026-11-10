@@ -97,7 +97,7 @@ TaskId MissionControl::add(const TaskRequest &request) {
     task.created = QDateTime::currentDateTime();
     task.activity = QList<int>(kActivityBuckets, 0);
     Task &added = tasks_.insert(id, task).value();
-    transcripts_[id].append({TranscriptEvent::Kind::User, added.text});
+    transcripts_[id].append({TranscriptEvent::Kind::User, added.text, request.attachments});
     TaskRunner *runner = makeRunner(added);
 
     // The conversation it carries on is copied in; the earlier task's provider is handed over while idle, so a
@@ -116,8 +116,8 @@ TaskId MissionControl::add(const TaskRequest &request) {
     emit taskAdded(id);
     note(added, ActivityKind::TaskState, u"new task: %1"_s.arg(added.title));
 
-    Pending pending{Pending::Kind::Start, added.text, added.source, request.images, request.fastPath, request.answer,
-                    request.shownFirst, std::nullopt, {}};
+    Pending pending{Pending::Kind::Start, request.modelText.isEmpty() ? added.text : request.modelText, added.source,
+                    request.images, request.fastPath, request.answer, request.shownFirst, std::nullopt, {}};
     if (request.fastPath || request.answer) {
         dispatch(id, std::move(pending));      // the fast path never waits for a slot
         updateCounts();

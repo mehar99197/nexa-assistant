@@ -1,6 +1,7 @@
 #pragma once
 
 #include "app/SystemStatus.h"
+#include "core/agent/Attachments.h"
 #include "ui/NexaCoreSpec.h"
 #include "ui/NexaDesigns.h"
 #include "ui/NexaIcons.h"
@@ -19,6 +20,10 @@
 class QAction;
 class QBoxLayout;
 class QComboBox;
+class QDragEnterEvent;
+class QDropEvent;
+class QHBoxLayout;
+class QMimeData;
 class QLabel;
 class QPlainTextEdit;
 class QPushButton;
@@ -31,6 +36,7 @@ class ActionLogDock;
 class ActivityStream;
 class AgentsRail;
 class AppController;
+class AttachmentLoader;
 class CoreCard;
 class MissionBoard;
 class ProcessStats;
@@ -80,6 +86,8 @@ protected:
     bool eventFilter(QObject *watched, QEvent *event) override;
     void closeEvent(QCloseEvent *event) override;
     void resizeEvent(QResizeEvent *event) override;
+    void dragEnterEvent(QDragEnterEvent *event) override;   // files dropped anywhere on the window are attached
+    void dropEvent(QDropEvent *event) override;
 
 private:
     void buildToolbar();
@@ -123,6 +131,12 @@ private:
     void showPhonePanel(bool connected);
     void showAppContext(const QString &name, const QString &hint);
     void refreshSendButton();
+    // The files attached to the request being typed (the paper clip, a drop, a paste): chips above the input box
+    // until Send, which reads them off the GUI thread and makes the request once they are ready.
+    void chooseFiles();
+    void attachFiles(const QStringList &paths);
+    bool attachFrom(const QMimeData *data);         // a drop or a paste: local files, or a picture; false: not for us
+    void refreshAttachmentStrip();
     void askApproval(quint64 task, quint64 actionId);
     void buildMission();                // the Mission Control pieces, built once
     bool inMission() const { return design_.layout == WindowLayout::MissionControl; }
@@ -159,6 +173,10 @@ private:
     QLabel *stateHint_{nullptr};
     QPlainTextEdit *input_{nullptr};
     QPushButton *sendButton_{nullptr};
+    AttachmentLoader *attachments_{nullptr};
+    QWidget *attachmentStrip_{nullptr};
+    QHBoxLayout *attachmentChips_{nullptr};
+    QList<Attachment> pendingFiles_;
     QComboBox *modelCombo_{nullptr};
     QLabel *providerLabel_{nullptr};
     QToolButton *policyButton_{nullptr};

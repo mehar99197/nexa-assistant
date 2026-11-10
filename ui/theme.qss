@@ -94,6 +94,17 @@ QToolButton#inputButton {
 QToolButton#inputButton:hover { background: @panel2@; border-color: @muted@; }
 QToolButton#inputButton:pressed, QToolButton#inputButton:checked { background: @accentSoft@; border-color: @idle@; }
 
+/* the files attached to the request being typed: one chip each, a click takes it off */
+QWidget#attachmentStrip { background: transparent; }
+QToolButton#attachmentChip {
+    background: @panel@;
+    border: 1px solid @line@;
+    border-radius: 12px;
+    padding: 3px 10px;
+    color: @text@;
+}
+QToolButton#attachmentChip:hover { border-color: @error@; color: @error@; }
+
 QPushButton#send {
     background: @idle@;
     color: @onAccent@;

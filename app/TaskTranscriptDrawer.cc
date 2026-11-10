@@ -126,7 +126,7 @@ void TaskTranscriptDrawer::showTask(quint64 id) {
         bool open = false;
         for (const TranscriptEvent &event : transcript->events()) {
             switch (event.kind) {
-            case Kind::User: chat_->addUserMessage(event.text, task->source); break;
+            case Kind::User: chat_->addUserMessage(event.text, task->source, event.extra); break;
             case Kind::ReplyStart:
                 chat_->beginAssistantMessage();
                 open = true;

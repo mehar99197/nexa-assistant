@@ -85,7 +85,7 @@ QFont ChatView::monoFont(double scale) const {
     return mono;
 }
 
-void ChatView::addUserMessage(const QString &text, const QString &source) {
+void ChatView::addUserMessage(const QString &text, const QString &source, const QString &attachments) {
     insertMeta(tr("You"), sourceLabel(source), true);
     QTextCursor cursor = paragraphCursor();
     QTextBlockFormat block;
@@ -100,6 +100,14 @@ void ChatView::addUserMessage(const QString &text, const QString &source) {
     QString oneBlock = text;
     oneBlock.replace(u'\n', QChar::LineSeparator);  // one block, one bubble
     cursor.insertText(oneBlock, QTextCharFormat());
+    if (!attachments.isEmpty()) {
+        // The files, in the same bubble, a line of their own in the meta colour.
+        QTextCharFormat small;
+        small.setForeground(meta_);
+        small.setFontPointSize(font().pointSizeF() * 0.9);
+        if (!text.isEmpty()) cursor.insertText(QString(QChar::LineSeparator), QTextCharFormat());
+        cursor.insertText(attachments, small);
+    }
     scrollToBottom();
 }
 

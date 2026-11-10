@@ -2,6 +2,7 @@
 
 #include "core/Result.h"
 #include "core/agent/AppContext.h"
+#include "core/agent/Attachments.h"
 #include "core/agent/Conversation.h"
 #include "core/ai/ChatStream.h"
 #include "core/config/Config.h"
@@ -95,8 +96,11 @@ public:
     void refreshModels();
 
     // A request, as a task carrying on this channel's conversation (the PC's or the phone's). The task's id; 0 when
-    // none was made (nothing said, the panic, no model to ask).
-    quint64 submit(const QString &text, const QString &source = QStringLiteral("gui"));
+    // none was made (nothing said, the panic, no model to ask). `attachments`: files given with the words (prepared by
+    // AttachmentLoader): the model reads them as labelled data after the words, pictures as pictures, and the chat
+    // shows their names; a request with files always goes to the model (no fast path), and may have no words.
+    quint64 submit(const QString &text, const QString &source = QStringLiteral("gui"),
+                   const QList<PreparedAttachment> &attachments = {});
     // A spoken request from the PC's microphone; `fromOwner`: the enrolled voice was checked and it is the owner's.
     quint64 submitVoice(const QString &text, bool fromOwner);
     // Several at once (Add tasks): one task per line that says something, independent of the conversation, on
@@ -173,7 +177,8 @@ signals:
     void apiKeyRequired(const QString &providerName);   // an API provider rejected, or lacks, its key
     // A program provider (agy, opencode, Codex) is not signed in: Settings → Providers has its Sign in button.
     void signInRequired(const QString &providerName);
-    void userMessageAccepted(const QString &text, const QString &source);
+    // `attachments`: the line naming the files given with the words ("📎 notes.txt (3 KB)"), empty without any.
+    void userMessageAccepted(const QString &text, const QString &source, const QString &attachments);
     void replyStarted(const QString &source);       // "gui", "voice", …
     void replyRoute(const QString &route);          // "fast" (no model) or "agent"; may change mid-reply
     void replyVia(const QString &route);            // a fallback provider answered: "agy · claude-sonnet-4-6"

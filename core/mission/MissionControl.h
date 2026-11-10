@@ -46,9 +46,12 @@ public:
 
 // One request for the board.
 struct TaskRequest {
-    QString text;
+    QString text;                               // the user's words, as the chat shows them
     QString source{QStringLiteral("gui")};      // gui | voice | phone | phone-voice | agent (a sub-task)
     QList<ImageAttachment> images;
+    QString modelText;                          // what the model reads instead of `text` (the words plus the files
+                                                // attached, as labelled data); empty: `text` itself
+    QString attachments;                        // the chat's line under the words: "📎 report.pdf (1.2 MB)"
     std::optional<IntentMatch> fastPath;        // the fast path's tool for it; none: the model's
     QString shownFirst;                         // a line the reply opens with ("Into GNOME Terminal: `ls`")
     std::optional<QString> answer;              // the reply itself, no tool and no model (a switch was flipped)

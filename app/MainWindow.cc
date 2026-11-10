@@ -21,6 +21,7 @@
 #include "remote/RemoteServer.h"
 #include "system/android/AndroidDevice.h"
 #include "system/browser/BrowserService.h"
+#include "system/files/AttachmentLoader.h"
 #include "system/helper/HelperClient.h"
 #include "system/info/ProcessStats.h"
 #include "ui/NexaCoreWidget.h"
@@ -28,17 +29,25 @@
 
 #include <QAction>
 #include <QApplication>
+#include <QClipboard>
 #include <QCloseEvent>
 #include <QComboBox>
 #include <QCompleter>
 #include <QDialog>
+#include <QDir>
+#include <QDragEnterEvent>
+#include <QDropEvent>
+#include <QFileDialog>
+#include <QFileInfo>
 #include <QFrame>
+#include <QGuiApplication>
 #include <QHBoxLayout>
 #include <QInputDialog>
 #include <QKeyEvent>
 #include <QLabel>
 #include <QLineEdit>
 #include <QMessageBox>
+#include <QMimeData>
 #include <QScreen>
 #include <QPlainTextEdit>
 #include <QPushButton>
@@ -270,9 +279,24 @@ void MainWindow::buildCentral() {
 
     QWidget *bar = inputBar_ = new QWidget(this);
     bar->setObjectName(u"inputBar"_s);
-    auto *inputRow = new QHBoxLayout(bar);
-    inputRow->setContentsMargins(20, 12, 20, 14);
+    auto *inputColumn = new QVBoxLayout(bar);
+    inputColumn->setContentsMargins(20, 12, 20, 14);
+    inputColumn->setSpacing(8);
+    // The files attached to the request being typed, one chip each, above the box; hidden without any.
+    attachmentStrip_ = new QWidget(bar);
+    attachmentStrip_->setObjectName(u"attachmentStrip"_s);
+    attachmentChips_ = new QHBoxLayout(attachmentStrip_);
+    attachmentChips_->setContentsMargins(0, 0, 0, 0);
+    attachmentChips_->setSpacing(6);
+    attachmentChips_->addStretch(1);
+    attachmentStrip_->hide();
+    inputColumn->addWidget(attachmentStrip_);
+    auto *inputRow = new QHBoxLayout;
+    inputRow->setContentsMargins(0, 0, 0, 0);
     inputRow->setSpacing(10);
+    inputColumn->addLayout(inputRow);
+    attachments_ = new AttachmentLoader(AttachmentLoader::defaultKeepDir(), this);
+    setAcceptDrops(true);
     input_ = new QPlainTextEdit(bar);
     input_->setObjectName(u"input"_s);
     input_->setPlaceholderText(tr("Type a request…  (Enter to send, Shift+Enter for a new line)"));
@@ -281,6 +305,16 @@ void MainWindow::buildCentral() {
     input_->setVerticalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
     input_->installEventFilter(this);
     inputRow->addWidget(input_, 1);
+
+    // Attach: files given with the request — pictures, text, documents — as to any agent. A drop on the window or a
+    // paste of files or of a picture does the same.
+    auto *attach = new QAction(tr("Attach files"), this);
+    attach->setObjectName(u"attachAction"_s);
+    attach->setToolTip(tr("Attach files to the request: pictures, text, documents. You can also drop them here or "
+                          "paste them · Ctrl+O"));
+    attach->setShortcut(QKeySequence(u"Ctrl+O"_s));
+    connect(attach, &QAction::triggered, this, &MainWindow::chooseFiles);
+    inputRow->addWidget(makeIconButton(NexaIcons::Kind::Attach, u"inputButton"_s, attach));
 
     // Share screen: a switch, off at every start. On, the model may take screenshots to see what
     // you see; off, it works through commands and tools and never looks.
@@ -783,10 +817,11 @@ void MainWindow::connectController() {
     connect(controller_, &AppController::apiKeyRequired, this, &MainWindow::promptForApiKey, Qt::QueuedConnection);
     connect(controller_, &AppController::signInRequired, this, &MainWindow::showSignInRequired);
 
-    connect(controller_, &AppController::userMessageAccepted, this, [this](const QString &text, const QString &source) {
-        chatView_->addUserMessage(text, source);
-        input_->clear();
-    });
+    connect(controller_, &AppController::userMessageAccepted, this,
+            [this](const QString &text, const QString &source, const QString &attachments) {
+                chatView_->addUserMessage(text, source, attachments);
+                input_->clear();
+            });
     connect(controller_, &AppController::replyStarted, this, [this] { chatView_->beginAssistantMessage(); });
     connect(controller_, &AppController::replyRoute, chatView_, &ChatView::setReplyRoute);
     connect(controller_, &AppController::replyVia, chatView_, &ChatView::setReplyVia);
@@ -1001,13 +1036,30 @@ bool MainWindow::eventFilter(QObject *watched, QEvent *event) {
             submitInput();      // a new task, whatever else runs
             return true;
         }
+        // Files or a picture pasted into the box are attached; words paste as usual.
+        if (key->matches(QKeySequence::Paste) && attachFrom(QGuiApplication::clipboard()->mimeData())) return true;
+    }
+    // The box would paste a dropped file's path as words; the window takes the drop instead.
+    if (watched == input_ && (event->type() == QEvent::DragEnter || event->type() == QEvent::DragMove)) {
+        auto *drag = static_cast<QDragMoveEvent *>(event);
+        if (drag->mimeData()->hasUrls()) {
+            drag->acceptProposedAction();
+            return true;
+        }
+    }
+    if (watched == input_ && event->type() == QEvent::Drop) {
+        auto *drop = static_cast<QDropEvent *>(event);
+        if (attachFrom(drop->mimeData())) {
+            drop->acceptProposedAction();
+            return true;
+        }
     }
     return QMainWindow::eventFilter(watched, event);
 }
 
 void MainWindow::sendOrStop() {
-    // Words in the box are a new task; with none, the button stops the reply in view.
-    if (!input_->toPlainText().trimmed().isEmpty()) {
+    // Words or files in the box are a new task; with none, the button stops the reply in view.
+    if (!input_->toPlainText().trimmed().isEmpty() || !pendingFiles_.isEmpty()) {
         submitInput();
     } else if (controller_->isReplying()) {
         controller_->cancel();
@@ -1313,9 +1365,109 @@ void MainWindow::buildMission() {
 }
 
 void MainWindow::submitInput() {
-    const quint64 id = controller_->submit(input_->toPlainText());
-    // In Mission Control a request typed here opens, so its answer is in view; the board is a click away.
-    if (id != 0 && inMission()) openTask(id);
+    const QString text = input_->toPlainText();
+    if (pendingFiles_.isEmpty()) {
+        const quint64 id = controller_->submit(text);
+        // In Mission Control a request typed here opens, so its answer is in view; the board is a click away.
+        if (id != 0 && inMission()) openTask(id);
+        return;
+    }
+    // The files are read on a worker (a document is converted first); the request is made once they are ready.
+    const QList<Attachment> files = std::exchange(pendingFiles_, {});
+    refreshAttachmentStrip();
+    input_->clear();
+    showStatus(tr("Reading %n file(s)…", nullptr, int(files.size())), false);
+    attachments_->prepare(files, [this, text](QList<PreparedAttachment> prepared) {
+        const quint64 id = controller_->submit(text, u"gui"_s, prepared);
+        if (id != 0 && inMission()) openTask(id);
+    });
+}
+
+void MainWindow::chooseFiles() {
+    const QStringList paths = QFileDialog::getOpenFileNames(this, tr("Attach files"), QDir::homePath());
+    if (!paths.isEmpty()) attachFiles(paths);
+}
+
+void MainWindow::attachFiles(const QStringList &paths) {
+    QStringList refused;
+    for (const QString &path : paths) {
+        if (pendingFiles_.size() >= attachments::kMaxFiles) {
+            refused.append(tr("At most %n files go with one request; %1 was left out.", nullptr, attachments::kMaxFiles)
+                               .arg(QFileInfo(path).fileName()));
+            break;
+        }
+        const Result<Attachment> file = attachments::describe(path);
+        if (!file) {
+            refused.append(file.error().message);
+            continue;
+        }
+        const bool already = std::any_of(pendingFiles_.cbegin(), pendingFiles_.cend(),
+                                         [&file](const Attachment &have) { return have.path == file.value().path; });
+        if (!already) pendingFiles_.append(file.value());
+    }
+    refreshAttachmentStrip();
+    if (!refused.isEmpty()) chatView_->addNotice(refused.join(u' '));
+    input_->setFocus();
+}
+
+bool MainWindow::attachFrom(const QMimeData *data) {
+    if (!data) return false;
+    if (data->hasUrls()) {
+        QStringList paths;
+        for (const QUrl &url : data->urls()) {
+            if (url.isLocalFile()) paths.append(url.toLocalFile());
+        }
+        if (paths.isEmpty()) return false;
+        attachFiles(paths);
+        return true;
+    }
+    // A picture (a screenshot copied, an image from a page): kept as a file of Nexa's own, then attached like one.
+    if (data->hasImage() && !data->hasText()) {
+        const Result<QString> kept = attachments_->keepPastedImage(qvariant_cast<QImage>(data->imageData()));
+        if (!kept) {
+            chatView_->addNotice(kept.error().message);
+            return true;
+        }
+        attachFiles({kept.value()});
+        return true;
+    }
+    return false;
+}
+
+void MainWindow::refreshAttachmentStrip() {
+    while (attachmentChips_->count() > 1) {        // every chip; the stretch stays
+        QLayoutItem *item = attachmentChips_->takeAt(0);
+        delete item->widget();
+        delete item;
+    }
+    for (int i = 0; i < pendingFiles_.size(); ++i) {
+        const Attachment &file = pendingFiles_.at(i);
+        auto *chip = new QToolButton(attachmentStrip_);
+        chip->setObjectName(u"attachmentChip"_s);
+        chip->setToolButtonStyle(Qt::ToolButtonTextOnly);
+        chip->setCursor(Qt::PointingHandCursor);
+        const QString name = chip->fontMetrics().elidedText(file.name, Qt::ElideMiddle, 180);
+        chip->setText(u"%1 · %2  ✕"_s.arg(name, attachments::sizeInWords(file.size)));
+        chip->setToolTip(tr("%1\nClick to take it off the request").arg(file.path));
+        connect(chip, &QToolButton::clicked, this, [this, path = file.path] {
+            pendingFiles_.removeIf([&path](const Attachment &have) { return have.path == path; });
+            refreshAttachmentStrip();
+        });
+        attachmentChips_->insertWidget(i, chip);
+    }
+    attachmentStrip_->setVisible(!pendingFiles_.isEmpty());
+    refreshSendButton();
+}
+
+void MainWindow::dragEnterEvent(QDragEnterEvent *event) {
+    const QMimeData *data = event->mimeData();
+    const bool files = data->hasUrls() && std::any_of(data->urls().cbegin(), data->urls().cend(),
+                                                      [](const QUrl &url) { return url.isLocalFile(); });
+    if (files || (data->hasImage() && !data->hasText())) event->acceptProposedAction();
+}
+
+void MainWindow::dropEvent(QDropEvent *event) {
+    if (attachFrom(event->mimeData())) event->acceptProposedAction();
 }
 
 void MainWindow::openTask(quint64 id) {
@@ -1493,8 +1645,8 @@ void MainWindow::sampleProcesses() {
 }
 
 void MainWindow::refreshSendButton() {
-    // Stop only while the reply in view runs and nothing new is typed: a request is never blocked by another.
-    const bool stop = controller_->isReplying() && input_->toPlainText().trimmed().isEmpty();
+    // Stop only while the reply in view runs and nothing new is typed or attached: a request is never blocked by another.
+    const bool stop = controller_->isReplying() && input_->toPlainText().trimmed().isEmpty() && pendingFiles_.isEmpty();
     if (sendButton_->property("busy").toBool() == stop) return;
     sendButton_->setText(stop ? tr("Stop") : tr("Send"));
     sendButton_->setProperty("busy", stop);

@@ -10,7 +10,7 @@ struct TranscriptEvent {
     enum class Kind { User, ReplyStart, Route, Via, Delta, Action, Notice, Error, Finished };
     Kind kind{Kind::Notice};
     QString text;       // the words; an action's tool
-    QString extra;      // an action's summary
+    QString extra;      // an action's summary; a request's attachments line ("📎 notes.txt (3 KB)")
     bool ok{true};
     qint64 ms{0};
 };

@@ -175,6 +175,23 @@ void NexaIcons::paint(QPainter &p, Kind kind, const QRectF &box, const QColor &c
         p.drawLine(QPointF(-0.28 * s, 0), QPointF(0.28 * s, 0));
         p.drawLine(QPointF(0, -0.28 * s), QPointF(0, 0.28 * s));
         break;
+    case Kind::Attach: {
+        // A paper clip: a long loop with a shorter one inside, leaning right.
+        p.save();
+        p.rotate(-40);
+        QPainterPath clip;
+        clip.moveTo(-0.1 * s, 0.3 * s);
+        clip.lineTo(-0.1 * s, -0.2 * s);
+        clip.arcTo(QRectF(-0.1 * s, -0.36 * s, 0.32 * s, 0.32 * s), 180, -180);
+        clip.lineTo(0.22 * s, 0.26 * s);
+        clip.arcTo(QRectF(0.0 * s, 0.15 * s, 0.22 * s, 0.22 * s), 0, -180);
+        clip.lineTo(0.0 * s, -0.12 * s);
+        clip.arcTo(QRectF(0.0 * s, -0.2 * s, 0.12 * s, 0.16 * s), 180, -180);
+        clip.lineTo(0.12 * s, 0.16 * s);
+        p.drawPath(clip);
+        p.restore();
+        break;
+    }
     case Kind::Lock: {
         p.drawRoundedRect(QRectF(-0.3 * s, -0.04 * s, 0.6 * s, 0.42 * s), 0.07 * s, 0.07 * s);
         QPainterPath shackle;

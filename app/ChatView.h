@@ -26,7 +26,8 @@ class ChatView : public QTextBrowser {
 public:
     explicit ChatView(QWidget *parent = nullptr);
 
-    void addUserMessage(const QString &text, const QString &source);
+    // `attachments`: the line under the words naming the files given with them ("📎 notes.txt (3 KB)"), if any.
+    void addUserMessage(const QString &text, const QString &source, const QString &attachments = QString());
     void beginAssistantMessage();
     void setReplyRoute(const QString &route);       // "fast" (no model) or "agent"
     void setReplyVia(const QString &via);           // a fallback provider answered the reply

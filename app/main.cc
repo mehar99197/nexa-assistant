@@ -29,6 +29,7 @@
 #include "core/tools/ToolExecutor.h"
 #include "core/tools/ToolRegistry.h"
 #include "system/SystemTools.h"
+#include "system/files/AttachmentLoader.h"
 #include "system/office/OfficeTools.h"
 #include "remote/PairingManager.h"
 #include "remote/RemoteServer.h"
@@ -114,6 +115,13 @@ Config loadConfig(const ConfigStore &store, QString &warning) {
 }
 
 // A WAV file → 16 kHz mono PCM, as the microphone would have delivered it.
+// --attach paths as the running copy (whose working folder is another) will find them.
+QStringList absolutePaths(const QStringList &paths) {
+    QStringList absolute;
+    for (const QString &path : paths) absolute.append(QFileInfo(path).absoluteFilePath());
+    return absolute;
+}
+
 Result<QByteArray> loadRecording(const QString &path) {
     QFile file(path);
     if (!file.open(QIODevice::ReadOnly)) return Error{ErrorCode::NotFound, file.errorString()};
@@ -185,6 +193,9 @@ int main(int argc, char *argv[]) {
                                        u"Send <text> on start-up as if it were typed (repeatable; runs in order)."_s,
                                        u"text"_s);
     parser.addOption(askOption);
+    const QCommandLineOption attachOption(
+        u"attach"_s, u"Give <file> with the first --ask, as if attached in the window (repeatable)."_s, u"file"_s);
+    parser.addOption(attachOption);
     const QCommandLineOption voiceFileOption(
         u"voice-file"_s, u"Treat the WAV <file> as a spoken request (repeatable; runs before --ask)."_s, u"file"_s);
     parser.addOption(voiceFileOption);
@@ -236,6 +247,7 @@ int main(int argc, char *argv[]) {
         const QJsonObject handOver{{u"say"_s, QJsonArray::fromStringList(parser.values(sayOption))},
                                    {u"voiceFile"_s, voiceFiles},
                                    {u"ask"_s, QJsonArray::fromStringList(parser.values(askOption))},
+                                   {u"attach"_s, QJsonArray::fromStringList(absolutePaths(parser.values(attachOption)))},
                                    {u"pairPhone"_s, parser.isSet(pairPhoneOption)},
                                    {u"hardcore"_s, parser.isSet(hardcoreOption)}};
         if (instance.handOver(handOver)) {
@@ -605,7 +617,8 @@ int main(int argc, char *argv[]) {
         if (state == VoiceState::Idle) later();
     });
     if (recording) QObject::connect(recording, &RecordedAudioInput::drained, &controller, later);
-    const auto queue = [&](const QStringList &say, const QStringList &voiceFiles, const QStringList &ask, int delayMs) {
+    const auto queue = [&](const QStringList &say, const QStringList &voiceFiles, const QStringList &ask,
+                           const QStringList &attach, int delayMs) {
         for (const QString &text : say) steps.append([&voice, text] { voice.speak(text); });
         for (const QString &file : voiceFiles) {
             steps.append([&voice, &window, file] {
@@ -618,6 +631,7 @@ int main(int argc, char *argv[]) {
                 }
             });
         }
+        QStringList files = attach;         // --attach: with the first request
         for (const QString &text : ask) {
             // A command about Nexa itself ("unlock", "stop everything", "pause all") acts at once: queued behind the
             // task it is about, it would wait for that task to end.
@@ -626,11 +640,31 @@ int main(int argc, char *argv[]) {
                 QTimer::singleShot(0, &controller, [&controller, text] { controller.submit(text); });
                 continue;
             }
-            steps.append([&controller, text] { controller.submit(text); });
+            if (files.isEmpty()) {
+                steps.append([&controller, text] { controller.submit(text); });
+                continue;
+            }
+            // Read here and now (a scripted run; the window reads them on a worker): the request follows at once,
+            // so the next step waits for it like for any other.
+            steps.append([&controller, &window, text, files = std::exchange(files, {})] {
+                QList<PreparedAttachment> prepared;
+                for (const QString &path : files) {
+                    const Result<Attachment> file = attachments::describe(path);
+                    if (!file) {
+                        QMessageBox::warning(&window, QObject::tr("Nexa"), file.error().message);
+                        continue;
+                    }
+                    prepared.append(AttachmentLoader::prepareOne(file.value(), AttachmentLoader::defaultKeepDir(),
+                                                                 QStandardPaths::findExecutable(u"soffice"_s),
+                                                                 QStandardPaths::findExecutable(u"pdftotext"_s)));
+                }
+                controller.submit(text, u"gui"_s, prepared);
+            });
         }
         if (!steps.isEmpty()) QTimer::singleShot(delayMs, runNext);
     };
-    queue(parser.values(sayOption), parser.values(voiceFileOption), parser.values(askOption), 800);
+    queue(parser.values(sayOption), parser.values(voiceFileOption), parser.values(askOption),
+          absolutePaths(parser.values(attachOption)), 800);
     // --hear: each recording played into the microphone, as if the room said it.
     for (const QString &file : heard) {
         steps.append([recording, &window, file] {
@@ -660,7 +694,8 @@ int main(int argc, char *argv[]) {
             for (const QJsonValue &value : message.value(key).toArray()) values.append(value.toString());
             return values;
         };
-        const QStringList say = strings(u"say"_s), voiceFiles = strings(u"voiceFile"_s), asks = strings(u"ask"_s);
+        const QStringList say = strings(u"say"_s), voiceFiles = strings(u"voiceFile"_s), asks = strings(u"ask"_s),
+                          attach = strings(u"attach"_s);
         const bool pairThePhone = message.value(u"pairPhone"_s).toBool();
         if (message.value(u"hardcore"_s).toBool()) window.setHardcore(true, false);
         if (say.isEmpty() && voiceFiles.isEmpty() && asks.isEmpty() && !pairThePhone) {
@@ -671,7 +706,7 @@ int main(int argc, char *argv[]) {
         }
         if (!window.isVisible()) window.show();
         if (pairThePhone) pairPhone();
-        queue(say, voiceFiles, asks, 250);
+        queue(say, voiceFiles, asks, attach, 250);
     });
     return app.exec();
 }
