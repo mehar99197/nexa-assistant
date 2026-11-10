@@ -37,6 +37,11 @@
       <p id="hint">Say a request, or type one.</p>
     </div>
   </section>
+  <section id="lock-bar" hidden role="alert">
+    <p id="lock-text">Your PC's keyboard and mouse are locked.</p>
+    <button id="unlock" type="button" class="danger">Unlock PC</button>
+  </section>
+  <ol id="approvals" aria-live="assertive"></ol>
   <ol id="messages" aria-live="polite"></ol>
   <form id="ask" autocomplete="off">
     <textarea id="text" rows="1" placeholder="Type a request" aria-label="Request"></textarea>

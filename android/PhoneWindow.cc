@@ -45,6 +45,8 @@ PhoneWindow::PhoneWindow(PhoneSettings *settings, RemoteClient *client, Recorder
     connect(pair_, &PairPage::pairRequested, this, &PhoneWindow::onPairRequested);
     connect(chat_, &ChatPage::askRequested, this, &PhoneWindow::onAsk);
     connect(chat_, &ChatPage::cancelRequested, client_, &RemoteClient::cancel);
+    connect(chat_, &ChatPage::unlockRequested, client_, &RemoteClient::unlock);
+    connect(chat_, &ChatPage::approvalAnswered, client_, &RemoteClient::answer);
     connect(chat_, &ChatPage::talkPressed, this, &PhoneWindow::onTalkPressed);
     connect(chat_, &ChatPage::talkReleased, this, &PhoneWindow::onTalkReleased);
     connect(chat_, &ChatPage::forgetRequested, this, &PhoneWindow::forget);
@@ -195,6 +197,9 @@ void PhoneWindow::onWelcomed(const QString &device, bool voice, bool busy, const
     device_ = device;
     chat_->setStatus(tr("Your PC · connected · %1").arg(device), ChatPage::Status::Ok);
     chat_->setVoiceAvailable(voice);
+    // The PC sends its lock and what waits right after the welcome: whatever was shown before is out of date.
+    chat_->setLocked(false, {});
+    chat_->clearApprovals();
     chat_->setBusy(busy);
     pcMode_ = coreModeFromKey(mode).value_or(busy ? CoreMode::Thinking : CoreMode::Idle);
     pcNodes_ = NoNode;
@@ -243,6 +248,15 @@ void PhoneWindow::onReceived(const remote::ServerMessage &message) {
     case Type::Error:
         chat_->addMessage(ChatPage::Kind::Error, message.text);
         if (localMode_ == CoreMode::Transcribing) setLocalMode(std::nullopt);
+        break;
+    case Type::Lock:
+        chat_->setLocked(message.locked, message.text);
+        break;
+    case Type::Approval:
+        chat_->addApproval(message.id, message.agent, message.tool, message.text);
+        break;
+    case Type::Settled:
+        chat_->settleApproval(message.id);
         break;
     case Type::Welcome:
     case Type::Pong:

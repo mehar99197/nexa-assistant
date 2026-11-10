@@ -315,6 +315,53 @@ function addMeta(who, detail, right) {
   return item;
 }
 
+// ---------------------------------------------------------------- hardcore mode and the questions tasks wait on
+
+// While a hardcore task runs, the PC's keyboard and mouse are locked: this phone is one of the ways to end it.
+function showLock(locked, text) {
+  $('lock-bar').hidden = !locked;
+  $('lock-text').textContent = text || "Your PC's keyboard and mouse are locked.";
+  $('unlock').disabled = false;
+}
+
+$('unlock').addEventListener('click', () => {
+  if (send({ t: 'unlock' })) $('unlock').disabled = true;
+});
+
+// One card per question, answered once; the PC says when it was settled (here, on the PC, or on another phone).
+function addApproval(message) {
+  const id = Number(message.id);
+  if (!Number.isSafeInteger(id) || id < 1 || document.querySelector(`#approvals li[data-id="${id}"]`)) return;
+  const card = document.createElement('li');
+  card.className = 'approval';
+  card.dataset.id = String(id);
+  const title = document.createElement('p');
+  title.className = 'approval-title';
+  title.textContent = `${message.agent || 'A task'} needs you · ${message.tool || ''}`;
+  const question = document.createElement('p');
+  question.textContent = message.text || '';
+  const row = document.createElement('div');
+  row.className = 'approval-buttons';
+  for (const [label, allow] of [['Approve', true], ['Deny', false]]) {
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.textContent = label;
+    button.className = allow ? 'primary' : '';
+    button.addEventListener('click', () => {
+      if (!send({ t: 'answer', id, allow })) return;
+      for (const other of row.querySelectorAll('button')) other.disabled = true;
+    });
+    row.append(button);
+  }
+  card.append(title, question, row);
+  $('approvals').append(card);
+}
+
+function settleApproval(id) {
+  const card = document.querySelector(`#approvals li[data-id="${Number(id)}"]`);
+  if (card) card.remove();
+}
+
 function setBusy(busy) {
   state.busy = busy;
   $('send').setAttribute('aria-label', busy ? 'Stop' : 'Send');
@@ -331,6 +378,18 @@ function handle(message) {
       setStatus('Your PC · connected', 'ok');
       $('status').title = message.device;
       setPcMode(message.mode || (message.busy ? 'think' : 'idle'));
+      // The PC sends the lock and what waits right after this, so whatever was shown before is out of date.
+      showLock(false);
+      $('approvals').replaceChildren();
+      break;
+    case 'lock':
+      showLock(Boolean(message.locked), message.text);
+      break;
+    case 'approval':
+      addApproval(message);
+      break;
+    case 'settled':
+      settleApproval(message.id);
       break;
     case 'state':
       setPcMode(message.mode, Array.isArray(message.nodes) ? message.nodes : []);

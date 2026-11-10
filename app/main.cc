@@ -426,6 +426,22 @@ int main(int argc, char *argv[]) {
     RemoteBridge remoteBridge(&controller, &http);
     RemoteServer remote(&pairing, &remoteBridge, &tlsIdentity);
     QObject::connect(&controller, &AppController::userMessageAccepted, &remote, &RemoteServer::onUserMessage);
+    // Hardcore mode's lock and the questions tasks wait on: the phone shows them, unlocks and answers.
+    if (HardcoreMode *hardcore = controller.hardcore()) {
+        QObject::connect(hardcore, &HardcoreMode::stateChanged, &remote, [&remote, &remoteBridge] {
+            remote.onLockChanged(remoteBridge.isLocked(), remoteBridge.lockText());
+        });
+    }
+    QObject::connect(controller.mission(), &MissionControl::approvalRequested, &remote,
+                     [&remote, &controller](quint64, quint64 actionId) {
+        for (const Approval &approval : controller.mission()->approvals()) {
+            if (approval.actionId == actionId) {
+                remote.onApprovalAsked(actionId, approval.agentId, approval.tool, approval.question);
+            }
+        }
+    });
+    QObject::connect(controller.mission(), &MissionControl::approvalSettled, &remote,
+                     [&remote](quint64, quint64 actionId, bool allowed) { remote.onApprovalSettled(actionId, allowed); });
     QObject::connect(&controller, &AppController::replyStarted, &remote, &RemoteServer::onReplyStarted);
     QObject::connect(&controller, &AppController::replyDelta, &remote, &RemoteServer::onReplyDelta);
     QObject::connect(&controller, &AppController::replyStep, &remote, &RemoteServer::onReplyStep);

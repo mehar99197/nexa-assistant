@@ -47,7 +47,17 @@ public:
         done(QByteArrayLiteral("RIFF-fake-wav"));
     }
 
+    bool isLocked() const override { return locked; }
+    QString lockText() const override { return locked ? u"Keyboard and mouse locked until “sort photos” is done."_s : QString(); }
+    void unlock() override { ++unlocks; }
+    QList<RemoteApproval> approvals() const override { return waiting; }
+    void answer(quint64 id, bool allow) override { answers.append(u"%1:%2"_s.arg(id).arg(allow ? u"yes"_s : u"no"_s)); }
+
     bool busy{false};
+    bool locked{false};
+    int unlocks{0};
+    QList<RemoteApproval> waiting;
+    QStringList answers;
     QStringList submitted;
     int cancels{0};
     qsizetype heardBytes{0};
@@ -314,4 +324,46 @@ TEST_CASE("Revoking a phone disconnects it at once") {
     REQUIRE(again.open(f.local(u"/ws"_s).replace(u"http:"_s, u"ws:"_s)));
     again.send({{u"t"_s, u"hello"_s}, {u"token"_s, token}});
     CHECK(again.waitFor(u"error"_s).value(u"code"_s).toString() == u"unauthorized"_s);
+}
+
+TEST_CASE("A locked PC shows on the phone, is unlocked from it, and its questions are answered there") {
+    if (!haveOpenssl()) SKIP("openssl is needed to make the certificate");
+    Fixture f;
+    REQUIRE(f.start());
+    const QString token = f.pairedToken();
+    REQUIRE_FALSE(token.isEmpty());
+    f.host.locked = true;
+    f.host.waiting = {RemoteApproval{3, u"BROWSER-01"_s, u"browser_click"_s, u"Click “Submit”?"_s}};
+
+    // A phone that connects while the PC is locked learns it at once, and what waits for an answer.
+    Client phone(f.localOrigin());
+    REQUIRE(phone.open(f.local(u"/ws"_s).replace(u"http:"_s, u"ws:"_s)));
+    phone.send({{u"t"_s, u"hello"_s}, {u"token"_s, token}});
+    REQUIRE_FALSE(phone.waitFor(u"welcome"_s).isEmpty());
+    const QJsonObject lock = phone.waitFor(u"lock"_s);
+    CHECK(lock.value(u"locked"_s).toBool());
+    CHECK(lock.value(u"text"_s).toString().contains(u"sort photos"_s));
+    const QJsonObject waiting = phone.waitFor(u"approval"_s);
+    CHECK(waiting.value(u"id"_s).toInteger() == 3);
+    CHECK(waiting.value(u"agent"_s).toString() == u"BROWSER-01"_s);
+
+    phone.send({{u"t"_s, u"unlock"_s}});
+    CHECK(QTest::qWaitFor([&f] { return f.host.unlocks == 1; }, 5000));
+    f.server.onLockChanged(false, {});
+    CHECK_FALSE(phone.waitFor(u"lock"_s).value(u"locked"_s).toBool(true));
+
+    // A new question reaches every phone; the answer reaches Nexa; and every phone hears it was settled.
+    f.server.onApprovalAsked(7, u"CODE-02"_s, u"run_command"_s, u"Run `make`?"_s);
+    const QJsonObject asked = phone.waitFor(u"approval"_s);
+    CHECK(asked.value(u"id"_s).toInteger() == 7);
+    CHECK(asked.value(u"text"_s).toString() == u"Run `make`?"_s);
+    phone.send({{u"t"_s, u"answer"_s}, {u"id"_s, 7}, {u"allow"_s, false}});
+    CHECK(QTest::qWaitFor([&f] { return f.host.answers == QStringList{u"7:no"_s}; }, 5000));
+    f.server.onApprovalSettled(7, false);
+    CHECK(phone.waitFor(u"settled"_s).value(u"id"_s).toInteger() == 7);
+
+    // An answer to nothing in particular is not guessed at.
+    phone.send({{u"t"_s, u"answer"_s}, {u"allow"_s, true}});
+    CHECK(phone.waitFor(u"error"_s).value(u"code"_s).toString() == u"invalid"_s);
+    CHECK(f.host.answers.size() == 1);
 }

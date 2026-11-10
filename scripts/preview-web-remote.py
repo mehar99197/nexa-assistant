@@ -6,9 +6,11 @@ accepts any six-digit code at /api/pair, and answers the WebSocket at /ws the wa
 a short conversation, and the core's state walking through all nine states every few seconds. A typed
 request comes back as an echo. Open http://127.0.0.1:8765/#pair=123456 and the page pairs itself.
 
-    scripts/preview-web-remote.py [--port 8765] [--once]
+    scripts/preview-web-remote.py [--port 8765] [--once] [--hardcore]
 
 --once plays the conversation and the tour of states once, then holds Idle (for screenshots).
+--hardcore shows the PC locked by hardcore mode, with a question a task waits on; Unlock PC and the
+Approve / Deny buttons answer as Nexa would.
 Nothing here is Nexa's code: it is a stand-in for RemoteServer, for looking at the page only.
 """
 import argparse
@@ -40,6 +42,7 @@ CSP = ("default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' 
 WS_GUID = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11"
 MODES = ["idle", "wake", "listen", "stt", "think", "act", "speak", "fast", "offline"]
 ONCE = False
+HARDCORE = False
 
 
 def frame(payload: bytes, opcode: int = 1) -> bytes:
@@ -196,6 +199,15 @@ class Handler(BaseHTTPRequestHandler):
                           "mode": "idle"})
                     tour = threading.Thread(target=conversation, daemon=True)
                     tour.start()
+                    if HARDCORE:
+                        send({"t": "lock", "locked": True,
+                              "text": "Keyboard and mouse locked until \u201csort the photos\u201d is done."})
+                        send({"t": "approval", "id": 7, "agent": "CODE-02", "tool": "run_command",
+                              "text": "Run this command? rm -r ~/Downloads/duplicates"})
+                elif kind == "unlock":
+                    send({"t": "lock", "locked": False, "text": ""})
+                elif kind == "answer":
+                    send({"t": "settled", "id": message.get("id"), "allow": bool(message.get("allow"))})
                 elif kind == "ping":
                     send({"t": "pong"})
                 elif kind == "text":
@@ -215,12 +227,14 @@ class Handler(BaseHTTPRequestHandler):
 
 
 def main():
-    global ONCE
+    global ONCE, HARDCORE
     parser = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     parser.add_argument("--port", type=int, default=8765)
     parser.add_argument("--once", action="store_true", help="play the conversation and the tour once, then hold Idle")
+    parser.add_argument("--hardcore", action="store_true", help="show the PC locked, with a question waiting")
     args = parser.parse_args()
     ONCE = args.once
+    HARDCORE = args.hardcore
     server = ThreadingHTTPServer(("127.0.0.1", args.port), Handler)
     server.daemon_threads = True
     print(f"Open http://127.0.0.1:{args.port}/#pair=123456 in a browser (Ctrl+C stops this).", flush=True)

@@ -6,6 +6,8 @@
 #include <QJsonObject>
 #include <QJsonParseError>
 
+#include <cmath>
+
 using namespace Qt::StringLiterals;
 
 namespace nexa::remote {
@@ -40,6 +42,18 @@ std::optional<ClientMessage> decode(QByteArrayView frame) {
         parsed.type = ClientMessage::Type::Cancel;
     } else if (type == u"ping") {
         parsed.type = ClientMessage::Type::Ping;
+    } else if (type == u"unlock") {
+        parsed.type = ClientMessage::Type::Unlock;
+    } else if (type == u"answer") {
+        // Exactly a positive whole number and a yes or no: an answer is never guessed into a "yes".
+        const QJsonValue id = object.value(u"id"_s);
+        const QJsonValue allow = object.value(u"allow"_s);
+        if (!id.isDouble() || !allow.isBool()) return std::nullopt;
+        const double number = id.toDouble();
+        if (number < 1 || number > 9.0e15 || number != std::floor(number)) return std::nullopt;
+        parsed.type = ClientMessage::Type::Answer;
+        parsed.id = quint64(number);
+        parsed.allow = allow.toBool();
     } else {
         return std::nullopt;
     }
@@ -96,6 +110,19 @@ QByteArray pong() {
     return message(u"pong"_s);
 }
 
+QByteArray lock(bool locked, const QString &text) {
+    return message(u"lock"_s, {{u"locked"_s, locked}, {u"text"_s, text}});
+}
+
+QByteArray approval(quint64 id, const QString &agent, const QString &tool, const QString &question) {
+    return message(u"approval"_s,
+                   {{u"id"_s, qint64(id)}, {u"agent"_s, agent}, {u"tool"_s, tool}, {u"text"_s, question}});
+}
+
+QByteArray settled(quint64 id, bool allowed) {
+    return message(u"settled"_s, {{u"id"_s, qint64(id)}, {u"allow"_s, allowed}});
+}
+
 std::optional<ServerMessage> decodeServer(QByteArrayView frame) {
     QJsonParseError error{};
     const QJsonDocument document = QJsonDocument::fromJson(frame.toByteArray(), &error);
@@ -108,6 +135,7 @@ std::optional<ServerMessage> decodeServer(QByteArrayView frame) {
         {u"step"_s, Type::Step},         {u"finished"_s, Type::Finished}, {u"failed"_s, Type::Failed},
         {u"transcript"_s, Type::Transcript}, {u"speech"_s, Type::Speech}, {u"busy"_s, Type::Busy},
         {u"error"_s, Type::Error},       {u"pong"_s, Type::Pong},         {u"state"_s, Type::State},
+        {u"lock"_s, Type::Lock},         {u"approval"_s, Type::Approval}, {u"settled"_s, Type::Settled},
     };
     const auto type = types.constFind(object.value(u"t"_s).toString());
     if (type == types.cend()) return std::nullopt;
@@ -125,6 +153,11 @@ std::optional<ServerMessage> decodeServer(QByteArrayView frame) {
     parsed.busy = object.value(u"busy"_s).toBool();
     parsed.voice = object.value(u"voice"_s).toBool();
     parsed.mode = object.value(u"mode"_s).toString();
+    parsed.locked = object.value(u"locked"_s).toBool();
+    parsed.id = quint64(std::max<qint64>(0, object.value(u"id"_s).toInteger()));
+    parsed.agent = object.value(u"agent"_s).toString();
+    parsed.tool = object.value(u"tool"_s).toString();
+    parsed.allow = object.value(u"allow"_s).toBool();
     for (const QJsonValue &node : object.value(u"nodes"_s).toArray()) {
         if (node.isString()) parsed.nodes.append(node.toString());
     }
@@ -145,6 +178,14 @@ QByteArray cancel() {
 
 QByteArray ping() {
     return message(u"ping"_s);
+}
+
+QByteArray unlock() {
+    return message(u"unlock"_s);
+}
+
+QByteArray answer(quint64 id, bool allow) {
+    return message(u"answer"_s, {{u"id"_s, qint64(id)}, {u"allow"_s, allow}});
 }
 
 } // namespace nexa::remote

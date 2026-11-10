@@ -33,6 +33,11 @@ public:
     void transcribe(const QByteArray &pcm16k, std::function<void(Result<QString>)> done) override;
     bool canTranscribe() const override;
     void renderSpeech(const QString &text, std::function<void(Result<QByteArray>)> done) override;
+    bool isLocked() const override;         // hardcore mode counts down to the lock, or holds it
+    QString lockText() const override;
+    void unlock() override;
+    QList<RemoteApproval> approvals() const override;
+    void answer(quint64 id, bool allow) override;
 
 private:
     void build() const;

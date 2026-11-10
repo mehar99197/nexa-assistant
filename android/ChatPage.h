@@ -7,7 +7,10 @@
 #include <QWidget>
 
 class QBoxLayout;
+class QFrame;
 class QLabel;
+class QPushButton;
+class QVBoxLayout;
 class QLineEdit;
 class QListWidget;
 class QListWidgetItem;
@@ -43,6 +46,12 @@ public:
     void setVoiceAvailable(bool available);
     void setRecording(bool recording);
     void clear();
+    // Hardcore mode: the PC's keyboard and mouse are locked (a red bar with Unlock PC), and until when.
+    void setLocked(bool locked, const QString &text);
+    // The questions tasks wait on, one card each with Approve and Deny, gone once settled.
+    void addApproval(quint64 id, const QString &agent, const QString &tool, const QString &question);
+    void settleApproval(quint64 id);
+    void clearApprovals();
 
 signals:
     void askRequested(const QString &text);
@@ -50,6 +59,8 @@ signals:
     void talkPressed();
     void talkReleased();
     void forgetRequested();
+    void unlockRequested();
+    void approvalAnswered(quint64 id, bool allow);
 
 private:
     void submit();
@@ -65,6 +76,11 @@ private:
     QWidget *presenceText_{nullptr};
     QLabel *title_{nullptr};
     QLabel *hint_{nullptr};
+    QFrame *lockBar_{nullptr};
+    QLabel *lockText_{nullptr};
+    QPushButton *unlock_{nullptr};
+    QWidget *approvals_{nullptr};
+    QVBoxLayout *approvalsLayout_{nullptr};
     QListWidget *messages_{nullptr};
     MessageDelegate *delegate_{nullptr};
     QLineEdit *input_{nullptr};

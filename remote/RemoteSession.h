@@ -39,6 +39,8 @@ signals:
     void textRequest(const QString &text);
     void audioRequest(const QByteArray &pcm16k);
     void cancelRequested();
+    void unlockRequested();
+    void answered(quint64 id, bool allow);
     void closed();
 
 private:

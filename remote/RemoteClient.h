@@ -87,6 +87,8 @@ public:
     bool ask(const QString &text);                      // false when not online
     bool askAloud(const QByteArray &pcm16kMonoInt16);   // one whole utterance
     void cancel();
+    bool unlock();                                      // Unlock PC (hardcore mode); false when not online
+    bool answer(quint64 id, bool allow);                // a question a task waits on
 
     // GET a path on the server — the spoken reply — under the same trust rules.
     void fetch(const QString &path, std::function<void(Result<QByteArray>)> done);

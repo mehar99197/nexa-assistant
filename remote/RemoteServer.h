@@ -81,6 +81,10 @@ public slots:
     void onStatus(const QString &message, bool isError);
     // The Nexa core's state and the satellites it lights, as NexaCoreSpec names them on the wire.
     void onCoreChanged(const QString &mode, const QStringList &nodes);
+    // Hardcore mode's lock, and the questions tasks wait on, for every phone.
+    void onLockChanged(bool locked, const QString &text);
+    void onApprovalAsked(quint64 id, const QString &agent, const QString &tool, const QString &question);
+    void onApprovalSettled(quint64 id, bool allowed);
 
 signals:
     void clientsChanged(int count);

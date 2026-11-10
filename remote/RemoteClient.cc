@@ -331,6 +331,18 @@ void RemoteClient::cancel() {
     if (welcomed_) socket_->sendTextMessage(QString::fromUtf8(remote::cancel()));
 }
 
+bool RemoteClient::unlock() {
+    if (!welcomed_) return false;
+    socket_->sendTextMessage(QString::fromUtf8(remote::unlock()));
+    return true;
+}
+
+bool RemoteClient::answer(quint64 id, bool allow) {
+    if (!welcomed_ || id == 0) return false;
+    socket_->sendTextMessage(QString::fromUtf8(remote::answer(id, allow)));
+    return true;
+}
+
 void RemoteClient::fetch(const QString &path, std::function<void(Result<QByteArray>)> done) {
     QNetworkRequest request{QUrl(endpoint_.url(path))};
     request.setTransferTimeout(kRequestTimeoutMs);

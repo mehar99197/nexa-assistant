@@ -128,3 +128,41 @@ TEST_CASE("The phone app reads every server message back, and writes what the pa
     CHECK(remote::decode(remote::cancel())->type == remote::ClientMessage::Type::Cancel);
     CHECK(remote::decode(remote::ping())->type == remote::ClientMessage::Type::Ping);
 }
+
+TEST_CASE("Hardcore mode on the phone: the lock, Unlock PC, and the questions a task waits on") {
+    using Type = remote::ServerMessage::Type;
+    const auto lock = remote::decodeServer(remote::lock(true, u"Keyboard and mouse locked until “sort photos” is done."_s));
+    REQUIRE(lock);
+    CHECK(lock->type == Type::Lock);
+    CHECK(lock->locked);
+    CHECK(lock->text.contains(u"sort photos"_s));
+    CHECK_FALSE(remote::decodeServer(remote::lock(false, {}))->locked);
+
+    const auto approval = remote::decodeServer(remote::approval(7, u"CODE-02"_s, u"run_command"_s, u"Run `make`?"_s));
+    REQUIRE(approval);
+    CHECK(approval->type == Type::Approval);
+    CHECK(approval->id == 7);
+    CHECK(approval->agent == u"CODE-02"_s);
+    CHECK(approval->tool == u"run_command"_s);
+    CHECK(approval->text == u"Run `make`?"_s);
+    const auto settled = remote::decodeServer(remote::settled(7, false));
+    REQUIRE(settled);
+    CHECK(settled->type == Type::Settled);
+    CHECK(settled->id == 7);
+    CHECK_FALSE(settled->allow);
+
+    // The phone's side: what it writes, the server reads.
+    CHECK(remote::decode(remote::unlock())->type == remote::ClientMessage::Type::Unlock);
+    const auto answer = remote::decode(remote::answer(7, true));
+    REQUIRE(answer);
+    CHECK(answer->type == remote::ClientMessage::Type::Answer);
+    CHECK(answer->id == 7);
+    CHECK(answer->allow);
+    // An answer must say to what and which way.
+    CHECK_FALSE(remote::decode(R"({"t":"answer","allow":true})"));
+    CHECK_FALSE(remote::decode(R"({"t":"answer","id":0,"allow":true})"));
+    CHECK_FALSE(remote::decode(R"({"t":"answer","id":-3,"allow":true})"));
+    CHECK_FALSE(remote::decode(R"({"t":"answer","id":7})"));
+    CHECK_FALSE(remote::decode(R"({"t":"answer","id":7,"allow":"yes"})"));
+    CHECK_FALSE(remote::decode(R"({"t":"answer","id":"7","allow":true})"));
+}

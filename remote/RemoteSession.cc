@@ -86,6 +86,13 @@ void RemoteSession::onText(const QString &frame) {
     case remote::ClientMessage::Type::Cancel:
         emit cancelRequested();
         return;
+    case remote::ClientMessage::Type::Unlock:
+        qCInfo(lcApp).noquote() << "remote:" << deviceName_ << "asked to unlock the keyboard and mouse";
+        emit unlockRequested();
+        return;
+    case remote::ClientMessage::Type::Answer:
+        emit answered(message->id, message->allow);
+        return;
     case remote::ClientMessage::Type::Text:
         if (!allowRequest()) {
             send(remote::error(u"too-fast"_s, u"That is a lot of requests at once; wait a moment."_s));

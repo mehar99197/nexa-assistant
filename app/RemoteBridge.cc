@@ -10,6 +10,8 @@
 
 #include <QPointer>
 
+#include <algorithm>
+
 using namespace Qt::StringLiterals;
 
 namespace nexa {
@@ -87,6 +89,42 @@ void RemoteBridge::renderSpeech(const QString &text, std::function<void(Result<Q
         return;
     }
     renderer_->render(text, std::move(done));
+}
+
+bool RemoteBridge::isLocked() const {
+    const HardcoreMode *hardcore = controller_->hardcore();
+    if (!hardcore) return false;
+    using State = HardcoreMode::State;
+    return hardcore->state() == State::Counting || hardcore->holdsInput();
+}
+
+QString RemoteBridge::lockText() const {
+    const HardcoreMode *hardcore = controller_->hardcore();
+    return hardcore && isLocked() ? hardcore->banner() : QString();
+}
+
+void RemoteBridge::unlock() {
+    controller_->unlockHardcore(u"phone"_s);
+}
+
+QList<RemoteApproval> RemoteBridge::approvals() const {
+    QList<RemoteApproval> waiting;
+    for (const Approval &approval : controller_->mission()->approvals()) {
+        waiting.append(RemoteApproval{approval.actionId, approval.agentId, approval.tool, approval.question});
+    }
+    return waiting;
+}
+
+void RemoteBridge::answer(quint64 id, bool allow) {
+    MissionControl *mission = controller_->mission();
+    const QList<Approval> waiting = mission->approvals();
+    const bool known = std::any_of(waiting.cbegin(), waiting.cend(), [id](const Approval &a) { return a.actionId == id; });
+    if (!known) return;         // answered already, from the PC or another phone
+    if (allow) {
+        mission->approve(id);
+    } else {
+        mission->deny(id);
+    }
 }
 
 } // namespace nexa

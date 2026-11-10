@@ -448,3 +448,9 @@ QLabel#hardcoreBanner {
 }
 QLabel#hardcoreBanner[level="locked"] { background: @errorSoft@; color: @text@; border-bottom: 1px solid @errorLine@; }
 QLabel#hardcoreBanner[level="failed"] { background: @panel2@; color: @act@; border-bottom: 1px solid @act@; }
+
+/* Nexa Phone: the PC is locked by hardcore mode (Unlock PC); the questions its tasks wait on reuse the approval card. */
+QFrame#lockBar { background: @errorSoft@; border: 1px solid @errorLine@; border-radius: @radiusSmall@px; }
+QLabel#lockText { color: @text@; font-weight: 600; background: transparent; }
+QPushButton#unlockButton { background: @error@; color: @ground@; border: 0; padding: 8px 14px; font-weight: 700; }
+QPushButton#unlockButton:disabled { background: @errorSoft2@; color: @muted@; }

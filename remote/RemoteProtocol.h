@@ -21,10 +21,12 @@ inline constexpr qsizetype kMaxAudioFrame = 60 * 16'000 * 2;
 
 // What a client may send.
 struct ClientMessage {
-    enum class Type { Hello, Text, Cancel, Ping };
+    enum class Type { Hello, Text, Cancel, Ping, Unlock, Answer };
     Type type{Type::Ping};
     QString token;      // Hello: the token pairing handed out
     QString text;       // Text: the request, as typed
+    quint64 id{0};      // Answer: the question answered (approval's id)
+    bool allow{false};  // Answer: yes or no
 };
 
 // Anything malformed, unknown or oversized is refused rather than guessed at.
@@ -46,12 +48,20 @@ QByteArray busy(bool busy);
 // `code` lets the page act without reading prose: "unauthorized", "busy", "invalid", "too-fast", "no-voice".
 QByteArray error(const QString &code, const QString &message);
 QByteArray pong();
+// Hardcore mode: whether the PC's keyboard and mouse are locked, and the sentence that says until when.
+QByteArray lock(bool locked, const QString &text);
+// A question a task waits on (the confirm-risky policy's), answered with answer(id, allow); settled when it was.
+QByteArray approval(quint64 id, const QString &agent, const QString &tool, const QString &question);
+QByteArray settled(quint64 id, bool allowed);
 
 // The same messages as Nexa's own phone app reads them (the browser page reads the JSON itself).
 struct ServerMessage {
-    enum class Type { Welcome, Accepted, Delta, Step, Finished, Failed, Transcript, Speech, Busy, Error, Pong, State };
+    enum class Type {
+        Welcome, Accepted, Delta, Step, Finished, Failed, Transcript, Speech, Busy, Error, Pong, State, Lock, Approval,
+        Settled,
+    };
     Type type{Type::Pong};
-    QString text;       // Accepted, Delta, Step, Failed, Transcript, Error: the words
+    QString text;       // Accepted, Delta, Step, Failed, Transcript, Error: the words; Lock: until when; Approval: the question
     QString source;     // Accepted: "pc", "phone" or "phone-voice"
     QString device;     // Welcome: this phone, as it was named when it paired
     QString reason;     // Finished
@@ -63,6 +73,11 @@ struct ServerMessage {
     bool ok{true};      // Step
     bool busy{false};   // Welcome, Busy
     bool voice{false};  // Welcome: the PC can hear a recording
+    bool locked{false}; // Lock: hardcore mode holds the PC's keyboard and mouse
+    quint64 id{0};      // Approval, Settled: the question
+    QString agent;      // Approval: who asks ("CODE-02")
+    QString tool;       // Approval: what for
+    bool allow{false};  // Settled: how it was answered
 };
 
 // Unknown types are refused; missing fields take their empty value.
@@ -73,5 +88,7 @@ QByteArray hello(const QString &token);
 QByteArray text(const QString &request);
 QByteArray cancel();
 QByteArray ping();
+QByteArray unlock();                            // Unlock PC
+QByteArray answer(quint64 id, bool allow);      // Approve / Deny
 
 } // namespace nexa::remote

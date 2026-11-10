@@ -19,6 +19,7 @@
 
 #include <QAbstractButton>
 #include <QApplication>
+#include <QFrame>
 #include <QLabel>
 #include <QLineEdit>
 #include <QListWidget>
@@ -51,8 +52,13 @@ public:
         done(QByteArrayLiteral("RIFF-fake-wav"));
     }
 
+    void unlock() override { ++unlocks; }
+    void answer(quint64 id, bool allow) override { answers.append(u"%1:%2"_s.arg(id).arg(allow ? u"yes"_s : u"no"_s)); }
+
     QStringList submitted;
     int cancels{0};
+    int unlocks{0};
+    QStringList answers;
 };
 
 int freePortPair() {
@@ -316,4 +322,41 @@ TEST_CASE("Over the network the phone app shows Nexa's fingerprint and trusts it
     REQUIRE(QTest::qWaitFor([&f] { return f.onChat(); }, 10'000));
     CHECK(dialogs == 1);
     user.stop();
+}
+
+TEST_CASE("The phone app shows the PC locked, unlocks it, and answers the question a task waits on") {
+    if (!haveOpenssl()) SKIP("openssl is needed to make the certificate");
+    Fixture f;
+    REQUIRE(f.wired());
+    REQUIRE(f.start());
+    f.window.show();
+    f.window.start();
+    f.address->setText(u"127.0.0.1:%1"_s.arg(f.port + 1));
+    f.pairing.startPairing();
+    f.code->setText(f.pairing.code());
+    f.clickPair();
+    REQUIRE(QTest::qWaitFor([&f] { return f.onChat(); }, 10'000));
+
+    QFrame *bar = f.chat->findChild<QFrame *>(u"lockBar"_s);
+    QPushButton *unlock = f.chat->findChild<QPushButton *>(u"unlockButton"_s);
+    REQUIRE(bar);
+    REQUIRE(unlock);
+    CHECK_FALSE(bar->isVisibleTo(f.chat));
+    f.server.onLockChanged(true, u"Keyboard and mouse locked until “sort the photos” is done."_s);
+    REQUIRE(QTest::qWaitFor([bar, &f] { return bar->isVisibleTo(f.chat); }, 5000));
+    CHECK(f.chat->findChild<QLabel *>(u"lockText"_s)->text().contains(u"sort the photos"_s));
+
+    f.server.onApprovalAsked(7, u"CODE-02"_s, u"run_command"_s, u"Run this command? rm -r ~/Downloads/duplicates"_s);
+    REQUIRE(QTest::qWaitFor([&f] { return f.chat->findChild<QPushButton *>(u"deny"_s) != nullptr; }, 5000));
+    snapshot(f.window, u"phone-hardcore"_s);
+
+    QTest::mouseClick(f.chat->findChild<QPushButton *>(u"deny"_s), Qt::LeftButton);
+    CHECK(QTest::qWaitFor([&f] { return f.host.answers == QStringList{u"7:no"_s}; }, 5000));
+    f.server.onApprovalSettled(7, false);
+    CHECK(QTest::qWaitFor([&f] { return f.chat->findChild<QPushButton *>(u"deny"_s) == nullptr; }, 5000));
+
+    QTest::mouseClick(unlock, Qt::LeftButton);
+    CHECK(QTest::qWaitFor([&f] { return f.host.unlocks == 1; }, 5000));
+    f.server.onLockChanged(false, {});
+    CHECK(QTest::qWaitFor([bar, &f] { return !bar->isVisibleTo(f.chat); }, 5000));
 }

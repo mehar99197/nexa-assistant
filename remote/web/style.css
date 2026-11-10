@@ -190,6 +190,36 @@ button:active { filter: brightness(0.9); }
 #messages li.step.failed::before { content: "✗ "; color: var(--nx-error); }
 #messages li.error { align-self: stretch; max-width: none; background: none; color: var(--nx-error); font-size: 14px; }
 
+/* ---- hardcore mode: the PC is locked; the questions tasks wait on */
+
+#lock-bar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin: 8px 16px 0;
+  padding: 10px 12px;
+  border: 1px solid var(--nx-error);
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--nx-error) 14%, var(--panel));
+}
+#lock-bar[hidden] { display: none; }
+#lock-bar p { flex: 1; margin: 0; font-size: 14px; font-weight: 600; }
+button.danger { background: var(--nx-error); color: var(--ground); border-color: transparent; font-weight: 700; }
+
+#approvals { list-style: none; margin: 0; padding: 0 16px; display: flex; flex-direction: column; gap: 8px; }
+#approvals:empty { display: none; }
+#approvals li.approval {
+  margin-top: 8px;
+  padding: 10px 12px;
+  border: 1px solid var(--nx-act);
+  border-radius: 12px;
+  background: var(--panel2);
+}
+#approvals .approval-title { margin: 0 0 4px; color: var(--nx-act); font-family: var(--mono); font-size: 12px; font-weight: 700; }
+#approvals li.approval p { margin: 0 0 8px; }
+.approval-buttons { display: flex; gap: 8px; }
+.approval-buttons button { flex: 1; }
+
 #ask {
   display: flex;
   gap: 10px;

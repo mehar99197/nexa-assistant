@@ -4,11 +4,13 @@
 #include "ui/NexaCoreWidget.h"
 #include "ui/NexaIcons.h"
 
+#include <QFrame>
 #include <QHBoxLayout>
 #include <QLabel>
 #include <QLineEdit>
 #include <QListWidget>
 #include <QMenu>
+#include <QPushButton>
 #include <QScroller>
 #include <QStyle>
 #include <QToolButton>
@@ -87,6 +89,38 @@ ChatPage::ChatPage(QWidget *parent) : QWidget(parent), tokens_(NexaTheme::tokens
     presenceLayout_->addWidget(core_, 0, Qt::AlignHCenter);
     presenceLayout_->addWidget(presenceText_);
     layout->addWidget(presence_);
+
+    // Hardcore mode on the PC: its keyboard and mouse are locked, and this phone is a way to end it.
+    lockBar_ = new QFrame(this);
+    lockBar_->setObjectName(u"lockBar"_s);
+    auto *lockRow = new QHBoxLayout(lockBar_);
+    lockRow->setContentsMargins(12, 10, 12, 10);
+    lockRow->setSpacing(10);
+    lockText_ = new QLabel(lockBar_);
+    lockText_->setObjectName(u"lockText"_s);
+    lockText_->setWordWrap(true);
+    lockText_->setTextFormat(Qt::PlainText);
+    lockRow->addWidget(lockText_, 1);
+    unlock_ = new QPushButton(tr("Unlock PC"), lockBar_);
+    unlock_->setObjectName(u"unlockButton"_s);
+    lockRow->addWidget(unlock_);
+    lockBar_->hide();
+    auto *lockMargin = new QHBoxLayout;
+    lockMargin->setContentsMargins(16, 8, 16, 0);
+    lockMargin->addWidget(lockBar_);
+    layout->addLayout(lockMargin);
+    connect(unlock_, &QPushButton::clicked, this, [this] {
+        unlock_->setEnabled(false);
+        emit unlockRequested();
+    });
+
+    approvals_ = new QWidget(this);
+    approvals_->setObjectName(u"approvals"_s);
+    approvalsLayout_ = new QVBoxLayout(approvals_);
+    approvalsLayout_->setContentsMargins(16, 8, 16, 0);
+    approvalsLayout_->setSpacing(8);
+    approvals_->hide();
+    layout->addWidget(approvals_);
 
     messages_ = new QListWidget(this);
     messages_->setObjectName(u"messages"_s);
@@ -255,6 +289,71 @@ void ChatPage::submit() {
     if (text.isEmpty()) return;
     input_->clear();
     emit askRequested(text);
+}
+
+void ChatPage::setLocked(bool locked, const QString &text) {
+    lockText_->setText(text.isEmpty() ? tr("Your PC's keyboard and mouse are locked.") : text);
+    unlock_->setEnabled(true);
+    lockBar_->setVisible(locked);
+}
+
+void ChatPage::addApproval(quint64 id, const QString &agent, const QString &tool, const QString &question) {
+    if (id == 0) return;
+    for (const QFrame *card : approvals_->findChildren<QFrame *>(u"approvalCard"_s, Qt::FindDirectChildrenOnly)) {
+        if (card->property("approvalId").toULongLong() == id) return;       // shown already
+    }
+    auto *card = new QFrame(approvals_);
+    card->setObjectName(u"approvalCard"_s);
+    card->setProperty("approvalId", QVariant::fromValue(id));
+    auto *column = new QVBoxLayout(card);
+    column->setContentsMargins(12, 10, 12, 10);
+    column->setSpacing(6);
+    auto *title = new QLabel(tr("%1 needs you · %2").arg(agent.isEmpty() ? tr("A task") : agent, tool), card);
+    title->setObjectName(u"approvalTitle"_s);
+    title->setTextFormat(Qt::PlainText);
+    auto *text = new QLabel(question, card);
+    text->setWordWrap(true);
+    text->setTextFormat(Qt::PlainText);
+    column->addWidget(title);
+    column->addWidget(text);
+    auto *row = new QHBoxLayout;
+    row->setSpacing(8);
+    auto *approve = new QPushButton(tr("Approve"), card);
+    approve->setObjectName(u"approve"_s);
+    auto *deny = new QPushButton(tr("Deny"), card);
+    deny->setObjectName(u"deny"_s);
+    row->addWidget(approve, 1);
+    row->addWidget(deny, 1);
+    column->addLayout(row);
+    for (auto [button, allow] : {std::pair{approve, true}, std::pair{deny, false}}) {
+        connect(button, &QPushButton::clicked, this, [this, approve, deny, id, allow = allow] {
+            approve->setEnabled(false);
+            deny->setEnabled(false);
+            emit approvalAnswered(id, allow);
+        });
+    }
+    approvalsLayout_->addWidget(card);
+    approvals_->show();
+}
+
+void ChatPage::settleApproval(quint64 id) {
+    bool waiting = false;
+    for (QFrame *card : approvals_->findChildren<QFrame *>(u"approvalCard"_s, Qt::FindDirectChildrenOnly)) {
+        if (card->property("approvalId").toULongLong() != id) {
+            waiting = true;
+            continue;
+        }
+        // Later: this may be the card whose button was just pressed.
+        card->setObjectName(QString());
+        card->hide();
+        card->deleteLater();
+    }
+    approvals_->setVisible(waiting);
+}
+
+void ChatPage::clearApprovals() {
+    for (QFrame *card : approvals_->findChildren<QFrame *>(u"approvalCard"_s, Qt::FindDirectChildrenOnly)) delete card;
+    approvals_->hide();
 }
 
 } // namespace nexa

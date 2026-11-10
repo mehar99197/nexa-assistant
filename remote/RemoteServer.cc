@@ -366,6 +366,10 @@ void RemoteServer::acceptSockets() {
         connect(session, &RemoteSession::authenticated, this, [this, session] {
             session->send(remote::welcome(session->deviceName(), host_->canTranscribe(), busy_ || host_->isBusy(), mode_));
             if (!litNodes_.isEmpty()) session->send(remote::state(mode_, litNodes_));
+            if (host_->isLocked()) session->send(remote::lock(true, host_->lockText()));
+            for (const RemoteApproval &waiting : host_->approvals()) {
+                session->send(remote::approval(waiting.id, waiting.agent, waiting.tool, waiting.question));
+            }
             emit clientsChanged(clientCount());
         });
         connect(session, &RemoteSession::textRequest, this,
@@ -373,6 +377,8 @@ void RemoteServer::acceptSockets() {
         connect(session, &RemoteSession::audioRequest, this,
                 [this, session](const QByteArray &pcm) { handleAudio(session, pcm); });
         connect(session, &RemoteSession::cancelRequested, this, [this] { host_->cancel(); });
+        connect(session, &RemoteSession::unlockRequested, this, [this] { host_->unlock(); });
+        connect(session, &RemoteSession::answered, this, [this](quint64 id, bool allow) { host_->answer(id, allow); });
         connect(session, &RemoteSession::closed, this, [this, session] {
             sessions_.removeOne(session);
             session->deleteLater();
@@ -491,6 +497,18 @@ void RemoteServer::onCoreChanged(const QString &mode, const QStringList &nodes) 
     mode_ = mode;
     litNodes_ = nodes;
     broadcast(remote::state(mode, nodes));
+}
+
+void RemoteServer::onLockChanged(bool locked, const QString &text) {
+    broadcast(remote::lock(locked, text));
+}
+
+void RemoteServer::onApprovalAsked(quint64 id, const QString &agent, const QString &tool, const QString &question) {
+    broadcast(remote::approval(id, agent, tool, question));
+}
+
+void RemoteServer::onApprovalSettled(quint64 id, bool allowed) {
+    broadcast(remote::settled(id, allowed));
 }
 
 } // namespace nexa
