@@ -99,6 +99,9 @@ add_executable(nexa_tests
     # The helper's own authorisation record. Pure enough to test here without any root privilege,
     # and worth testing: it is what keeps the password prompt from coming back.
     SessionGrantsTest.cc ../helper/SessionGrants.cc
+    # Hardcore mode's lock of the keyboard and pointer, over a fake /sys/class/input.
+    InputDevicesTest.cc ../helper/InputDevices.cc
+    DeviceLockTest.cc ../helper/DeviceLock.cc
     SherpaTest.cc
     SseParserTest.cc
     SystemPureTest.cc

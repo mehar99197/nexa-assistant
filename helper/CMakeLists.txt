@@ -4,7 +4,9 @@ find_package(PolkitQt6-1 REQUIRED)
 
 qt_add_executable(nexa_helper
     main.cc
+    DeviceLock.h DeviceLock.cc
     HelperService.h HelperService.cc
+    InputDevices.h InputDevices.cc
     JobManager.h JobManager.cc
     LoginSession.h
     LoginSessions.h LoginSessions.cc
