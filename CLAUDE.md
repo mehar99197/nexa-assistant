@@ -28,7 +28,8 @@ browser profile out of the real ones, or to try another model, give it a private
 `XDG_CONFIG_HOME=/tmp/x/config XDG_DATA_HOME=/tmp/x/data`, with `playwright`, `models` and `piper` symlinked into
 `/tmp/x/data/nexa`) — it still reads the real config, so
 run it with `QT_QPA_PLATFORM=offscreen` to keep it off the user's screen (it still registers the global Talk hotkey and
-the web remote's port like the real one, so a press of the hotkey during a scripted run goes to the test copy). `--hardcore` switches hardcore mode on for that run without asking (it locks the laptop while the requests run — see
+the web remote's port like the real one, so a press of the hotkey during a scripted run goes to the test copy). A command about Nexa itself ("unlock", "stop everything", "pause all") given with `--ask` acts at once instead of
+waiting its turn. `--hardcore` switches hardcore mode on for that run without asking (it locks the laptop while the requests run — see
 the helper rule below). `--say "<text>"` speaks, `--voice-file <wav>` feeds a recording in as a spoken
 request; the three run in that order, one at a time. **To check the look**, add `--screenshot <file.png>`: once the
 requests are done and Nexa is idle, it saves a picture of the window and quits — it works offscreen, so

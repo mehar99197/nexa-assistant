@@ -603,7 +603,16 @@ int main(int argc, char *argv[]) {
                 }
             });
         }
-        for (const QString &text : ask) steps.append([&controller, text] { controller.submit(text); });
+        for (const QString &text : ask) {
+            // A command about Nexa itself ("unlock", "stop everything", "pause all") acts at once: queued behind the
+            // task it is about, it would wait for that task to end.
+            if (const std::optional<IntentMatch> match = router.route(text);
+                match && (match->panic || match->control != Control::None)) {
+                QTimer::singleShot(0, &controller, [&controller, text] { controller.submit(text); });
+                continue;
+            }
+            steps.append([&controller, text] { controller.submit(text); });
+        }
         if (!steps.isEmpty()) QTimer::singleShot(delayMs, runNext);
     };
     queue(parser.values(sayOption), parser.values(voiceFileOption), parser.values(askOption), 800);
