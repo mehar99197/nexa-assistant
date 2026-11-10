@@ -90,6 +90,7 @@ struct AndroidConfig {
 struct RemoteConfig {
     bool enabled{false};
     int port{7777};                 // HTTPS on the network; plain HTTP on loopback at port + 1
+    bool announceMessages{true};    // the PC says when a request comes from the phone ("Message received…")
 
     QJsonObject toJson() const;
     static RemoteConfig fromJson(const QJsonObject &json);

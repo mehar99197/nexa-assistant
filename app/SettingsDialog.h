@@ -56,6 +56,9 @@ public:
     void done(int result) override;     // lets go of a running sign-in
 
 private:
+    void addPage(QWidget *page, const QString &title);     // in a scroll area of its own
+    QWidget *tabOf(QWidget *page) const;                    // the tab that shows `page`
+    void fitToScreen();
     QWidget *buildProvidersTab();
     QWidget *buildVoiceTab();
     QWidget *buildHelperTab();
@@ -199,6 +202,7 @@ private:
     QLineEdit *connectAddress_{nullptr};
     QLabel *phoneResult_{nullptr};
     QCheckBox *remoteEnabled_{nullptr};
+    QCheckBox *remoteAnnounce_{nullptr};
     QSpinBox *remotePort_{nullptr};
     QLabel *remoteState_{nullptr};
     QLabel *remoteFingerprint_{nullptr};

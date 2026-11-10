@@ -43,6 +43,7 @@ if(NEXA_PHONE_STANDALONE)
         "${NEXA_ROOT}/remote/RemoteProtocol.h" "${NEXA_ROOT}/remote/RemoteProtocol.cc"
         "${NEXA_ROOT}/voice/Wav.h" "${NEXA_ROOT}/voice/Wav.cc"
         "${NEXA_ROOT}/voice/capture/AudioConverter.h" "${NEXA_ROOT}/voice/capture/AudioConverter.cc"
+        "${NEXA_ROOT}/ui/ElidedLabel.h" "${NEXA_ROOT}/ui/ElidedLabel.cc"
         "${NEXA_ROOT}/ui/NexaCorePainter.h" "${NEXA_ROOT}/ui/NexaCorePainter.cc"
         "${NEXA_ROOT}/ui/NexaCoreSpec.h" "${NEXA_ROOT}/ui/NexaCoreSpec.cc"
         "${NEXA_ROOT}/ui/NexaCoreWidget.h" "${NEXA_ROOT}/ui/NexaCoreWidget.cc"

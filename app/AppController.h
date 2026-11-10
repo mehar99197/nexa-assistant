@@ -187,6 +187,8 @@ signals:
     void replyingChanged(bool replying);            // the reply in view started or ended
     void lastHeardChanged(const QString &text);
     void announced(const QString &sentence);        // a board task said aloud that it ended or needs the user
+    // A task came from the phone (Nexa Phone or the web remote): the PC says so, and the tray shows it.
+    void phoneMessageReceived(const QString &text);
     void conversationCleared();
     void panicked();
     void microphoneOverloaded(const QString &notice);   // with a "Lower it" button beside it

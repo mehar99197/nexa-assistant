@@ -52,6 +52,7 @@
 #include <QFileInfo>
 #include <QPushButton>
 #include <QSignalBlocker>
+#include <QScreen>
 #include <QScrollArea>
 #include <QStandardItemModel>
 #include <QPixmap>
@@ -95,30 +96,29 @@ SettingsDialog::SettingsDialog(Config config, ProviderRegistry *registry, HttpCl
       http_(http),
       status_(std::move(status)) {
     setWindowTitle(tr("Settings"));
-    resize(960, 600);
 
     tabs_ = new QTabWidget(this);
-    tabs_->addTab(buildProvidersTab(), tr("Providers"));
+    addPage(buildProvidersTab(), tr("Providers"));
     missionPage_ = new MissionSettingsPage(config_, this);
-    tabs_->addTab(missionPage_, tr("Mission"));
+    addPage(missionPage_, tr("Mission"));
     voicePage_ = buildVoiceTab();
-    tabs_->addTab(voicePage_, tr("Voice"));
-    tabs_->addTab(buildHelperTab(), tr("Helper"));
-    tabs_->addTab(buildAndroidTab(), tr("Android"));
-    tabs_->addTab(buildRemoteTab(), tr("Remote"));
-    tabs_->addTab(buildConnectorsTab(), tr("Connectors"));
+    addPage(voicePage_, tr("Voice"));
+    addPage(buildHelperTab(), tr("Helper"));
+    addPage(buildAndroidTab(), tr("Android"));
+    addPage(buildRemoteTab(), tr("Remote"));
+    addPage(buildConnectorsTab(), tr("Connectors"));
     browserPage_ = new BrowserSettingsPage(config_.browser, status_.browser, this);
     memoryPage_ = new MemorySettingsPage(config_.memory, status_.memory, this);
     skillsPage_ = new SkillsSettingsPage(config_.skills, status_.skills, this);
-    tabs_->addTab(browserPage_, tr("Browser"));
-    tabs_->addTab(memoryPage_, tr("Memory"));
-    tabs_->addTab(skillsPage_, tr("Skills"));
-    tabs_->addTab(buildPolicyTab(), tr("Policy"));
-    tabs_->addTab(buildGeneralTab(), tr("General"));
+    addPage(browserPage_, tr("Browser"));
+    addPage(memoryPage_, tr("Memory"));
+    addPage(skillsPage_, tr("Skills"));
+    addPage(buildPolicyTab(), tr("Policy"));
+    addPage(buildGeneralTab(), tr("General"));
 
     // Back on Providers: the sign-in shown there is looked at again (not within 20 s of the last look).
     connect(tabs_, &QTabWidget::currentChanged, this, [this](int index) {
-        if (tabs_->widget(index) == providersPage_) checkSignIn();
+        if (tabs_->widget(index) == tabOf(providersPage_)) checkSignIn();
     });
 
     auto *buttons = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel, this);
@@ -130,6 +130,41 @@ SettingsDialog::SettingsDialog(Config config, ProviderRegistry *registry, HttpCl
     layout->addWidget(buttons);
 
     populateProviders();
+    fitToScreen();
+}
+
+void SettingsDialog::addPage(QWidget *page, const QString &title) {
+    // Every page scrolls: the dialog is never taller than its screen because one page is (on a laptop at 125 %, the
+    // tallest pushed OK and Cancel below the bottom edge). The Voice tab is a scroll area already.
+    if (qobject_cast<QScrollArea *>(page)) {
+        tabs_->addTab(page, title);
+        return;
+    }
+    auto *scroll = new QScrollArea(this);
+    scroll->setWidget(page);
+    scroll->setWidgetResizable(true);
+    scroll->setFrameShape(QFrame::NoFrame);
+    scroll->setHorizontalScrollBarPolicy(Qt::ScrollBarAsNeeded);
+    tabs_->addTab(scroll, title);
+}
+
+QWidget *SettingsDialog::tabOf(QWidget *page) const {
+    for (int i = 0; i < tabs_->count(); ++i) {
+        QWidget *tab = tabs_->widget(i);
+        if (tab == page) return tab;
+        if (auto *scroll = qobject_cast<QScrollArea *>(tab); scroll && scroll->widget() == page) return tab;
+    }
+    return page;
+}
+
+void SettingsDialog::fitToScreen() {
+    // As big as the pages like (every tab name in view), never bigger than the screen it opens on, with room for
+    // the window's title bar.
+    const QScreen *screen = parentWidget() ? parentWidget()->screen() : this->screen();
+    const QRect room = screen ? screen->availableGeometry() : QRect(0, 0, 1280, 800);
+    const int width = std::min(1240, room.width() - 48);
+    const int height = std::min(780, room.height() - 72);
+    resize(std::max(width, 480), std::max(height, 360));
 }
 
 void SettingsDialog::showTab(const QString &title) {
@@ -165,7 +200,7 @@ void SettingsDialog::snapshotTabs(const QString &directory) {
         return rows;
     };
     const auto showRow = [this](int row) {
-        tabs_->setCurrentWidget(providersPage_);
+        tabs_->setCurrentWidget(tabOf(providersPage_));
         providerList_->setCurrentRow(row);
         if (signIn_) signIn_->setOpensBrowser(false);
         // The check starts on the next turn of the event loop; wait for its answer.
@@ -257,13 +292,14 @@ void SettingsDialog::accept() {
     config_.android.autoReconnect = phoneReconnect_->isChecked();
     config_.remote.enabled = remoteEnabled_->isChecked();
     config_.remote.port = remotePort_->value();
+    config_.remote.announceMessages = remoteAnnounce_->isChecked();
     browserPage_->store(config_.browser);
     memoryPage_->store(config_.memory);
     missionPage_->store(config_.mission);
     skillsPage_->store(config_.skills);
     // The memory's own file, not the config: what the page changed, applied to the memory as it is now.
     if (const Result<void> edited = memoryPage_->applyEdits(); !edited) {
-        tabs_->setCurrentWidget(memoryPage_);
+        tabs_->setCurrentWidget(tabOf(memoryPage_));
         QMessageBox::warning(this, tr("Memory"), edited.error().message);
         return;
     }
@@ -1279,6 +1315,10 @@ QWidget *SettingsDialog::buildRemoteTab() {
     remotePort_->setRange(1024, 65534);
     remotePort_->setValue(config_.remote.port);
     remotePort_->setToolTip(tr("HTTPS on the network; the next port up serves the phone over adb"));
+    remoteAnnounce_ = new QCheckBox(tr("Say on the PC when a message comes from the phone"), page);
+    remoteAnnounce_->setObjectName(u"remoteAnnounce"_s);
+    remoteAnnounce_->setToolTip(tr("“Message received from your phone: …” — read aloud, and shown as a notification"));
+    remoteAnnounce_->setChecked(config_.remote.announceMessages);
 
     remoteState_ = new QLabel(page);
     remoteState_->setWordWrap(true);
@@ -1339,6 +1379,7 @@ QWidget *SettingsDialog::buildRemoteTab() {
 
     auto *layout = new QVBoxLayout(page);
     layout->addLayout(enableRow);
+    layout->addWidget(remoteAnnounce_);
     layout->addLayout(form);
     layout->addWidget(pairButton_, 0, Qt::AlignLeft);
     layout->addLayout(pairRow);
@@ -1652,7 +1693,7 @@ void SettingsDialog::showSignIn(const ProviderConfig &provider) {
 }
 
 void SettingsDialog::checkSignIn() {
-    if (signIn_ && tabs_ && tabs_->currentWidget() == providersPage_) signIn_->requestCheck();
+    if (signIn_ && tabs_ && tabs_->currentWidget() == tabOf(providersPage_)) signIn_->requestCheck();
 }
 
 void SettingsDialog::moveProvider(int by) {

@@ -17,6 +17,8 @@
 
 #include "QtStringMakers.h"
 
+#include "ui/ElidedLabel.h"
+
 #include <QAbstractButton>
 #include <QApplication>
 #include <QFrame>
@@ -193,7 +195,7 @@ TEST_CASE("The phone app pairs, chats, cancels and forgets, through adb's plain 
     CHECK(f.settings.isPaired());
     CHECK(f.settings.token() == f.client.token());
     CHECK(f.settings.fingerprint().isEmpty());        // plain HTTP: nothing to trust
-    CHECK(f.status->text().contains(u"Test phone"_s));
+    CHECK(static_cast<ElidedLabel *>(f.status)->fullText() == u"Your PC · connected"_s);
     REQUIRE(f.pairing.devices().size() == 1);
     CHECK(f.pairing.devices().first().name == u"Test phone"_s);
     CHECK(QTest::qWaitFor([&f] { return f.talk->isVisibleTo(f.chat); }, 5000));
@@ -359,4 +361,60 @@ TEST_CASE("The phone app shows the PC locked, unlocks it, and answers the questi
     CHECK(QTest::qWaitFor([&f] { return f.host.unlocks == 1; }, 5000));
     f.server.onLockChanged(false, {});
     CHECK(QTest::qWaitFor([bar, &f] { return !bar->isVisibleTo(f.chat); }, 5000));
+}
+
+TEST_CASE("On a phone 360 pixels wide every control stays on the screen") {
+    if (!haveOpenssl()) SKIP("openssl is needed to make the certificate");
+    Fixture f;
+    REQUIRE(f.wired());
+    REQUIRE(f.start());
+    // The OnePlus Nord N100: 720 × 1600 at density 320, so 360 × 800 for the layout.
+    f.window.resize(360, 800);
+    f.window.show();
+    f.window.start();
+    f.address->setText(u"127.0.0.1:%1"_s.arg(f.port + 1));
+    f.pairing.startPairing();
+    f.code->setText(f.pairing.code());
+    f.name->setText(u"Nexa app on BE2012"_s);
+    f.clickPair();
+    REQUIRE(QTest::qWaitFor([&f] { return f.onChat(); }, 10'000));
+    QTest::qWait(100);
+
+    CHECK(f.chat->minimumSizeHint().width() <= 360);
+    CHECK(f.window.width() == 360);
+    const auto onScreen = [&f](QWidget *widget) {
+        const QRect box(widget->mapTo(&f.window, QPoint(0, 0)), widget->size());
+        INFO(widget->objectName().toStdString() << " at " << box.x() << "," << box.y() << " " << box.width() << "x"
+                                                << box.height());
+        return QRect(0, 0, f.window.width(), f.window.height()).contains(box);
+    };
+    CHECK(onScreen(f.send));
+    CHECK(onScreen(f.input));
+    CHECK(onScreen(f.status));
+    CHECK(onScreen(f.chat->findChild<QWidget *>(u"moreButton"_s)));
+    snapshot(f.window, u"phone-360"_s);
+
+    // Locked by hardcore mode, with a question: the bar and the card fit too.
+    f.server.onLockChanged(true, u"Keyboard and mouse locked until “sort the photos in Downloads by year” is done."_s);
+    f.server.onApprovalAsked(7, u"CODE-02"_s, u"run_command"_s, u"Run this command? rm -r ~/Downloads/duplicates"_s);
+    REQUIRE(QTest::qWaitFor([&f] { return f.chat->findChild<QPushButton *>(u"deny"_s) != nullptr; }, 5000));
+    QTest::qWait(100);
+    CHECK(f.chat->minimumSizeHint().width() <= 360);
+    CHECK(onScreen(f.chat->findChild<QPushButton *>(u"unlockButton"_s)));
+    CHECK(onScreen(f.chat->findChild<QPushButton *>(u"deny"_s)));
+    snapshot(f.window, u"phone-360-locked"_s);
+}
+
+TEST_CASE("The pairing page fits a phone 360 pixels wide") {
+    Fixture f;
+    REQUIRE(f.wired());
+    f.window.resize(360, 800);
+    f.window.show();
+    f.window.start();
+    QTest::qWait(100);
+    CHECK(f.pair->minimumSizeHint().width() <= 360);
+    CHECK(f.window.width() == 360);
+    const QRect button(f.pairButton->mapTo(&f.window, QPoint(0, 0)), f.pairButton->size());
+    CHECK(QRect(0, 0, 360, 800).contains(button));
+    snapshot(f.window, u"phone-360-pair"_s);
 }

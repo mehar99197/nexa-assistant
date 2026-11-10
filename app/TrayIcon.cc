@@ -51,6 +51,10 @@ TrayIcon::TrayIcon(MainWindow *window, AppController *controller, QObject *paren
     showMode(controller->coreMode());
     connect(controller, &AppController::coreModeChanged, this, showMode);
     connect(controller, &AppController::themeChanged, this, [controller, showMode] { showMode(controller->coreMode()); });
+    // A task from the phone shows on the desktop, whatever window is in front.
+    connect(controller, &AppController::phoneMessageReceived, this, [this](const QString &text) {
+        icon_->showMessage(tr("Message received from your phone"), text, QSystemTrayIcon::Information, 6'000);
+    });
     // Hardcore mode says so on the desktop, where it is seen whatever window is in front.
     if (HardcoreMode *hardcore = controller->hardcore()) {
         connect(hardcore, &HardcoreMode::stateChanged, this, [this, hardcore, controller](HardcoreMode::State state) {

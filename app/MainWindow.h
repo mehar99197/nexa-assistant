@@ -79,6 +79,7 @@ public:
 protected:
     bool eventFilter(QObject *watched, QEvent *event) override;
     void closeEvent(QCloseEvent *event) override;
+    void resizeEvent(QResizeEvent *event) override;
 
 private:
     void buildToolbar();
@@ -90,6 +91,13 @@ private:
     QToolButton *makeIconButton(NexaIcons::Kind kind, const QString &objectName, QAction *action);
     void showCoreMode(CoreMode mode);
     void showHardcore();                    // the switch and the banner, from HardcoreMode's state
+    // Responsive: Mission Control keeps as many columns as the width holds (the agents go first, then the live
+    // activity), the toolbar drops its least needed pills before a button is hidden, the status bar its least needed
+    // labels before the message is cut.
+    static int missionColumnsFor(int width);
+    void fitToWidth();
+    void fitToolbar();
+    void fitStatusBar();
     QString titleFor(CoreMode mode) const;
     QString hintFor(CoreMode mode) const;
     void showHotkeys();
@@ -191,6 +199,14 @@ private:
     QLabel *slotsLabel_{nullptr};
     QList<QAction *> missionBar_;       // the top bar's pills of Mission Control
     QList<QAction *> chatBar_;          // the toolbar buttons only the chat designs use
+    QToolBar *toolbar_{nullptr};
+    QAction *uptimeAction_{nullptr};    // the first pills to go when the toolbar runs out of room
+    QAction *slotsAction_{nullptr};
+    QAction *refreshAction_{nullptr};
+    QAction *phonePanelAction_{nullptr};   // the toolbar's Phone panel button (Ctrl+P works without it)
+    bool compactBar_{false};            // short words on the chip, the policy and Stop all: a narrow window
+    int missionColumns_{3};             // agents | centre | activity; 2 without the agents; 1, the centre alone
+    QTimer fitTimer_;                   // the arrangement follows a resize once it settles
     QElapsedTimer uptime_;
     QTimer clock_;                      // the uptime, once a second; the CPU and memory every two
     std::unique_ptr<ProcessStats> processStats_;

@@ -202,6 +202,9 @@ int main(int argc, char *argv[]) {
         u"screenshot"_s, u"Save a picture of the window to <file> once the start-up requests are done, then quit."_s,
         u"file"_s);
     parser.addOption(screenshotOption);
+    const QCommandLineOption sizeOption(
+        u"size"_s, u"Open the window at <width>x<height> for this run (to see a design at a given size)."_s, u"size"_s);
+    parser.addOption(sizeOption);
     const QCommandLineOption themeOption(
         u"theme"_s, u"Palette for this run only: system, dark, light, or a palette's id (ocean-dark)."_s, u"palette"_s);
     parser.addOption(themeOption);
@@ -536,6 +539,12 @@ int main(int argc, char *argv[]) {
                                    .providersChanged = [&controller] { controller.reloadProviders(); }},
                       AuditLog::defaultPath());
     if (!runDesign.isEmpty() || !runPalette.isEmpty()) window.wear(runPalette, runDesign);
+    if (parser.isSet(sizeOption)) {
+        const QStringList parts = parser.value(sizeOption).split(u'x');
+        if (parts.size() == 2 && parts.at(0).toInt() > 0 && parts.at(1).toInt() > 0) {
+            window.resize(parts.at(0).toInt(), parts.at(1).toInt());
+        }
+    }
     window.show();
     // Nexa in the top bar where the desktop shows tray icons; then closing the window only hides
     // it, and the hotkeys, wake word and web remote keep working.
@@ -568,6 +577,7 @@ int main(int argc, char *argv[]) {
         if (screenshotPath.isEmpty() || screenshotTaken) return;
         screenshotTaken = true;
         QTimer::singleShot(700, &window, [&window, screenshotPath] {
+            qCInfo(lcApp) << "window" << window.size() << "smallest" << window.minimumSizeHint();
             const bool saved = window.grab().save(screenshotPath);
             qCInfo(lcApp).noquote() << (saved ? u"Saved %1"_s.arg(screenshotPath) : u"Could not save %1"_s.arg(screenshotPath));
             QCoreApplication::quit();

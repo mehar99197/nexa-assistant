@@ -44,6 +44,7 @@ Config sampleConfig() {
     config.android.autoReconnect = false;
     config.remote.enabled = true;
     config.remote.port = 8443;
+    config.remote.announceMessages = false;
     config.agent.maxToolRounds = 12;
     config.browser.mode = u"extension"_s;
     config.browser.profile = u"Profile 1"_s;
@@ -85,6 +86,7 @@ TEST_CASE("ConfigStore round-trips providers, prompt and unknown sections") {
     CHECK_FALSE(loaded.value().android.autoReconnect);
     CHECK(loaded.value().remote.enabled);
     CHECK(loaded.value().remote.port == 8443);
+    CHECK_FALSE(loaded.value().remote.announceMessages);
     CHECK(loaded.value().agent.maxToolRounds == 12);
     CHECK(loaded.value().extra.value(u"future"_s).toObject().value(u"setting"_s).toInt() == 42);
     CHECK_FALSE(loaded.value().extra.contains(u"remote"_s));

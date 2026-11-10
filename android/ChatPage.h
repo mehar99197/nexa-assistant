@@ -18,6 +18,7 @@ class QToolButton;
 
 namespace nexa {
 
+class ElidedLabel;
 class MessageDelegate;
 class NexaCoreButton;
 class NexaCoreWidget;
@@ -68,7 +69,7 @@ private:
     void refreshIcons();
 
     ThemeTokens tokens_;
-    QLabel *status_{nullptr};
+    ElidedLabel *status_{nullptr};      // cut with "…" to the width there is, never wider than the phone
     NexaCoreWidget *brandCore_{nullptr};
     QWidget *presence_{nullptr};
     QBoxLayout *presenceLayout_{nullptr};
@@ -93,6 +94,7 @@ private:
     CoreMode mode_{CoreMode::Idle};
     bool busy_{false};
     bool compact_{false};
+    bool presenceLaidOut_{false};       // the presence has been arranged once (large and centred, or a row)
 };
 
 } // namespace nexa

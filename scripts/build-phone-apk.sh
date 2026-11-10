@@ -9,7 +9,10 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
-QT_VERSION="${QT_VERSION:-6.10.2}"
+# The kit must be the same version as the system's Qt, whose host tools build it (Debian's moved to 6.11.2 and the
+# 6.10.2 kit stopped configuring): by default, whatever version the system's Qt is.
+HOST_QT_VERSION="$( (qtpaths6 --qt-version || /usr/lib/qt6/bin/qtpaths --qt-version) 2>/dev/null)"
+QT_VERSION="${QT_VERSION:-${HOST_QT_VERSION:-6.11.2}}"
 QT_ANDROID="${QT_ANDROID:-$HOME/Qt/$QT_VERSION/android_arm64_v8a}"
 QT_HOST_PATH="${QT_HOST_PATH:-/usr}"
 ANDROID_SDK_ROOT="${ANDROID_SDK_ROOT:-${ANDROID_HOME:-$HOME/Android/Sdk}}"

@@ -165,7 +165,7 @@ AndroidConfig AndroidConfig::fromJson(const QJsonObject &json) {
 }
 
 QJsonObject RemoteConfig::toJson() const {
-    return QJsonObject{{u"enabled"_s, enabled}, {u"port"_s, port}};
+    return QJsonObject{{u"enabled"_s, enabled}, {u"port"_s, port}, {u"announceMessages"_s, announceMessages}};
 }
 
 RemoteConfig RemoteConfig::fromJson(const QJsonObject &json) {
@@ -173,6 +173,7 @@ RemoteConfig RemoteConfig::fromJson(const QJsonObject &json) {
     config.enabled = json.value(u"enabled"_s).toBool(false);
     // Two ports are used (port and port + 1), both above the privileged range.
     config.port = std::clamp(json.value(u"port"_s).toInt(7777), 1024, 65534);
+    config.announceMessages = json.value(u"announceMessages"_s).toBool(true);
     return config;
 }
 

@@ -1,6 +1,7 @@
 #include "ChatPage.h"
 
 #include "MessageDelegate.h"
+#include "ui/ElidedLabel.h"
 #include "ui/NexaCoreWidget.h"
 #include "ui/NexaIcons.h"
 
@@ -51,9 +52,8 @@ ChatPage::ChatPage(QWidget *parent) : QWidget(parent), tokens_(NexaTheme::tokens
     brand->setObjectName(u"brandTitle"_s);
     header->addWidget(brand);
     header->addStretch();
-    status_ = new QLabel(this);
+    status_ = new ElidedLabel(this);
     status_->setObjectName(u"statusPill"_s);
-    status_->setTextFormat(Qt::RichText);
     header->addWidget(status_);
     more_ = new QToolButton(this);
     more_->setObjectName(u"moreButton"_s);
@@ -197,7 +197,7 @@ void ChatPage::setStatus(const QString &text, Status status) {
     case Status::Recording: dot = tokens_.listen; break;
     case Status::Plain: dot = tokens_.muted; break;
     }
-    status_->setText(u"<span style=\"color:%1\">●</span>&nbsp; %2"_s.arg(dot.name(), text.toHtmlEscaped()));
+    status_->setElidedText(text, u"<span style=\"color:%1\">●</span>&nbsp; "_s.arg(dot.name()));
 }
 
 void ChatPage::setCore(CoreMode mode, CoreNodes nodes, const QString &hint) {
@@ -218,7 +218,8 @@ void ChatPage::setLevel(double level) {
 
 void ChatPage::layoutPresence() {
     const bool compact = messages_->count() > 0;
-    if (compact == compact_ && title_->alignment() != Qt::AlignLeft) return;
+    if (presenceLaidOut_ && compact == compact_) return;
+    presenceLaidOut_ = true;
     compact_ = compact;
     presenceLayout_->setDirection(compact ? QBoxLayout::LeftToRight : QBoxLayout::TopToBottom);
     presenceLayout_->setContentsMargins(16, compact ? 4 : 8, 16, compact ? 8 : 12);

@@ -445,3 +445,37 @@ TEST_CASE("The ways out are named from what is switched on") {
     CHECK(rig.controller->hardcoreWaysOut().contains(u"Unlock PC"_s));
     CHECK_FALSE(rig.controller->hardcoreWaysOut().contains(u"own voice"_s));    // nobody's voice is enrolled
 }
+
+TEST_CASE("A task from the phone is announced on the PC; one typed here, or a command, is not") {
+    ControllerRig rig;
+    rig.scripts = {{}, {}, {}, {}};
+    rig.controller->start();
+    QSignalSpy announced(rig.controller.get(), &AppController::announced);
+    QSignalSpy received(rig.controller.get(), &AppController::phoneMessageReceived);
+    CHECK(rig.controller->submit(u"open youtube and play some nasheeds"_s, u"phone"_s) != 0);
+    REQUIRE(received.size() == 1);
+    CHECK(received.at(0).at(0).toString() == u"open youtube and play some nasheeds"_s);
+    REQUIRE(announced.size() == 1);
+    CHECK(announced.at(0).at(0).toString().startsWith(u"Message received from your phone: "_s));
+    CHECK(rig.controller->submit(u"what time is it"_s, u"phone-voice"_s) != 0);     // spoken into the phone too
+    CHECK(received.size() == 2);
+
+    CHECK(rig.controller->submit(u"tidy my downloads folder"_s, u"gui"_s) != 0);
+    CHECK(rig.controller->submit(u"status"_s, u"phone"_s) == 0);                    // a command, not a task
+    CHECK(received.size() == 2);
+    rig.controller->panic();
+}
+
+TEST_CASE("Messages from the phone are not announced when Settings → Remote says so") {
+    Config config = withScriptedModel();
+    config.remote.announceMessages = false;
+    ControllerRig rig(config);
+    rig.scripts = {{}, {}};
+    rig.controller->start();
+    QSignalSpy received(rig.controller.get(), &AppController::phoneMessageReceived);
+    QSignalSpy announced(rig.controller.get(), &AppController::announced);
+    CHECK(rig.controller->submit(u"open youtube"_s, u"phone"_s) != 0);
+    CHECK(received.isEmpty());
+    CHECK(announced.isEmpty());
+    rig.controller->panic();
+}

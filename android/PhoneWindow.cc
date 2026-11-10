@@ -195,7 +195,8 @@ void PhoneWindow::onStateChanged(RemoteClient::State state, const QString &detai
 
 void PhoneWindow::onWelcomed(const QString &device, bool voice, bool busy, const QString &mode) {
     device_ = device;
-    chat_->setStatus(tr("Your PC · connected · %1").arg(device), ChatPage::Status::Ok);
+    // The phone's own name (as it was paired) says nothing here; the pill keeps to what the phone is connected to.
+    chat_->setStatus(tr("Your PC · connected"), ChatPage::Status::Ok);
     chat_->setVoiceAvailable(voice);
     // The PC sends its lock and what waits right after the welcome: whatever was shown before is out of date.
     chat_->setLocked(false, {});

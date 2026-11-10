@@ -39,6 +39,7 @@
 #include <QLabel>
 #include <QLineEdit>
 #include <QMessageBox>
+#include <QScreen>
 #include <QPlainTextEdit>
 #include <QPushButton>
 #include <QSignalBlocker>
@@ -111,7 +112,17 @@ MainWindow::MainWindow(AppController *controller, ProviderRegistry *registry, To
       pack_(NexaThemes::resolve(controller->config().ui.theme)),
       design_(NexaDesigns::resolve(controller->config().ui.design)) {
     setWindowTitle(tr("Nexa"));
-    resize(1280, 800);
+    // 1280 × 800, or less: never bigger than the screen it opens on (a laptop at 125 % has 1536 × 864 in all, less the
+    // top bar and the title bar).
+    if (const QScreen *screen = this->screen()) {
+        const QRect room = screen->availableGeometry();
+        resize(std::min(1280, room.width() - 32), std::min(800, room.height() - 56));
+    } else {
+        resize(1280, 800);
+    }
+    fitTimer_.setSingleShot(true);
+    fitTimer_.setInterval(0);
+    connect(&fitTimer_, &QTimer::timeout, this, &MainWindow::fitToWidth);
     uptime_.start();
     buildToolbar();
     buildCentral();
@@ -127,7 +138,7 @@ MainWindow::MainWindow(AppController *controller, ProviderRegistry *registry, To
 MainWindow::~MainWindow() = default;
 
 void MainWindow::buildToolbar() {
-    QToolBar *toolbar = addToolBar(tr("Main"));
+    QToolBar *toolbar = toolbar_ = addToolBar(tr("Main"));
     toolbar->setObjectName(u"mainToolbar"_s);
     toolbar->setMovable(false);
     toolbar->setFloatable(false);
@@ -158,7 +169,7 @@ void MainWindow::buildToolbar() {
 
     auto *refresh = new QAction(tr("Reload the model list"), this);
     connect(refresh, &QAction::triggered, controller_, &AppController::refreshModels);
-    toolbar->addWidget(makeIconButton(NexaIcons::Kind::Refresh, u"iconButton"_s, refresh));
+    refreshAction_ = toolbar->addWidget(makeIconButton(NexaIcons::Kind::Refresh, u"iconButton"_s, refresh));
 
     auto *newChat = new QAction(tr("New chat"), this);
     newChat->setShortcut(QKeySequence::New);
@@ -181,7 +192,7 @@ void MainWindow::buildToolbar() {
     showPhonePanel->setText(tr("Phone panel"));
     showPhonePanel->setToolTip(tr("The phone's screen, live, while one is connected · Ctrl+P"));
     showPhonePanel->setShortcut(QKeySequence(u"Ctrl+P"_s));
-    toolbar->addWidget(makeIconButton(NexaIcons::Kind::Phone, u"iconButton"_s, showPhonePanel));
+    phonePanelAction_ = toolbar->addWidget(makeIconButton(NexaIcons::Kind::Phone, u"iconButton"_s, showPhonePanel));
 
     auto *spacer = new QWidget(this);
     spacer->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Preferred);
@@ -189,10 +200,10 @@ void MainWindow::buildToolbar() {
 
     uptimeLabel_ = new QLabel(this);
     uptimeLabel_->setObjectName(u"metaPill"_s);
-    missionBar_.append(toolbar->addWidget(uptimeLabel_));
+    missionBar_.append(uptimeAction_ = toolbar->addWidget(uptimeLabel_));
     slotsLabel_ = new QLabel(this);
     slotsLabel_->setObjectName(u"metaPill"_s);
-    missionBar_.append(toolbar->addWidget(slotsLabel_));
+    missionBar_.append(slotsAction_ = toolbar->addWidget(slotsLabel_));
     clock_.setInterval(1000);
     connect(&clock_, &QTimer::timeout, this, &MainWindow::refreshMissionBar);
     connect(&clock_, &QTimer::timeout, this, &MainWindow::sampleProcesses);
@@ -354,6 +365,7 @@ void MainWindow::applyDesign(const DesignSpec &design) {
 
 void MainWindow::rebuildCentral() {
     const WindowLayout layout = design_.layout;
+    missionColumns_ = missionColumnsFor(width());
     // A piece the new arrangement leaves out (Console has no header) must not go down with the
     // old central widget: every piece is taken back first, and placed again below.
     for (QWidget *piece : std::initializer_list<QWidget *>{header_, chatView_, inputBar_, rail_, coreCard_, centreStack_,
@@ -434,24 +446,32 @@ void MainWindow::rebuildCentral() {
         break;
     case WindowLayout::MissionControl: {
         // The agents | the core card, the board (or a task) and the input | the live activity.
+        // As many columns as the width holds: below kThreeColumns the agents go (each board row names its agent),
+        // below kTwoColumns the live activity too (a question then opens as a dialog). The side columns take their
+        // share of the width, never a fixed minimum, so the window can always be made narrower.
         auto *row = new QHBoxLayout;
         row->setContentsMargins(12, 12, 12, 0);
         row->setSpacing(12);
-        rail_->setMinimumWidth(250);
+        for (QWidget *side : std::initializer_list<QWidget *>{rail_, stream_}) {
+            side->setMinimumWidth(0);
+            side->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Preferred);
+        }
         rail_->setMaximumWidth(320);
-        stream_->setMinimumWidth(290);
         stream_->setMaximumWidth(400);
         auto *middle = new QVBoxLayout;
         middle->setContentsMargins(0, 0, 0, 0);
         middle->setSpacing(12);
         middle->addWidget(coreCard_);
         middle->addWidget(centreStack_, 1);
-        row->addWidget(rail_);
-        row->addLayout(middle, 1);
-        row->addWidget(stream_);
+        if (missionColumns_ >= 3) row->addWidget(rail_, 4);
+        row->addLayout(middle, 9);
+        if (missionColumns_ >= 2) row->addWidget(stream_, 5);
         column->addLayout(row, 1);
         column->addWidget(inputBar_);
-        for (QWidget *piece : std::initializer_list<QWidget *>{rail_, coreCard_, centreStack_, stream_}) piece->show();
+        coreCard_->show();
+        centreStack_->show();
+        rail_->setVisible(missionColumns_ >= 3);
+        stream_->setVisible(missionColumns_ >= 2);
         break;
     }
     case WindowLayout::Focus:
@@ -518,9 +538,10 @@ void MainWindow::rebuildCentral() {
 
     for (QAction *action : missionBar_) action->setVisible(mission);
     // The control room's top bar is full: the shortcut stays in the tooltip.
-    stopAllButton_->setText(mission ? tr("Stop all") : tr("Stop all · Ctrl+Alt+Esc"));
+    stopAllButton_->setText(mission || compactBar_ ? tr("Stop all") : tr("Stop all · Ctrl+Alt+Esc"));
     modelCombo_->setMinimumContentsLength(mission ? 12 : 18);
     for (QAction *action : chatBar_) action->setVisible(!mission);
+    fitTimer_.start();      // the pills that fit, for this design
     if (mission) {
         clock_.start();
         centreStack_->setCurrentWidget(board_);
@@ -616,6 +637,90 @@ void MainWindow::buildStatusBar() {
         showRemote();
         connect(status_.remote, &RemoteServer::runningChanged, this, &MainWindow::showRemote);
         connect(status_.remote, &RemoteServer::clientsChanged, this, &MainWindow::showRemote);
+    }
+}
+
+int MainWindow::missionColumnsFor(int width) {
+    constexpr int kThreeColumns = 1110;     // agents 220+, centre 560+, activity 290+, margins
+    constexpr int kTwoColumns = 810;
+    return width >= kThreeColumns ? 3 : width >= kTwoColumns ? 2 : 1;
+}
+
+void MainWindow::resizeEvent(QResizeEvent *event) {
+    QMainWindow::resizeEvent(event);
+    fitTimer_.start();
+}
+
+void MainWindow::fitToWidth() {
+    const int columns = missionColumnsFor(width());
+    if (inMission() && columns != missionColumns_) {
+        const int before = missionColumns_;
+        rebuildCentral();
+        // The activity went: the questions it held open as dialogs.
+        if (columns == 1 && before > 1) {
+            for (const Approval &approval : controller_->mission()->approvals()) askApproval(approval.task, approval.actionId);
+        }
+    }
+    fitToolbar();
+    fitStatusBar();
+    // The hint in the box: the long one only where it fits on one line.
+    const QString longHint = tr("Type a request…  (Enter to send, Shift+Enter for a new line)");
+    if (input_->placeholderText() != tr("› type a request  (Enter to send)")) {
+        input_->setPlaceholderText(input_->fontMetrics().horizontalAdvance(longHint) + 40 < input_->width()
+                                       ? longHint
+                                       : tr("Type a request…"));
+    }
+}
+
+void MainWindow::fitToolbar() {
+    if (!toolbar_ || !uptimeAction_) return;
+    const bool mission = inMission();
+    const QList<QLabel *> captions = toolbar_->findChildren<QLabel *>(u"pillLabel"_s);
+    const auto setCompact = [this, mission](bool compact) {
+        compactBar_ = compact;
+        refreshAction_->setVisible(!compact);
+        phonePanelAction_->setVisible(!compact);
+        modelCombo_->setMinimumContentsLength(compact ? 10 : mission ? 12 : 18);
+        refreshMissionBar();
+        showPolicy();
+        stopAllButton_->setText(mission || compact ? tr("Stop all") : tr("Stop all · Ctrl+Alt+Esc"));
+    };
+    uptimeAction_->setVisible(mission);
+    slotsAction_->setVisible(mission);
+    for (QLabel *caption : captions) caption->show();
+    setCompact(false);
+    const auto fits = [this] {
+        toolbar_->layout()->invalidate();
+        return toolbar_->sizeHint().width() <= width();
+    };
+    // Least needed first: how long Nexa has run, the slots (the agents rail says them too), "Provider" and "Model"
+    // before the values, then short words and no reload button (Settings → Providers has it) — never Stop all,
+    // the policy or Settings.
+    if (mission && !fits()) uptimeAction_->setVisible(false);
+    if (mission && !fits()) slotsAction_->setVisible(false);
+    if (!fits()) {
+        for (QLabel *caption : captions) caption->hide();
+    }
+    if (!fits()) setCompact(true);
+}
+
+void MainWindow::fitStatusBar() {
+    // Least needed first; the message keeps at least a third of the bar.
+    const QList<QLabel *> optional{remoteLabel_, phoneLabel_, browserLabel_, screenLabel_, helperLabel_};
+    for (QLabel *label : optional) {
+        if (label) label->show();
+    }
+    const auto used = [this] {
+        int total = 0;
+        for (QLabel *label : {appLabel_, screenLabel_, browserLabel_, helperLabel_, sttLabel_, ttsLabel_, phoneLabel_,
+                              remoteLabel_}) {
+            if (label && label->isVisibleTo(statusBar())) total += label->sizeHint().width() + 10;
+        }
+        return total;
+    };
+    for (QLabel *label : optional) {
+        if (used() <= width() * 2 / 3) break;
+        if (label) label->hide();
     }
 }
 
@@ -910,7 +1015,9 @@ void MainWindow::sendOrStop() {
 }
 
 void MainWindow::askApproval(quint64 task, quint64 actionId) {
-    if (inMission()) return;    // the live activity holds the question, with Approve and Deny
+    // The live activity holds the question, with Approve and Deny — unless the window is too narrow to show it.
+    if (inMission() && missionColumns_ >= 2) return;
+    if (findChild<QMessageBox *>(u"approval-%1"_s.arg(actionId))) return;     // asked already
     MissionControl *mission = controller_->mission();
     const QList<Approval> waiting = mission->approvals();
     const auto found = std::find_if(waiting.cbegin(), waiting.cend(), [actionId](const Approval &a) { return a.actionId == actionId; });
@@ -1050,15 +1157,18 @@ void MainWindow::showMicrophoneTrouble(const QString &notice) {
 }
 
 void MainWindow::showPolicy() {
-    policyButton_->setText(tr("Policy: %1").arg(policyWords(controller_->config().policyMode)));
+    const QString words = policyWords(controller_->config().policyMode);
+    policyButton_->setText(compactBar_ ? words : tr("Policy: %1").arg(words));
 }
 
 void MainWindow::showVoiceEngines() {
     const VoicePipeline *voice = controller_->voice();
     if (!voice || !sttLabel_) return;
     const QString provider = controller_->providerName();
-    sttLabel_->setText(tr("STT: %1").arg(voice->canListen() ? shortEngineNames(voice->recognizerName(), provider)
-                                                             : tr("off")));
+    // Shortened to what fits a status bar; the whole chain is the tooltip.
+    sttLabel_->setText(sttLabel_->fontMetrics().elidedText(
+        tr("STT: %1").arg(voice->canListen() ? shortEngineNames(voice->recognizerName(), provider) : tr("off")),
+        Qt::ElideRight, 300));
     sttLabel_->setToolTip(tr("Speech recognition, in the order tried (Settings → Voice): %1").arg(voice->recognizerName()));
     ttsLabel_->setText(tr("TTS: %1").arg(voice->canSpeak() ? shortEngineNames(voice->speechName(), provider)
                                                             : tr("off")));
@@ -1360,7 +1470,9 @@ void MainWindow::showMicLine(double level) {
 void MainWindow::refreshMissionBar() {
     if (!onlineChip_) return;
     const bool offline = controller_->coreMode() == CoreMode::Offline;
-    onlineChip_->setText(offline ? tr("● CORE OFFLINE") : tr("● CORE ONLINE"));
+    // Narrow, the chip is its dot (and the word when the core is offline, which must never go unsaid).
+    onlineChip_->setText(compactBar_ ? (offline ? tr("● OFFLINE") : tr("●"))
+                                     : (offline ? tr("● CORE OFFLINE") : tr("● CORE ONLINE")));
     onlineChip_->setProperty("offline", offline);
     repolish(onlineChip_);
     onlineChip_->setToolTip(offline ? controller_->offlineReason() : tr("The providers answer."));

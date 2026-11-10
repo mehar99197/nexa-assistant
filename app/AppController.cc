@@ -357,6 +357,16 @@ quint64 AppController::submit(const QString &text, const QString &source) {
     }
     const quint64 id = mission_->add(request);
     heads_.insert(channelOf(source), id);
+    // Asked from the phone: whoever is at the PC hears that it arrived (Settings → Remote).
+    if (source.startsWith(u"phone"_s) && config_.remote.announceMessages) {
+        emit phoneMessageReceived(prompt);
+        const QString sentence = tr("Message received from your phone: %1.").arg(titleFor(prompt));
+        if (config_.voice.speakReplies == u"never"_s) {
+            emit announced(sentence);       // said nowhere but the chat and the tray
+        } else {
+            announce(sentence);
+        }
+    }
     return id;
 }
 

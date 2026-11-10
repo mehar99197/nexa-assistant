@@ -15,6 +15,7 @@
 #include <QAction>
 #include <QApplication>
 #include <QCoreApplication>
+#include <QDialogButtonBox>
 #include <QFile>
 #include <QJsonDocument>
 #include <QJsonObject>
@@ -24,6 +25,8 @@
 #include <QMenu>
 #include <QMessageBox>
 #include <QPushButton>
+#include <QScrollArea>
+#include <QTabWidget>
 #include <QTemporaryDir>
 #include <QTest>
 #include <QTimer>
@@ -297,4 +300,26 @@ TEST_CASE("Enter after a removal never removes the next provider") {
         QTest::qWait(30);
     }
     CHECK(providerIds(*rig.dialog) == QStringList{u"codex"_s, u"groq"_s});
+}
+
+TEST_CASE("Settings fits a small laptop screen: every page scrolls, OK and Cancel stay in view") {
+    Rig rig;
+    rig.open();
+    // A 1366 × 768 laptop at 125 %: 1093 × 614 for the layout, less the top bar and the window's title.
+    const QSize small(1000, 540);
+    CHECK(rig.dialog->minimumSizeHint().width() <= small.width());
+    CHECK(rig.dialog->minimumSizeHint().height() <= small.height());
+    rig.dialog->resize(small);
+    QTest::qWait(50);
+    auto *buttons = rig.dialog->findChild<QDialogButtonBox *>();
+    REQUIRE(buttons);
+    const QRect box(buttons->mapTo(rig.dialog.get(), QPoint(0, 0)), buttons->size());
+    CHECK(rig.dialog->rect().contains(box));
+    // Each page is in a scroll area, so none of them makes the dialog taller.
+    auto *tabs = rig.dialog->findChild<QTabWidget *>();
+    REQUIRE(tabs);
+    for (int i = 0; i < tabs->count(); ++i) {
+        INFO(tabs->tabText(i).toStdString());
+        CHECK(qobject_cast<QScrollArea *>(tabs->widget(i)) != nullptr);
+    }
 }
