@@ -67,3 +67,16 @@ TEST_CASE("A tunnel that stops by itself is started again") {
     tunnel.stop();
     CHECK(tunnel.state() == State::Off);
 }
+
+TEST_CASE("Where the network's DNS cannot find cloudflared's servers, it is started again naming them") {
+    // Without --edge it says what cloudflared says on such a router and exits; with it, it connects.
+    const QString script = u"case \"$*\" in *--edge*) echo 'INF |  https://named-edge.trycloudflare.com  |'; "
+                           "echo 'INF Registered tunnel connection connIndex=0'; sleep 30;; "
+                           "*) echo 'ERR Initiating shutdown error=\"Could not lookup srv records on "
+                           "_v2-origintunneld._tcp.argotunnel.com: cannot unmarshal DNS message\"'; exit 1;; esac"_s;
+    TunnelProcess tunnel(u"cloudflared"_s);
+    tunnel.start(TunnelProcess::Spec{u"/bin/sh"_s, {u"-c"_s, script, u"sh"_s}, &tunnellog::cloudflaredLine, {},
+                                     {u"-c"_s, script, u"sh"_s, u"--edge"_s}});
+    REQUIRE(QTest::qWaitFor([&tunnel] { return tunnel.state() == State::Running; }, 5000));
+    CHECK(tunnel.url() == u"https://named-edge.trycloudflare.com"_s);
+}

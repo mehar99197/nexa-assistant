@@ -31,6 +31,7 @@ LineEvent cloudflaredLine(const QString &line) {
     static const QRegularExpression quick(u"https://[a-z0-9-]+\\.trycloudflare\\.com"_s);
     if (const QRegularExpressionMatch found = quick.match(line); found.hasMatch()) event.url = found.captured();
     if (line.contains(u"Registered tunnel connection"_s)) event.connected = true;
+    if (line.contains(u"Could not lookup srv records"_s)) event.edgeLookupFailed = true;
     static const QRegularExpression error(u"(?:^|\\s)ERR\\s+(.*)$"_s);
     if (const QRegularExpressionMatch found = error.match(line); found.hasMatch()) {
         event.error = found.captured(1).trimmed();

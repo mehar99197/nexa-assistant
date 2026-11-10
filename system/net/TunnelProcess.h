@@ -29,6 +29,7 @@ public:
         QStringList arguments;
         std::function<tunnellog::LineEvent(const QString &)> read;
         QString fixedUrl;                                       // the address when it is known before (a named tunnel)
+        QStringList fallbackArguments;                          // when the log says the usual way cannot work here
     };
 
     explicit TunnelProcess(QString name, QObject *parent = nullptr);
@@ -58,6 +59,7 @@ private:
     QTimer restart_;
     int failures_{0};
     bool fatal_{false};
+    bool fallback_{false};          // the fallback arguments are in use (edgeLookupFailed)
     bool stopping_{false};
     State state_{State::Off};
     QString url_;

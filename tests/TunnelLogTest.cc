@@ -29,6 +29,12 @@ TEST_CASE("cloudflared: a quick tunnel's address, the connection, and its errors
         u"2026-11-11T01:30:00Z ERR Failed to fetch features, default to disable error=\"lookup cfd-features.argotunnel.com\""_s);
     CHECK_FALSE(features.fatal);
     CHECK(cloudflaredLine(u"2026-11-11T01:30:00Z INF Starting tunnel tunnelID=6ff42ae2"_s).error.isEmpty());
+    // This laptop's router: its DNS answers the SRV lookup in a form Go cannot read.
+    const LineEvent dns = cloudflaredLine(
+        u"2026-11-10T21:18:31Z ERR Initiating shutdown error=\"Could not lookup srv records on "
+        "_v2-origintunneld._tcp.argotunnel.com: lookup argotunnel.com on 192.168.0.1:53: cannot unmarshal DNS message\""_s);
+    CHECK(dns.edgeLookupFailed);
+    CHECK_FALSE(dns.fatal);
 }
 
 TEST_CASE("ngrok: the tunnel's address, and why it would not start") {

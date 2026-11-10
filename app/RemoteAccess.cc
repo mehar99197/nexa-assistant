@@ -56,16 +56,17 @@ void RemoteAccess::apply(const RemoteConfig &config) {
         return;
     }
     const QString door = u"http://127.0.0.1:%1"_s.arg(server_->tunnelPort());
+    // Where cloudflared's own lookup of its servers fails (a router's DNS it cannot read), they are named directly.
+    const QStringList edges{u"--edge"_s, u"region1.v2.argotunnel.com:7844"_s, u"--edge"_s, u"region2.v2.argotunnel.com:7844"_s};
+    const QStringList tunnel{u"tunnel"_s, u"--no-autoupdate"_s};
     if (config.cloudflare == u"named"_s && !config.cloudflareHostname.isEmpty()) {
-        cloudflare_->start({tunnelProgram(u"cloudflared"_s),
-                            {u"tunnel"_s, u"--no-autoupdate"_s, u"run"_s, u"--url"_s, door, config.cloudflareTunnel},
-                            &tunnellog::cloudflaredLine,
-                            u"https://"_s + config.cloudflareHostname});
+        const QStringList run{u"run"_s, u"--url"_s, door, config.cloudflareTunnel};
+        cloudflare_->start({tunnelProgram(u"cloudflared"_s), tunnel + run, &tunnellog::cloudflaredLine,
+                            u"https://"_s + config.cloudflareHostname, tunnel + edges + run});
     } else if (config.cloudflare == u"quick"_s) {
-        cloudflare_->start({tunnelProgram(u"cloudflared"_s),
-                            {u"tunnel"_s, u"--no-autoupdate"_s, u"--url"_s, door},
-                            &tunnellog::cloudflaredLine,
-                            {}});
+        const QStringList url{u"--url"_s, door};
+        cloudflare_->start({tunnelProgram(u"cloudflared"_s), tunnel + url, &tunnellog::cloudflaredLine, {},
+                            tunnel + edges + url});
     } else {
         cloudflare_->stop();
     }

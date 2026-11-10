@@ -87,7 +87,12 @@ void TailscaleWatcher::signIn(const QString &hostname, std::function<void(Result
     });
     // The owner has ten minutes to sign in; `tailscale up` waits until they have.
     QTimer::singleShot(600'000, process, [process] { process->kill(); });
-    process->start(program_, {u"up"_s, u"--hostname=%1"_s.arg(hostname)});
+    // `tailscale up` resets every setting it is not given: the operator (the user allowed to run it) is given again,
+    // or the next sign-in would need sudo once more.
+    const QString user = qEnvironmentVariable("USER");
+    QStringList arguments{u"up"_s, u"--hostname=%1"_s.arg(hostname)};
+    if (!user.isEmpty()) arguments.append(u"--operator=%1"_s.arg(user));
+    process->start(program_, arguments);
 }
 
 } // namespace nexa

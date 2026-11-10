@@ -12,6 +12,9 @@ struct LineEvent {
     bool connected{false};
     QString error;          // one line, no newlines
     bool fatal{false};
+    // cloudflared could not look Cloudflare's servers up (a router whose DNS answers SRV queries in a form Go cannot
+    // read, and DNS over TLS blocked): naming them directly gets past it.
+    bool edgeLookupFailed{false};
 };
 
 // cloudflared's own log (stderr): "INF |  https://….trycloudflare.com  |", "INF Registered tunnel connection …",

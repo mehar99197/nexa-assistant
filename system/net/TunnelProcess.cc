@@ -33,9 +33,11 @@ void TunnelProcess::start(Spec spec) {
     spec_ = std::move(spec);
     failures_ = 0;
     fatal_ = false;
+    fallback_ = false;
     problem_.clear();
     if (spec_.program.isEmpty()) {
         problem_ = tr("%1 is not installed: scripts/download-tunnels.sh puts it in ~/.local/share/nexa/tunnels.").arg(name_);
+        qCInfo(lcApp).noquote() << "tunnel:" << problem_;
         setState(State::Missing);
         return;
     }
@@ -85,14 +87,22 @@ void TunnelProcess::launch() {
     url_ = spec_.fixedUrl;
     pending_.clear();
     setState(State::Starting);
-    qCInfo(lcApp).noquote() << "tunnel: starting" << name_;
-    process_->start(spec_.program, spec_.arguments);
+    qCInfo(lcApp).noquote() << "tunnel: starting" << name_ << (fallback_ ? u"(its servers named directly)"_s : QString());
+    process_->start(spec_.program, fallback_ ? spec_.fallbackArguments : spec_.arguments);
 }
 
 void TunnelProcess::onLine(const QString &line) {
     if (line.isEmpty() || !spec_.read) return;
     const tunnellog::LineEvent event = spec_.read(line);
     if (!event.url.isEmpty()) url_ = event.url;
+    if (event.edgeLookupFailed && !fallback_ && !spec_.fallbackArguments.isEmpty()) {
+        // It cannot find its servers on this network's DNS; started again at once, naming them.
+        qCInfo(lcApp).noquote() << "tunnel:" << name_ << "cannot look its servers up on this network's DNS";
+        fallback_ = true;
+        stopping_ = true;
+        process_->terminate();
+        return;
+    }
     if (!event.error.isEmpty()) {
         problem_ = event.error;
         if (event.fatal) {
@@ -120,7 +130,11 @@ void TunnelProcess::onFinished() {
         setState(State::Failed);
         return;
     }
-    if (stopping_) return;
+    if (stopping_) {
+        stopping_ = false;
+        if (fallback_ && state_ == State::Starting) launch();        // the same tunnel, its servers named
+        return;
+    }
     ++failures_;
     if (problem_.isEmpty()) problem_ = tr("%1 stopped.").arg(name_);
     const int pause = pauseAfter(failures_);
