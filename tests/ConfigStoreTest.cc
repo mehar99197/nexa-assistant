@@ -45,6 +45,10 @@ Config sampleConfig() {
     config.remote.enabled = true;
     config.remote.port = 8443;
     config.remote.announceMessages = false;
+    config.remote.cloudflare = u"named"_s;
+    config.remote.cloudflareHostname = u"nexa.nexacodesolutions.online"_s;
+    config.remote.ngrok = true;
+    config.remote.ngrokDomain = u"quiet-owl.ngrok-free.app"_s;
     config.agent.maxToolRounds = 12;
     config.browser.mode = u"extension"_s;
     config.browser.profile = u"Profile 1"_s;
@@ -87,6 +91,12 @@ TEST_CASE("ConfigStore round-trips providers, prompt and unknown sections") {
     CHECK(loaded.value().remote.enabled);
     CHECK(loaded.value().remote.port == 8443);
     CHECK_FALSE(loaded.value().remote.announceMessages);
+    CHECK(loaded.value().remote.tailscale);
+    CHECK(loaded.value().remote.cloudflare == u"named"_s);
+    CHECK(loaded.value().remote.cloudflareTunnel == u"nexa"_s);
+    CHECK(loaded.value().remote.cloudflareHostname == u"nexa.nexacodesolutions.online"_s);
+    CHECK(loaded.value().remote.ngrok);
+    CHECK(loaded.value().remote.ngrokDomain == u"quiet-owl.ngrok-free.app"_s);
     CHECK(loaded.value().agent.maxToolRounds == 12);
     CHECK(loaded.value().extra.value(u"future"_s).toObject().value(u"setting"_s).toInt() == 42);
     CHECK_FALSE(loaded.value().extra.contains(u"remote"_s));

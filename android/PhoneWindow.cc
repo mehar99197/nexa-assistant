@@ -56,6 +56,12 @@ PhoneWindow::PhoneWindow(PhoneSettings *settings, RemoteClient *client, Recorder
     connect(client_, &RemoteClient::received, this, &PhoneWindow::onReceived);
     connect(client_, &RemoteClient::unauthorized, this, &PhoneWindow::onUnauthorized);
     connect(client_, &RemoteClient::certificateRejected, this, &PhoneWindow::onCertificateRejected);
+    connect(client_, &RemoteClient::routesLearned, this, &PhoneWindow::onRoutesLearned);
+    connect(client_, &RemoteClient::connectedVia, this, [this](const QString &via) {
+        // At home (adb, the Wi-Fi) it is simply connected; away, it says how.
+        const bool away = !via.isEmpty() && via != u"adb"_s && via != u"Wi-Fi"_s;
+        chat_->setStatus(away ? tr("Your PC · connected · via %1").arg(via) : tr("Your PC · connected"), ChatPage::Status::Ok);
+    });
 
     connect(recorder_, &Recorder::recorded, this, &PhoneWindow::onRecorded);
     connect(recorder_, &Recorder::stopped, this, &PhoneWindow::onRecordingStopped);
@@ -93,8 +99,29 @@ void PhoneWindow::start() {
     client_->setEndpoint(endpoint);
     client_->setPinnedFingerprint(settings_->fingerprint());
     client_->setToken(settings_->token());
+    useLearnedRoutes();
     pages_->setCurrentWidget(chat_);
     client_->connectToNexa();
+}
+
+void PhoneWindow::useLearnedRoutes() {
+    QList<RemoteEndpoint> ways;
+    for (const RemoteRoute &route : settings_->routes()) {
+        if (const std::optional<RemoteEndpoint> way = RemoteEndpoint::fromRoute(route)) ways.append(*way);
+    }
+    client_->setAlternates(ways);
+}
+
+void PhoneWindow::onRoutesLearned(const QList<RemoteRoute> &routes, const QString &fingerprint) {
+    if (!routes.isEmpty()) settings_->setRoutes(routes);
+    // Nexa's own certificate, for the direct ways (Tailscale, the Wi-Fi): taken only while connected over adb — the
+    // phone's own loopback, which no one on a network or at a tunnel stands in — and only if none is trusted yet.
+    if (!fingerprint.isEmpty() && settings_->fingerprint().isEmpty() && !client_->endpointInUse().tls) {
+        settings_->setFingerprint(fingerprint);
+        client_->setPinnedFingerprint(fingerprint);
+        qWarning().noquote() << "nexa routes: took the PC's certificate over adb";
+    }
+    useLearnedRoutes();
 }
 
 void PhoneWindow::pairWith(const QString &address, const QString &code, const QString &name) {
@@ -261,6 +288,7 @@ void PhoneWindow::onReceived(const remote::ServerMessage &message) {
         break;
     case Type::Welcome:
     case Type::Pong:
+    case Type::Routes:      // the client says them (routesLearned)
         break;
     }
 }

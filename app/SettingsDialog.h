@@ -76,6 +76,7 @@ private:
     void showPhoneResult(const QString &text, bool ok);
     QWidget *buildRemoteTab();
     void showRemote();
+    void showAwayFromHome();      // Tailscale, Cloudflare and ngrok, as RemoteAccess finds them
     void startPairing();
     void showPairing();
     void showPairedDevices();
@@ -203,6 +204,16 @@ private:
     QLabel *phoneResult_{nullptr};
     QCheckBox *remoteEnabled_{nullptr};
     QCheckBox *remoteAnnounce_{nullptr};
+    // Away from home.
+    QCheckBox *tailscaleCheck_{nullptr};
+    QLabel *tailscaleState_{nullptr};
+    QPushButton *tailscaleSignIn_{nullptr};
+    QComboBox *cloudflareMode_{nullptr};
+    QLineEdit *cloudflareHostname_{nullptr};
+    QLabel *cloudflareState_{nullptr};
+    QCheckBox *ngrokCheck_{nullptr};
+    QLineEdit *ngrokDomain_{nullptr};
+    QLabel *ngrokState_{nullptr};
     QSpinBox *remotePort_{nullptr};
     QLabel *remoteState_{nullptr};
     QLabel *remoteFingerprint_{nullptr};

@@ -1,5 +1,7 @@
 #include "app/SettingsDialog.h"
 
+#include "app/RemoteAccess.h"
+
 #include "app/BrowserSettingsPage.h"
 #include "app/MemorySettingsPage.h"
 #include "app/MissionSettingsPage.h"
@@ -33,6 +35,9 @@
 #include <QCheckBox>
 #include <QComboBox>
 #include <QDialogButtonBox>
+#include <QUrl>
+#include <QGroupBox>
+#include <QDesktopServices>
 #include <QFormLayout>
 #include <QHBoxLayout>
 #include <QLabel>
@@ -293,6 +298,11 @@ void SettingsDialog::accept() {
     config_.remote.enabled = remoteEnabled_->isChecked();
     config_.remote.port = remotePort_->value();
     config_.remote.announceMessages = remoteAnnounce_->isChecked();
+    config_.remote.tailscale = tailscaleCheck_->isChecked();
+    config_.remote.cloudflare = cloudflareMode_->currentData().toString();
+    config_.remote.cloudflareHostname = cloudflareHostname_->text().trimmed().toLower();
+    config_.remote.ngrok = ngrokCheck_->isChecked();
+    config_.remote.ngrokDomain = ngrokDomain_->text().trimmed().toLower();
     browserPage_->store(config_.browser);
     memoryPage_->store(config_.memory);
     missionPage_->store(config_.mission);
@@ -1377,15 +1387,98 @@ QWidget *SettingsDialog::buildRemoteTab() {
     form->addRow(tr("Certificate:"), remoteFingerprint_);
     form->addRow(tr("Paired phones:"), pairedRow);
 
+    // Away from home: the phone reaches this PC from anywhere — privately over Tailscale, or through a public
+    // tunnel (Cloudflare on the owner's domain, ngrok). Each program keeps its own sign-in; Nexa only starts it.
+    auto *away = new QGroupBox(tr("Away from home"), page);
+    auto *awayForm = new QFormLayout(away);
+    const auto stateLabel = [away] {
+        auto *label = new QLabel(away);
+        label->setWordWrap(true);
+        label->setTextInteractionFlags(Qt::TextSelectableByMouse);
+        label->setObjectName(u"sectionNote"_s);
+        return label;
+    };
+    tailscaleCheck_ = new QCheckBox(tr("Offer this PC's Tailscale address to the phone"), away);
+    tailscaleCheck_->setObjectName(u"tailscaleCheck"_s);
+    tailscaleCheck_->setChecked(config_.remote.tailscale);
+    tailscaleCheck_->setToolTip(tr("Private: only your own devices, signed in to your Tailscale account, can reach it."));
+    tailscaleSignIn_ = new QPushButton(tr("Sign in…"), away);
+    tailscaleSignIn_->setObjectName(u"tailscaleSignIn"_s);
+    tailscaleSignIn_->setAutoDefault(false);
+    connect(tailscaleSignIn_, &QPushButton::clicked, this, [this] {
+        if (!status_.remoteAccess) return;
+        tailscaleSignIn_->setEnabled(false);
+        tailscaleState_->setText(tr("Asking Tailscale for a sign-in link…"));
+        status_.remoteAccess->signInTailscale([this](Result<QString> link) {
+            tailscaleSignIn_->setEnabled(true);
+            if (!link) {
+                tailscaleState_->setText(link.error().message);
+                return;
+            }
+            if (link.value().isEmpty()) {
+                showAwayFromHome();
+                return;
+            }
+            QDesktopServices::openUrl(QUrl(link.value()));
+            tailscaleState_->setText(tr("Sign in in the browser that opened (or open %1).").arg(link.value()));
+        });
+    });
+    auto *tailscaleRow = new QHBoxLayout;
+    tailscaleRow->addWidget(tailscaleCheck_, 1);
+    tailscaleRow->addWidget(tailscaleSignIn_);
+    tailscaleState_ = stateLabel();
+    awayForm->addRow(tr("Tailscale:"), tailscaleRow);
+    awayForm->addRow(QString(), tailscaleState_);
+
+    cloudflareMode_ = new QComboBox(away);
+    cloudflareMode_->setObjectName(u"cloudflareMode"_s);
+    cloudflareMode_->addItem(tr("Off"), u"off"_s);
+    cloudflareMode_->addItem(tr("Quick tunnel — a trycloudflare.com address, new at every start"), u"quick"_s);
+    cloudflareMode_->addItem(tr("My domain — a fixed address (cloudflared tunnel login, once)"), u"named"_s);
+    cloudflareMode_->setCurrentIndex(std::max(0, cloudflareMode_->findData(config_.remote.cloudflare)));
+    cloudflareHostname_ = new QLineEdit(config_.remote.cloudflareHostname, away);
+    cloudflareHostname_->setObjectName(u"cloudflareHostname"_s);
+    cloudflareHostname_->setPlaceholderText(tr("nexa.yourdomain.com"));
+    const auto followMode = [this] { cloudflareHostname_->setEnabled(cloudflareMode_->currentData() == u"named"_s); };
+    connect(cloudflareMode_, &QComboBox::currentIndexChanged, this, followMode);
+    followMode();
+    cloudflareState_ = stateLabel();
+    awayForm->addRow(tr("Cloudflare:"), cloudflareMode_);
+    awayForm->addRow(tr("Address:"), cloudflareHostname_);
+    awayForm->addRow(QString(), cloudflareState_);
+
+    ngrokCheck_ = new QCheckBox(tr("Use ngrok"), away);
+    ngrokCheck_->setObjectName(u"ngrokCheck"_s);
+    ngrokCheck_->setChecked(config_.remote.ngrok);
+    ngrokCheck_->setToolTip(tr("Set ngrok's authtoken once in a terminal: ngrok config add-authtoken <token>. Nexa never "
+                               "sees it."));
+    ngrokDomain_ = new QLineEdit(config_.remote.ngrokDomain, away);
+    ngrokDomain_->setObjectName(u"ngrokDomain"_s);
+    ngrokDomain_->setPlaceholderText(tr("your-name.ngrok-free.app (your free fixed domain)"));
+    ngrokState_ = stateLabel();
+    awayForm->addRow(tr("ngrok:"), ngrokCheck_);
+    awayForm->addRow(tr("Domain:"), ngrokDomain_);
+    awayForm->addRow(QString(), ngrokState_);
+    auto *awayNote = new QLabel(tr("Tailscale is private to your devices. Cloudflare and ngrok put the web remote on "
+                                   "the internet: only a paired phone gets past it, but the tunnel's company can read "
+                                   "the traffic. The laptop must be awake for any of them."),
+                                away);
+    awayNote->setWordWrap(true);
+    awayNote->setObjectName(u"sectionNote"_s);
+    awayForm->addRow(awayNote);
+    if (status_.remoteAccess) connect(status_.remoteAccess, &RemoteAccess::changed, this, &SettingsDialog::showAwayFromHome);
+
     auto *layout = new QVBoxLayout(page);
     layout->addLayout(enableRow);
     layout->addWidget(remoteAnnounce_);
     layout->addLayout(form);
     layout->addWidget(pairButton_, 0, Qt::AlignLeft);
     layout->addLayout(pairRow);
+    layout->addWidget(away);
     layout->addSpacing(8);
     layout->addWidget(help);
     layout->addStretch();
+    showAwayFromHome();
 
     if (status_.remote) {
         connect(status_.remote, &RemoteServer::runningChanged, this, &SettingsDialog::showRemote);
@@ -1423,6 +1516,19 @@ void SettingsDialog::showRemote() {
     remoteState_->setStyleSheet(u"color: #2bb3a0;"_s);
     const QString fingerprint = remote->fingerprint();
     remoteFingerprint_->setText(fingerprint.isEmpty() ? tr("none — HTTPS is not running") : u"SHA-256 "_s + fingerprint);
+}
+
+void SettingsDialog::showAwayFromHome() {
+    RemoteAccess *access = status_.remoteAccess;
+    if (!access) {
+        for (QLabel *label : {tailscaleState_, cloudflareState_, ngrokState_}) label->setText(tr("Not available here."));
+        tailscaleSignIn_->setEnabled(false);
+        return;
+    }
+    tailscaleState_->setText(access->describe(RemoteRoute::Kind::Tailscale));
+    tailscaleSignIn_->setVisible(access->tailscale()->installed() && !access->tailscale()->state().signedIn);
+    cloudflareState_->setText(access->describe(RemoteRoute::Kind::Cloudflare));
+    ngrokState_->setText(access->describe(RemoteRoute::Kind::Ngrok));
 }
 
 void SettingsDialog::startPairing() {

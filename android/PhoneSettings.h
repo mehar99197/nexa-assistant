@@ -23,6 +23,10 @@ public:
     QString deviceName() const;
 
     void save(const RemoteEndpoint &endpoint, const QString &token, const QString &fingerprint);
+    // The other ways the PC told about (Tailscale, the tunnels), for when the phone is away from home.
+    QList<RemoteRoute> routes() const;
+    void setRoutes(const QList<RemoteRoute> &routes);
+    void setFingerprint(const QString &fingerprint);
     void setDeviceName(const QString &name);
     // Unpaired: the token goes, the address stays for the next time.
     void forgetToken();

@@ -67,10 +67,22 @@ std::optional<RemoteEndpoint> RemoteEndpoint::parse(const QString &text) {
     if (!url.isValid() || url.host().isEmpty()) return std::nullopt;
     RemoteEndpoint endpoint;
     endpoint.host = url.host();
-    endpoint.port = url.port(kDefaultPort);
+    // "pc.local" means Nexa's port; a web address without one means the web's (a tunnel's https://nexa.example.com).
+    const bool webAddress = trimmed.contains(u"://"_s);
+    endpoint.port = url.port(webAddress ? (url.scheme() == u"http" ? 80 : 443) : kDefaultPort);
     endpoint.tls = !isLoopback(endpoint.host);
     static const QRegularExpression invitation(u"pair=(\\d{6})"_s);
     endpoint.code = invitation.match(url.fragment()).captured(1);
+    return endpoint;
+}
+
+std::optional<RemoteEndpoint> RemoteEndpoint::fromRoute(const RemoteRoute &route) {
+    std::optional<RemoteEndpoint> endpoint = parse(route.url);
+    if (!endpoint) return std::nullopt;
+    endpoint->code.clear();
+    endpoint->via = routeName(route.kind);
+    endpoint->tunnel = route.isTunnel();
+    endpoint->tls = route.kind != RemoteRoute::Kind::Adb;
     return endpoint;
 }
 
@@ -153,6 +165,7 @@ void RemoteClient::probe(std::function<void(Result<Certificate>)> done) {
 
 void RemoteClient::pair(const QString &code, const QString &deviceName, std::function<void(Result<QString>)> done) {
     QNetworkRequest request{QUrl(endpoint_.url(u"/api/pair"_s))};
+    request.setRawHeader("ngrok-skip-browser-warning", "1");
     request.setHeader(QNetworkRequest::ContentTypeHeader, u"application/json"_s);
     request.setTransferTimeout(kRequestTimeoutMs);
     const QByteArray body = QJsonDocument(QJsonObject{{u"code"_s, code}, {u"name"_s, deviceName}}).toJson(QJsonDocument::Compact);
@@ -178,10 +191,60 @@ void RemoteClient::pair(const QString &code, const QString &deviceName, std::fun
     });
 }
 
+void RemoteClient::setAlternates(const QList<RemoteEndpoint> &alternates) {
+    alternates_.clear();
+    for (const RemoteEndpoint &way : alternates) {
+        if (!way.isValid()) continue;
+        const bool known = way.url() == endpoint_.url()
+                           || std::any_of(alternates_.cbegin(), alternates_.cend(),
+                                          [&way](const RemoteEndpoint &kept) { return kept.url() == way.url(); });
+        if (!known) alternates_.append(way);
+    }
+    if (current_ >= int(ways().size())) current_ = 0;
+}
+
+QList<RemoteEndpoint> RemoteClient::ways() const {
+    QList<RemoteEndpoint> all{endpoint_};
+    all.append(alternates_);
+    return all;
+}
+
+RemoteEndpoint RemoteClient::current() const {
+    const QList<RemoteEndpoint> all = ways();
+    return all.value(std::clamp(current_, 0, int(all.size()) - 1));
+}
+
+bool RemoteClient::usable(const RemoteEndpoint &way) const {
+    if (!way.isValid() || refused_.contains(way.url())) return false;
+    if (!way.tls) return true;
+    if (missingTls()) return false;
+    return way.tunnel || !pinned_.isEmpty();
+}
+
+void RemoteClient::tryNext() {
+    const int count = int(ways().size());
+    ++triedThisRound_;
+    if (triedThisRound_ < count) {
+        current_ = (current_ + 1) % count;
+        retry_.start(300);      // the next way at once — a phone away from home should not wait for each
+        setState(State::Connecting, u"trying another way…"_s);
+        return;
+    }
+    // Every way was tried: a pause, then the round again from the first.
+    triedThisRound_ = 0;
+    current_ = 0;
+    const int delay = std::min(kMaxRetryDelayMs, 1000 * (1 << std::min(attempts_, 4)));
+    ++attempts_;
+    retry_.start(delay);
+    setState(State::Waiting, u"offline — trying again in %1 s"_s.arg(delay / 1000));
+}
+
 void RemoteClient::connectToNexa() {
     retry_.stop();
     rejected_ = false;
     attempts_ = 0;
+    triedThisRound_ = 0;
+    refused_.clear();
     if (socket_->state() != QAbstractSocket::UnconnectedState) {
         // A fresh start, not a retry: whatever was there goes, quietly.
         wanted_ = false;
@@ -207,21 +270,24 @@ void RemoteClient::open() {
         setState(State::Offline, u"Not paired."_s);
         return;
     }
-    if (endpoint_.tls) {
-        if (const std::optional<Error> missing = missingTls()) {
-            wanted_ = false;
-            setState(State::Offline, missing->message);
-            return;
-        }
-        if (pinned_.isEmpty()) {
-            wanted_ = false;
-            setState(State::Offline, u"Nexa's certificate has not been trusted yet."_s);
-            return;
-        }
+    // A way whose certificate could not be checked is passed over; with none left, it says why.
+    const QList<RemoteEndpoint> all = ways();
+    if (std::none_of(all.cbegin(), all.cend(), [this](const RemoteEndpoint &way) { return usable(way); })) {
+        wanted_ = false;
+        const std::optional<Error> missing = missingTls();
+        setState(State::Offline, missing ? missing->message : u"Nexa's certificate has not been trusted yet."_s);
+        return;
     }
+    while (!usable(current())) {
+        current_ = (current_ + 1) % int(all.size());
+    }
+    rejected_ = false;
     welcomed_ = false;
     setState(State::Connecting, u"connecting…"_s);
-    socket_->open(QUrl(endpoint_.socketUrl()));
+    QNetworkRequest request{QUrl(current().socketUrl())};
+    // ngrok's free plan shows a browser a warning page first; an app says it is not one.
+    request.setRawHeader("ngrok-skip-browser-warning", "1");
+    socket_->open(request);
 }
 
 void RemoteClient::onConnected() {
@@ -236,16 +302,17 @@ void RemoteClient::onSocketStateChanged() {
         setState(State::Offline);
         return;
     }
-    if (rejected_) {
+    if (retry_.isActive()) return;
+    if (rejected_) refused_.insert(current().url());
+    const QList<RemoteEndpoint> all = ways();
+    if (std::none_of(all.cbegin(), all.cend(), [this](const RemoteEndpoint &way) { return usable(way); })) {
+        // Every way left showed a certificate that is not the trusted one: trying again would not change that.
         wanted_ = false;
         setState(State::Offline, u"Nexa's certificate is not the one that was trusted."_s);
         return;
     }
-    if (retry_.isActive()) return;
-    const int delay = std::min(kMaxRetryDelayMs, 1000 * (1 << std::min(attempts_, 4)));
-    ++attempts_;
-    retry_.start(delay);
-    setState(State::Waiting, u"offline — trying again in %1 s"_s.arg(delay / 1000));
+    // A way that did not answer, or showed the wrong certificate, is left for the next; the token was never sent.
+    tryNext();
 }
 
 void RemoteClient::onTextMessage(const QString &text) {
@@ -258,9 +325,15 @@ void RemoteClient::onTextMessage(const QString &text) {
     case remote::ServerMessage::Type::Welcome:
         welcomed_ = true;
         attempts_ = 0;
+        triedThisRound_ = 0;
         ping_.start();
         setState(State::Online, message->device);
         emit welcomed(message->device, message->voice, message->busy, message->mode);
+        emit connectedVia(current().via);
+        emit routesLearned(message->routes, message->fingerprint);
+        return;
+    case remote::ServerMessage::Type::Routes:
+        emit routesLearned(message->routes, {});
         return;
     case remote::ServerMessage::Type::Pong:
         return;
@@ -287,7 +360,11 @@ void RemoteClient::onSocketSslErrors(const QList<QSslError> &errors) {
     }
     rejected_ = true;
     qCWarning(lcNet).noquote() << "remote client: refused a certificate that is not the trusted one";
-    emit certificateRejected(seen);
+    // Said once per certificate: the next way is tried, and the round comes back to this one again and again.
+    if (!warned_.contains(seen)) {
+        warned_.insert(seen);
+        emit certificateRejected(seen);
+    }
 }
 
 void RemoteClient::guard(QNetworkReply *reply) {
@@ -304,6 +381,8 @@ void RemoteClient::guard(QNetworkReply *reply) {
 // Every complaint must be about the certificate the user pinned, and nothing else is ignored.
 bool RemoteClient::trusts(const QList<QSslError> &errors, const QSslCertificate &peer, QString *seen) const {
     if (!peer.isNull() && seen) *seen = fingerprintOf(peer);
+    // Through a tunnel the certificate is the tunnel's, and the system must trust it: Nexa's own there is not right.
+    if (current().tunnel) return false;
     if (pinned_.isEmpty()) return false;
     for (const QSslError &error : errors) {
         const QSslCertificate certificate = error.certificate().isNull() ? peer : error.certificate();
@@ -344,7 +423,8 @@ bool RemoteClient::answer(quint64 id, bool allow) {
 }
 
 void RemoteClient::fetch(const QString &path, std::function<void(Result<QByteArray>)> done) {
-    QNetworkRequest request{QUrl(endpoint_.url(path))};
+    QNetworkRequest request{QUrl(current().url(path))};
+    request.setRawHeader("ngrok-skip-browser-warning", "1");
     request.setTransferTimeout(kRequestTimeoutMs);
     QNetworkReply *reply = network_->get(request);
     guard(reply);

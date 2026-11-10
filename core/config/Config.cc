@@ -165,7 +165,14 @@ AndroidConfig AndroidConfig::fromJson(const QJsonObject &json) {
 }
 
 QJsonObject RemoteConfig::toJson() const {
-    return QJsonObject{{u"enabled"_s, enabled}, {u"port"_s, port}, {u"announceMessages"_s, announceMessages}};
+    return QJsonObject{
+        {u"enabled"_s, enabled},
+        {u"port"_s, port},
+        {u"announceMessages"_s, announceMessages},
+        {u"tailscale"_s, tailscale},
+        {u"cloudflare"_s, QJsonObject{{u"mode"_s, cloudflare}, {u"tunnel"_s, cloudflareTunnel}, {u"hostname"_s, cloudflareHostname}}},
+        {u"ngrok"_s, QJsonObject{{u"enabled"_s, ngrok}, {u"domain"_s, ngrokDomain}}},
+    };
 }
 
 RemoteConfig RemoteConfig::fromJson(const QJsonObject &json) {
@@ -174,6 +181,16 @@ RemoteConfig RemoteConfig::fromJson(const QJsonObject &json) {
     // Two ports are used (port and port + 1), both above the privileged range.
     config.port = std::clamp(json.value(u"port"_s).toInt(7777), 1024, 65534);
     config.announceMessages = json.value(u"announceMessages"_s).toBool(true);
+    config.tailscale = json.value(u"tailscale"_s).toBool(true);
+    const QJsonObject cloudflare = json.value(u"cloudflare"_s).toObject();
+    const QString mode = cloudflare.value(u"mode"_s).toString(u"off"_s);
+    config.cloudflare = (mode == u"quick"_s || mode == u"named"_s) ? mode : u"off"_s;
+    config.cloudflareTunnel = cloudflare.value(u"tunnel"_s).toString(u"nexa"_s).trimmed();
+    if (config.cloudflareTunnel.isEmpty()) config.cloudflareTunnel = u"nexa"_s;
+    config.cloudflareHostname = cloudflare.value(u"hostname"_s).toString().trimmed().toLower();
+    const QJsonObject ngrok = json.value(u"ngrok"_s).toObject();
+    config.ngrok = ngrok.value(u"enabled"_s).toBool(false);
+    config.ngrokDomain = ngrok.value(u"domain"_s).toString().trimmed().toLower();
     return config;
 }
 

@@ -17,6 +17,7 @@
 
 #include "QtStringMakers.h"
 
+#include "remote/RemoteRoutes.h"
 #include "ui/ElidedLabel.h"
 
 #include <QAbstractButton>
@@ -194,7 +195,9 @@ TEST_CASE("The phone app pairs, chats, cancels and forgets, through adb's plain 
     REQUIRE(QTest::qWaitFor([&f] { return f.onChat(); }, 10'000));
     CHECK(f.settings.isPaired());
     CHECK(f.settings.token() == f.client.token());
-    CHECK(f.settings.fingerprint().isEmpty());        // plain HTTP: nothing to trust
+    // Plain HTTP over adb shows no certificate; the PC's welcome hands over its fingerprint (for Tailscale's HTTPS),
+    // taken because adb is the phone's own loopback.
+    CHECK(QTest::qWaitFor([&f] { return f.settings.fingerprint() == f.server.fingerprint(); }, 5000));
     CHECK(static_cast<ElidedLabel *>(f.status)->fullText() == u"Your PC · connected"_s);
     REQUIRE(f.pairing.devices().size() == 1);
     CHECK(f.pairing.devices().first().name == u"Test phone"_s);
@@ -458,4 +461,30 @@ TEST_CASE("With the keyboard up, the page is short and the core moves beside its
     // The keyboard goes: the large presence comes back while there is no conversation.
     f.window.setFixedSize(360, 800);
     CHECK(QTest::qWaitFor([core] { return core->height() >= 150; }, 5000));
+}
+
+TEST_CASE("Connected over adb, the phone app keeps every way to the PC and its certificate, and says the way it uses") {
+    if (!haveOpenssl()) SKIP("openssl is needed to make the certificate");
+    Fixture f;
+    REQUIRE(f.wired());
+    REQUIRE(f.start());
+    f.server.setRoutes({{RemoteRoute::Kind::Tailscale, u"https://100.101.102.103:%1"_s.arg(f.port)},
+                        {RemoteRoute::Kind::Cloudflare, u"https://nexa.nexacodesolutions.online"_s}});
+    f.window.show();
+    f.window.start();
+    f.address->setText(u"127.0.0.1:%1"_s.arg(f.port + 1));      // over adb: plain, on the phone's own loopback
+    f.pairing.startPairing();
+    f.code->setText(f.pairing.code());
+    f.clickPair();
+    REQUIRE(QTest::qWaitFor([&f] { return f.onChat(); }, 10'000));
+    REQUIRE(QTest::qWaitFor([&f] { return f.settings.routes().size() == 2; }, 5000));
+    const QList<RemoteRoute> kept = f.settings.routes();
+    CHECK(std::any_of(kept.cbegin(), kept.cend(), [](const RemoteRoute &r) { return r.kind == RemoteRoute::Kind::Tailscale; }));
+    CHECK(std::any_of(kept.cbegin(), kept.cend(), [](const RemoteRoute &r) { return r.kind == RemoteRoute::Kind::Cloudflare; }));
+    CHECK(f.settings.fingerprint() == f.server.fingerprint());     // taken over adb, for Tailscale's HTTPS
+    CHECK(static_cast<ElidedLabel *>(f.status)->fullText() == u"Your PC · connected"_s);
+
+    // Away, through Tailscale: the pill says so.
+    emit f.client.connectedVia(u"Tailscale"_s);
+    CHECK(static_cast<ElidedLabel *>(f.status)->fullText() == u"Your PC · connected · via Tailscale"_s);
 }

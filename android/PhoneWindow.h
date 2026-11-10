@@ -49,6 +49,9 @@ private:
     void onReceived(const remote::ServerMessage &message);
     void onUnauthorized(const QString &reason);
     void onCertificateRejected(const QString &fingerprint);
+    // What the PC said of the ways to it: kept, tried in turn; its certificate taken while connected over adb.
+    void onRoutesLearned(const QList<nexa::RemoteRoute> &routes, const QString &fingerprint);
+    void useLearnedRoutes();
     void onAsk(const QString &text);
     void onTalkPressed();
     void onTalkReleased();

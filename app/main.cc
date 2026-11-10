@@ -2,6 +2,7 @@
 #include "app/GlobalShortcuts.h"
 #include "app/MainWindow.h"
 #include "app/PhoneLink.h"
+#include "app/RemoteAccess.h"
 #include "app/RemoteBridge.h"
 #include "app/SingleInstance.h"
 #include "app/TrayIcon.h"
@@ -429,6 +430,8 @@ int main(int argc, char *argv[]) {
     RemoteBridge remoteBridge(&controller, &http);
     controller.setPhonePaired([&pairing] { return !pairing.devices().isEmpty(); });
     RemoteServer remote(&pairing, &remoteBridge, &tlsIdentity);
+    // Away from home: Tailscale watched, the Cloudflare and ngrok tunnels run as Settings → Remote says.
+    RemoteAccess remoteAccess(&remote);
     QObject::connect(&controller, &AppController::userMessageAccepted, &remote, &RemoteServer::onUserMessage);
     // Hardcore mode's lock and the questions tasks wait on: the phone shows them, unlocks and answers.
     if (HardcoreMode *hardcore = controller.hardcore()) {
@@ -468,8 +471,9 @@ int main(int argc, char *argv[]) {
                                : reason == FinishReason::Cancelled ? u"cancelled"_s
                                                                    : u"other"_s);
     });
-    const auto applyRemote = [&remote, &remoteBridge, &phone](const Config &updated) {
+    const auto applyRemote = [&remote, &remoteBridge, &remoteAccess, &phone](const Config &updated) {
         remoteBridge.applyConfig(updated);
+        remoteAccess.apply(updated.remote);
         if (!updated.remote.enabled) {
             remote.stop();
             return;
@@ -518,6 +522,7 @@ int main(int argc, char *argv[]) {
                                    .phone = &phone,
                                    .discovery = &discovery,
                                    .remote = &remote,
+                                   .remoteAccess = &remoteAccess,
                                    .pairing = &pairing,
                                    .phoneLink = &phoneLink,
                                    .mcp = &mcp,

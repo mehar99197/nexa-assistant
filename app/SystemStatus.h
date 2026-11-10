@@ -16,6 +16,7 @@ class McpConnectors;
 class MemoryStore;
 class PairingManager;
 class PhoneLink;
+class RemoteAccess;
 class RemoteServer;
 class SherpaRuntime;
 class SpeakerGate;
@@ -33,6 +34,7 @@ struct SystemStatus {
     AndroidDevice *phone{nullptr};
     AdbDiscovery *discovery{nullptr};
     RemoteServer *remote{nullptr};
+    RemoteAccess *remoteAccess{nullptr};    // away from home: Tailscale, Cloudflare, ngrok
     PairingManager *pairing{nullptr};
     PhoneLink *phoneLink{nullptr};          // pairs Nexa Phone over adb (Settings → Android)
     McpConnectors *mcp{nullptr};            // the MCP servers' state (Settings → Connectors)

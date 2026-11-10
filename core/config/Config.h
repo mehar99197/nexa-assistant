@@ -91,6 +91,13 @@ struct RemoteConfig {
     bool enabled{false};
     int port{7777};                 // HTTPS on the network; plain HTTP on loopback at port + 1
     bool announceMessages{true};    // the PC says when a request comes from the phone ("Message received…")
+    // Away from home (Settings → Remote): the ways a phone reaches this PC from anywhere.
+    bool tailscale{true};                           // offer the Tailscale address when this PC is on the tailnet
+    QString cloudflare{QStringLiteral("off")};      // off | quick (a trycloudflare.com address) | named (your domain)
+    QString cloudflareTunnel{QStringLiteral("nexa")};   // the named tunnel (cloudflared tunnel create <name>)
+    QString cloudflareHostname;                     // "nexa.nexacodesolutions.online"
+    bool ngrok{false};
+    QString ngrokDomain;                            // the account's fixed domain, or empty for ngrok's own choice
 
     QJsonObject toJson() const;
     static RemoteConfig fromJson(const QJsonObject &json);

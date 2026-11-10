@@ -2,8 +2,10 @@
 
 #include "core/Result.h"
 #include "remote/RemoteProtocol.h"
+#include "remote/RemoteRoutes.h"
 
 #include <QList>
+#include <QSet>
 #include <QObject>
 #include <QSslCertificate>
 #include <QString>
@@ -29,6 +31,8 @@ struct RemoteEndpoint {
     int port{kDefaultPort};
     bool tls{true};
     QString code;       // the pairing code a pasted invitation carried, else empty
+    QString via;        // which way this is, in words ("Tailscale", "Cloudflare"); empty for the one paired on
+    bool tunnel{false}; // through Cloudflare or ngrok: a certificate the system trusts, never Nexa's own
 
     bool isValid() const { return !host.isEmpty() && port > 0 && port < 65536; }
     QString url(const QString &path = {}) const;    // https://host:port/path
@@ -36,6 +40,8 @@ struct RemoteEndpoint {
     // "192.168.0.115:7777", "pc.local", "[::1]:7777", or the invitation the PC's QR code holds,
     // "https://192.168.0.115:7777/#pair=123456". Without a port, Nexa's usual one.
     static std::optional<RemoteEndpoint> parse(const QString &text);
+    // A way the PC told about (its welcome's routes).
+    static std::optional<RemoteEndpoint> fromRoute(const RemoteRoute &route);
 };
 
 // The fingerprint Settings → Remote shows on the PC: SHA-256 of the certificate, colon-separated hex.
@@ -66,6 +72,13 @@ public:
 
     void setEndpoint(const RemoteEndpoint &endpoint);
     const RemoteEndpoint &endpoint() const { return endpoint_; }
+    // Other ways to the same PC, tried in turn when one does not answer (away from home: Tailscale, the tunnels). A
+    // way of Nexa's own certificate is tried only once its fingerprint is pinned; a tunnel's must be one the system
+    // trusts. The token is sent to none before its certificate passed.
+    void setAlternates(const QList<RemoteEndpoint> &alternates);
+    // The way in use: "" (the one paired on), "Tailscale", "Cloudflare", …
+    QString via() const { return current().via; }
+    RemoteEndpoint endpointInUse() const { return current(); }
     // The fingerprint the user accepted. Without one, only a plain endpoint can be reached.
     void setPinnedFingerprint(const QString &fingerprint) { pinned_ = fingerprint; }
     QString pinnedFingerprint() const { return pinned_; }
@@ -96,6 +109,9 @@ public:
 signals:
     void stateChanged(State state, const QString &detail);
     void welcomed(const QString &device, bool voice, bool busy, const QString &mode);
+    // What the PC said of the ways to it (in the welcome, and when they change), and its certificate's fingerprint.
+    void routesLearned(const QList<nexa::RemoteRoute> &routes, const QString &fingerprint);
+    void connectedVia(const QString &via);
     void received(const nexa::remote::ServerMessage &message);     // everything after the welcome
     void unauthorized(const QString &reason);                       // the token was refused: pair again
     void certificateRejected(const QString &fingerprint);           // not the pinned one; nothing was sent
@@ -109,8 +125,17 @@ private:
     void guard(QNetworkReply *reply);
     bool trusts(const QList<QSslError> &errors, const QSslCertificate &peer, QString *seen) const;
     void setState(State state, const QString &detail = {});
+    QList<RemoteEndpoint> ways() const;             // the one paired on, then the alternates
+    RemoteEndpoint current() const;
+    bool usable(const RemoteEndpoint &way) const;   // its certificate can be checked (or it needs none)
+    void tryNext();                                 // this way failed: the next one, or a pause after a round
 
     RemoteEndpoint endpoint_;
+    QList<RemoteEndpoint> alternates_;
+    int current_{0};                                // into ways()
+    int triedThisRound_{0};
+    QSet<QString> warned_;                          // certificates already reported as not the trusted one
+    QSet<QString> refused_;                         // ways that showed the wrong certificate: not tried again
     QString pinned_;
     QString token_;
     std::unique_ptr<QWebSocket> socket_;
