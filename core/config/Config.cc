@@ -261,8 +261,8 @@ QJsonObject UiConfig::toJson() const {
 
 UiConfig UiConfig::fromJson(const QJsonObject &json) {
     UiConfig config;
-    // system, dark, light — or a palette's id ("ocean-dark"), and a design's id ("console"); the
-    // catalogues decide what they mean.
+    // A theme pack's id ("neon-cyan"; system, dark, light and the old "ocean-dark" too), and a design's id
+    // ("console"); the catalogues decide what they mean.
     static const QRegularExpression id(u"^[a-z0-9-]{1,40}$"_s);
     const QString theme = json.value(u"theme"_s).toString(config.theme);
     if (id.match(theme).hasMatch()) config.theme = theme;

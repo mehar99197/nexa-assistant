@@ -15,7 +15,7 @@ class NexaIcons {
 public:
     enum class Kind {
         Mic, Pc, Tools, Phone, Send, Stop, Sun, Moon, Gear, Refresh, NewChat, Actions, More, Eye,
-        Pause, Play, Check, Cross, Globe, Code, Screen, Queue, Plus, Lock,
+        Pause, Play, Check, Cross, Globe, Code, Screen, Queue, Plus, Lock, Palette,
     };
 
     static QIcon icon(Kind kind, const QColor &colour, int size = 20);

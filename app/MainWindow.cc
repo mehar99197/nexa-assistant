@@ -222,10 +222,10 @@ void MainWindow::buildToolbar() {
     connect(stopAll, &QPushButton::clicked, controller_, &AppController::panic);
     toolbar->addWidget(stopAll);
 
-    themeAction_ = new QAction(tr("Switch between dark and light"), this);
+    themeAction_ = new QAction(tr("Next theme in this category"), this);
     connect(themeAction_, &QAction::triggered, this, &MainWindow::toggleTheme);
-    toolbar->addWidget(makeIconButton(NexaIcons::Kind::Sun, u"iconButton"_s, themeAction_));
-    themedActions_.pop_back();  // its icon depends on the scheme; refreshTheme() sets it
+    toolbar->addWidget(makeIconButton(NexaIcons::Kind::Palette, u"iconButton"_s, themeAction_));
+    themedActions_.pop_back();  // its tooltip names the theme on and the next; refreshTheme() sets both
 
     auto *settings = new QAction(tr("Settings"), this);
     settings->setShortcut(QKeySequence(u"Ctrl+,"_s));
@@ -1047,11 +1047,10 @@ void MainWindow::askApproval(quint64 task, quint64 actionId) {
 }
 
 void MainWindow::toggleTheme() {
-    // The same family in the other scheme: Ocean · Dark becomes Ocean · Light.
-    if (const std::optional<ThemePack> sibling = NexaThemes::find(NexaThemes::siblingId(pack_))) {
-        applyPack(*sibling);
-        controller_->setTheme(NexaThemes::settingFor(pack_));
-    }
+    // The next pack of the same category: Ocean becomes Abyss, Abyss Lagoon, and round again. Every pack is
+    // dark, so there is no other scheme to switch to; the whole catalogue is in Settings → General.
+    applyPack(NexaThemes::nextInCategory(pack_));
+    controller_->setTheme(NexaThemes::settingFor(pack_));
 }
 
 void MainWindow::applyPack(const ThemePack &pack) {
@@ -1064,9 +1063,10 @@ void MainWindow::applyPack(const ThemePack &pack) {
 void MainWindow::refreshTheme() {
     const ThemeTokens &tokens = pack_.tokens;
     for (const auto &[action, kind] : themedActions_) action->setIcon(NexaIcons::icon(kind, tokens.text));
-    themeAction_->setIcon(NexaIcons::icon(pack_.scheme == ThemeScheme::Dark ? NexaIcons::Kind::Sun : NexaIcons::Kind::Moon,
-                                          tokens.text));
-    themeAction_->setToolTip(tr("%1 — switch to %2").arg(pack_.name, pack_.scheme == ThemeScheme::Dark ? tr("light") : tr("dark")));
+    themeAction_->setIcon(NexaIcons::icon(NexaIcons::Kind::Palette, tokens.text));
+    const ThemePack next = NexaThemes::nextInCategory(pack_);
+    themeAction_->setToolTip(next.id == pack_.id ? pack_.name
+                                                 : tr("%1 · %2 — next: %3").arg(pack_.name, pack_.category, next.name));
     // The stylesheet has set the core's colours by now; the title takes the state's.
     showCoreMode(controller_->coreMode());
 }
