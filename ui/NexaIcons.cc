@@ -203,6 +203,20 @@ void NexaIcons::paint(QPainter &p, Kind kind, const QRectF &box, const QColor &c
         p.drawLine(QPointF(0, 0.1 * s), QPointF(0, 0.22 * s));
         break;
     }
+    case Kind::Palette: {
+        // A painter's palette: the board with its thumb hole, and three dabs of colour.
+        QPainterPath board;
+        board.addEllipse(QPointF(0, 0.02 * s), 0.36 * s, 0.3 * s);
+        QPainterPath hole;
+        hole.addEllipse(QPointF(0.15 * s, 0.1 * s), 0.11 * s, 0.11 * s);
+        p.drawPath(board.subtracted(hole));
+        p.setPen(Qt::NoPen);
+        p.setBrush(colour);
+        for (const QPointF &dab : {QPointF(-0.19 * s, -0.06 * s), QPointF(-0.04 * s, -0.16 * s), QPointF(0.13 * s, -0.1 * s)}) {
+            p.drawEllipse(dab, 0.055 * s, 0.055 * s);
+        }
+        break;
+    }
     }
     p.restore();
 }

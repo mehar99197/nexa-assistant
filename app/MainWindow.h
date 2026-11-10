@@ -78,7 +78,6 @@ public:
     // Asked when the window is closed: true means "hidden to the tray, keep running".
     void setCloseToTray(std::function<bool()> hide) { closeToTray_ = std::move(hide); }
     NexaCoreWidget *presence() const { return presence_; }    // the core beside the chat (the tray copies it)
-    ThemeScheme scheme() const { return pack_.scheme; }
     const ThemePack &theme() const { return pack_; }
     const DesignSpec &design() const { return design_; }
 
@@ -156,7 +155,7 @@ private:
     GlobalShortcuts *shortcuts_;
     SystemStatus status_;
     QString auditPath_;
-    ThemePack pack_;                // the palette on: colours, scheme and the core's motion style
+    ThemePack pack_;                // the theme on: its colours, its category and the core's motion style
     DesignSpec design_;             // the design on: layout, core shape, corners, type
     ChatView *chatView_{nullptr};
     ActionLogDock *actionLog_{nullptr};

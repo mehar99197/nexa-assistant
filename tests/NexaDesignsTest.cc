@@ -32,9 +32,11 @@ TEST_CASE("Every design is its own arrangement and core, drawn in a palette that
         CHECK_FALSE(design.blurb.isEmpty());
         CHECK(design.radius >= 0);
         CHECK(design.radius <= 24);
-        // The palette it was drawn in is a real one, and the sheet comes out whole.
+        // The palette it was drawn in is a real pack of the catalogue (dark, like all of them), and the sheet
+        // comes out whole.
+        REQUIRE(NexaThemes::find(design.palette).has_value());
         const ThemePack pack = NexaThemes::resolve(design.palette);
-        if (design.palette != u"system"_s) CHECK(NexaThemes::settingFor(pack) == design.palette);
+        CHECK(NexaThemes::settingFor(pack) == design.palette);
         const QString sheet = NexaTheme::styleSheet(pack.tokens, pack.style, design);
         CHECK_FALSE(sheet.contains(u'@'));
         CHECK(sheet.contains(u"qproperty-coreShape: %1;"_s.arg(static_cast<int>(design.shape))));

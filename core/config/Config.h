@@ -170,10 +170,10 @@ struct MissionConfig {
     bool operator==(const MissionConfig &) const = default;
 };
 
-// Settings → General → Appearance, and the toolbar's theme toggle. "system" follows the desktop's
-// own light or dark setting.
+// Settings → General → Appearance, and the toolbar's palette button. Every theme is dark; "system",
+// "dark" and "light" (from when there was a light look) mean Nexa's own.
 struct UiConfig {
-    QString theme{QStringLiteral("system")};    // system | dark | light | a palette's id
+    QString theme{QStringLiteral("system")};    // a theme pack's id, or system | dark | light = Nexa's own
     QString design{QStringLiteral("mission")};  // one of ui/NexaDesigns: the shape of everything else
 
     QJsonObject toJson() const;

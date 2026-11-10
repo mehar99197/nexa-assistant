@@ -9,6 +9,7 @@
 #include <memory>
 #include <optional>
 
+class QButtonGroup;
 class QCheckBox;
 class QFormLayout;
 class QHBoxLayout;
@@ -90,6 +91,7 @@ private:
     QWidget *buildPolicyTab();
     QWidget *buildGeneralTab();
     void fillThemeGallery();
+    void showTheme(const QString &setting);     // the tile of a theme, its category shown if the chips hid it
     void fillDesignGallery();
     void populateProviders();
     void showProvider(int row);
@@ -225,6 +227,9 @@ private:
     QTimer *pairCountdown_{nullptr};
     QComboBox *policyCombo_{nullptr};
     QListWidget *themeGallery_{nullptr};
+    QButtonGroup *themeChips_{nullptr};         // the categories; "" is every pack
+    QString themeCategory_;                     // the chip pressed
+    QString themeChoice_;                       // the pack chosen, kept while a chip hides its tile
     QListWidget *designGallery_{nullptr};
     QPlainTextEdit *systemPromptEdit_{nullptr};
     QListWidget *mcpList_{nullptr};
