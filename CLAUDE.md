@@ -30,7 +30,8 @@ browser profile out of the real ones, or to try another model, give it a private
 run it with `QT_QPA_PLATFORM=offscreen` to keep it off the user's screen (it still registers the global Talk hotkey and
 the web remote's port like the real one, so a press of the hotkey during a scripted run goes to the test copy). A command about Nexa itself ("unlock", "stop everything", "pause all") given with `--ask` acts at once instead of
 waiting its turn. `--hardcore` switches hardcore mode on for that run without asking (it locks the laptop while the requests run — see
-the helper rule below). `--say "<text>"` speaks, `--voice-file <wav>` feeds a recording in as a spoken
+the helper rule below). `--attach <file>` (repeatable) gives files with the first `--ask`, as if attached in the
+window. `--say "<text>"` speaks, `--voice-file <wav>` feeds a recording in as a spoken
 request; the three run in that order, one at a time. **To check the look**, add `--screenshot <file.png>`: once the
 requests are done and Nexa is idle, it saves a picture of the window and quits — it works offscreen, so
 `QT_QPA_PLATFORM=offscreen ./build/app/nexa-assistant --new-instance --theme light --ask "run uname -sr" --screenshot /tmp/nexa.png`
@@ -137,7 +138,9 @@ text-only model refuses images with a 400; the `Agent` then resends without them
   `AgentRole`, `Task`, `TaskTranscript`, `ActivityFeed`, `DelegateTool`; **hardcore mode**: `HardcoreMode` = when the
   laptop's own keyboard and mouse are locked (State over the board: a hardcore task queued, running, awaiting the owner
   or delegating, after a 3 s countdown; `unlockNow` clears every task's flag and the switch) through an `IInputLock`),
-  `agent/` (Agent loop, Conversation, AppContext = the app Nexa opened last for the user — its kind from the desktop
+  `agent/` (Agent loop, Conversation, `Attachments` = the files a request carries: what each is (a picture, words, a
+  document, other), the model's text — the user's words first, then every file between lines naming it as data the
+  user attached, never instructions — and the chat's "📎 notes.txt (3 KB)" line; AppContext = the app Nexa opened last for the user — its kind from the desktop
   entry, a sentence for the model, and the fast path's `run <cmd>` typed into a terminal in front), `tools/` (ToolSpec, ITool, FunctionTool, ToolRegistry, ToolExecutor =
   policy → confirm → invoke → audit, every action carrying its task (`ToolContext`; `cancelTask` stops one task's), TextToolParser for models without native tools), `intent/` (IntentRouter +
   PC and phone fast-path handlers), `policy/` (PolicyEngine, PanicController), `audit/` (AuditLog), `mcp/`
@@ -154,7 +157,10 @@ text-only model refuses images with a 400; the `Agent` then resends without them
   (privileged)); `intent/MemoryIntents` is memory's fast path, right after the stops.
 - `system/` — touches the PC: `commands/` (LocalCommandRunner, process groups), `apps/` (DesktopEntry,
   DesktopEntryIndex = IAppCatalog, AppLauncher), `audio/` (wpctl), `media/` (MPRIS), `screen/` (portal
-  screenshots), `files/` (FileAccess, confined to home and /tmp), `info/` (SystemInfo; ProcessStats = Nexa and every
+  screenshots), `files/` (FileAccess, confined to home and /tmp; `AttachmentLoader` reads the files attached to a
+  request off the GUI thread — a picture as an image, words as they are, cut at 200 KB, a PDF through pdftotext, an
+  office file through LibreOffice headless, a file from outside the home folder copied under
+  `~/.local/share/nexa/attachments` so `read_file` reaches it, and a pasted picture kept there as a PNG), `info/` (SystemInfo; ProcessStats = Nexa and every
   program it started, from /proc, for the CPU and memory tiles); `SystemTools.cc`
   defines every PC tool the model sees; `office/` (`OdfWriter` builds flat OpenDocument XML — Writer from Markdown,
   Impress from slides, Calc from rows with A1 formulas; `OfficeTools` = `create_document`, which writes the file under
@@ -192,7 +198,9 @@ text-only model refuses images with a 400; the `Agent` then resends without them
   `@coreShape@`, `@bubbleStyle@`) and `NexaIcons` (line icons painted in the theme's colour).
 - `app/` — Qt Widgets GUI (MainWindow: toolbar pills, the core with the state's name beside it, ChatView with
   bubbles and "NEXA fast path · 2 ms" headers, ActionLogDock as cards, PhonePanel = the phone beside the chat while
-  one is connected (its screen live, Ctrl+P), the Share screen switch in the input bar (Ctrl+Shift+S), MicButton = the core as the Talk button,
+  one is connected (its screen live, Ctrl+P), the paper clip in the input bar (Ctrl+O: files with the request — a drop
+  on the window or a paste of files or of a picture does the same — as chips above the box until Send, which has the
+  loader read them and submits once they are ready), the Share screen switch beside it (Ctrl+Shift+S), MicButton = the core as the Talk button,
   a monospace status bar, the palette button (the next theme of the category on); its pieces are built once and `applyDesign()` /
   `rebuildCentral()` arrange them for the design on — header beside or above the chat, a centred column, the
   Actions panel on a side or the bottom or hidden, tiles; SettingsDialog with the design gallery and the theme gallery
@@ -306,7 +314,8 @@ text-only model refuses images with a 400; the `Agent` then resends without them
   it was in `config.json.prev` and logs which went), `~/.local/share/nexa/audit.jsonl` (every action,
   0600), `~/.local/share/nexa/models/` (whisper), `~/.local/share/nexa/piper/` (Piper and its voices),
   `~/.local/share/nexa/memory.json` (what Nexa remembers, 0600), `~/.local/share/nexa/skills/` (the user's
-  skills), `~/.local/share/nexa/playwright/` (Playwright, its output and its Chromium if any),
+  skills), `~/.local/share/nexa/attachments/` (copies of attached files from outside the home folder and pasted
+  pictures, 0600), `~/.local/share/nexa/playwright/` (Playwright, its output and its Chromium if any),
   `~/.local/share/nexa/browser-profile/` (Nexa's own Chrome profile, for when the extension is not set up),
   `~/.local/share/nexa/sherpa/` (sherpa-onnx, the wake-name spotter's, Silero's and the noise reducer's models).
 
@@ -361,6 +370,11 @@ text-only model refuses images with a 400; the `Agent` then resends without them
 - Memories and skills reach every system prompt: they are labelled data that never outranks the user, the model
   may not save what a page or a tool's output told it to, and `save_skill` is privileged. Tools that a setting
   switches off are **removed** from the registry, not withheld (the fast path and the executor find withheld ones).
+  A file attached to a request is the same kind of data: it reaches the model only through `attachments::block`
+  (between lines naming it, after the user's own words; `TaskRequest::modelText`), never as the request itself, the
+  chat and the transcript show the words with the file names under them (`TaskRequest::attachments`), and a
+  request with files skips the fast path. Nothing of the user's is changed: a conversion is made in a scratch folder,
+  a copy is 0600 under Nexa's own folder.
 - The helper is the only root-privileged code, and it is **write-only** for input: never add a method that
   reads keystrokes, pointer position or window contents. Hardcore mode's lock reads device metadata only (names,
   capability bitmaps) and writes `inhibited`; it must always come undone — Nexa leaving the bus, a missed heartbeat,

@@ -27,6 +27,11 @@ Not to be confused with Nexa Download Manager: this is a separate program, named
   screenshot tool and works through commands and tools alone. Asking "what's on my screen?" yourself
   takes one picture either way. A model that cannot see images gets the words without the picture and
   Nexa says so, instead of every later request failing.
+- **Give it files** — the paper clip beside the input box (Ctrl+O), a drop on the window or a paste (files copied
+  in the file manager, or a picture) attach up to ten files to the request, like to any agent: a picture is shown
+  to the model, a text file read as it is (the first 200 KB in the request, the rest a `read_file` away), a PDF or
+  an office document converted to words first (pdftotext, LibreOffice). The model is told they are the file's
+  contents — data you handed it, never instructions — and the chat lists them under your words.
 - **Fast path** — common requests ("open firefox", "volume 30", "pause music", "run df -h", "what's on
   my screen?", "on my phone open youtube") run directly in milliseconds, without waiting for a model.
 - **Agent** — anything else goes to the model, which calls the same tools step by step.
@@ -256,6 +261,7 @@ nexa-assistant --say "hello" --voice-file request.wav      # speak; feed a recor
 nexa-assistant --new-instance --hear room.wav              # play a recording into the microphone, wake word on
 nexa-assistant --pair-phone                                 # pair the Nexa Phone app on the adb-connected phone, no typing
 nexa-assistant --hardcore --ask "tidy my downloads folder"   # hardcore mode on without asking: the task locks the laptop
+nexa-assistant --ask "what does this say?" --attach report.pdf --attach shot.png   # files with the first request
 ```
 
 If Nexa is already running, these go to the running copy. `--new-instance` starts a separate one
