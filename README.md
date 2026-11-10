@@ -261,11 +261,13 @@ nexa-assistant --hardcore --ask "tidy my downloads folder"   # hardcore mode on 
 If Nexa is already running, these go to the running copy. `--new-instance` starts a separate one
 (for testing). `--screenshot <file.png>` saves a picture of the window once the requests are done,
 then quits (it works with `QT_QPA_PLATFORM=offscreen`); `--screenshot-settings <dir>` does the same
-for every Settings tab; `--theme dark|light|system|<palette>` and `--design <design>` pick the look for
-that run only (a palette is one of the 52 in Settings → General, such as `ocean-dark`; a design is one of
+for every Settings tab; `--theme <theme>` and `--design <design>` pick the look for
+that run only (a theme is one of the 71 dark packs in Settings → General, such as `neon-cyan` or `ocean`, in
+eleven categories — Nexa, Neon, Nature, Ocean, Space, Fire & Ember, Minimal & Mono, Retro, Cyber, Pastel Night,
+Gems; `dark`, `light`, `system` and the old `ocean-dark`-style names still resolve to one; a design is one of
 the eight there — `studio`, `focus`, `console`, `sidebar`, `orb`, `dashboard`, `gauge`, `paper` — each its
-own arrangement, core shape, corners and type), while the galleries there and the sun/moon button in the
-toolbar set them for good.
+own arrangement, core shape, corners and type), while the galleries there and the palette button in the
+toolbar (the next theme of the same category) set them for good.
 
 ## Connectors (MCP)
 

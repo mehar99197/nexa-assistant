@@ -175,10 +175,14 @@ text-only model refuses images with a 400; the `Agent` then resends without them
   happens, 30 Hz idle, stopped while hidden; a state change cross-fades over 350 ms and the fast-path snap stays
   for its 0.9 s ping), `NexaTheme` + `theme.qss` (the tokens for the dark and light schemes; the sheet names which
   widget wears which token and sets widget colours through `qproperty-*`, so no widget hard-codes a colour),
-  `NexaThemes` (the catalogue: 26 colour families × dark/light = 52 theme packs generated around a hue with the
-  design's own shape of palette and contrast guaranteed, each family wearing one of eight motion styles —
+  `NexaThemes` (the catalogue: 71 theme packs, **every one dark** (the owner wants no light look), in 11 categories —
+  Nexa, Neon, Nature, Ocean, Space, Fire & Ember, Minimal & Mono, Retro, Cyber, Pastel Night, Gems — each a recipe
+  (an accent, the ground's tint and depth, how far the states wander and how bright they glow) generated with the
+  design's own shape of palette and contrast guaranteed, each wearing one of eight motion styles —
   `CoreStyle`: Classic, Orbit, Pulse, Aurora, Comet, Nebula, Storm, Minimal — which `coreFrame` applies and the sheet
-  hands the core as `qproperty-coreStyle`; `config.ui.theme` is `system`, `dark`, `light` or a pack id),
+  hands the core as `qproperty-coreStyle`; `nexa-dark` and `mission-dark` are hand-tuned; `config.ui.theme` is a pack
+  id, and `resolve` maps `system`, `dark`, `light`, the old `<family>-dark` / `-light` ids and anything unknown to a
+  pack; `nextInCategory` is the toolbar's palette button),
   `NexaDesigns` (the **designs** — a palette is colours, a design is the shape of everything else: a
   `WindowLayout` (Studio, Focus, Console, Sidebar, Orb, Dashboard, Bottom), a `CoreShape` (Ring, Orb, Hex, Bars,
   Iris, Crystal, Arc, Dot — each a `Shape` strategy in `NexaCorePainter` reading the same frames in its own
@@ -189,9 +193,10 @@ text-only model refuses images with a 400; the `Agent` then resends without them
 - `app/` — Qt Widgets GUI (MainWindow: toolbar pills, the core with the state's name beside it, ChatView with
   bubbles and "NEXA fast path · 2 ms" headers, ActionLogDock as cards, PhonePanel = the phone beside the chat while
   one is connected (its screen live, Ctrl+P), the Share screen switch in the input bar (Ctrl+Shift+S), MicButton = the core as the Talk button,
-  a monospace status bar, the sun/moon theme toggle; its pieces are built once and `applyDesign()` /
+  a monospace status bar, the palette button (the next theme of the category on); its pieces are built once and `applyDesign()` /
   `rebuildCentral()` arrange them for the design on — header beside or above the chat, a centred column, the
-  Actions panel on a side or the bottom or hidden, tiles; SettingsDialog with the design and palette galleries,
+  Actions panel on a side or the bottom or hidden, tiles; SettingsDialog with the design gallery and the theme gallery
+  (category chips over the tiles, the choice kept while a chip hides it),
   TrayIcon; **Mission Control**, the default design (`mission`): `AgentsRail`, `CoreCard` + `MetricsTiles`, `MissionBoard`,
   `ActivityStream` (approval cards), `TaskTranscriptDrawer`, `AddTasksDialog` (Ctrl+T), `MissionSettingsPage`, all
   `MissionPanel`s (their colours from theme.qss, a token per lane and state) over `TaskListModel` + `TaskFilter`, and
