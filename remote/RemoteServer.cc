@@ -151,6 +151,12 @@ bool RemoteServer::listen(const std::optional<QSslConfiguration> &tls) {
         failures.append(tr("port %1 on this PC: %2").arg(localPort()).arg(local->errorString()));
         delete local;
     }
+    // Loopback only, and only for tunnels: what comes in here is from the internet.
+    auto *tunnel = new QTcpServer(http_.get());
+    if (!(tunnel->listen(QHostAddress::LocalHost, quint16(tunnelPort())) && http_->bind(tunnel))) {
+        failures.append(tr("port %1 for tunnels: %2").arg(tunnelPort()).arg(tunnel->errorString()));
+        delete tunnel;
+    }
 
     if (!tlsRunning_ && !localRunning) {
         problem_ = tr("The web remote could not listen — %1.").arg(failures.join(u"; "_s));
@@ -303,6 +309,7 @@ QHttpServerResponse RemoteServer::pairRoute(const QHttpServerRequest &request) {
         return noStore(QHttpServerResponse(QJsonObject{{u"error"_s, tr("Enter the pairing code.")}},
                                            QHttpServerResponse::StatusCode::BadRequest));
     }
+    if (request.localPort() == tunnelPort()) qCInfo(lcApp) << "remote: a pairing attempt through a tunnel";
     const Result<PairingManager::Paired> paired = pairing_->pair(code, body.value(u"name"_s).toString());
     if (!paired) {
         qCInfo(lcApp).noquote() << "remote: a pairing attempt from" << request.remoteAddress().toString() << "failed";
@@ -361,10 +368,14 @@ void RemoteServer::acceptSockets() {
             refused->deleteLater();
             continue;
         }
+        const bool viaTunnel = socket->localPort() == tunnelPort();
         auto *session = new RemoteSession(std::move(socket), pairing_, this);
+        session->setViaTunnel(viaTunnel);
         sessions_.append(session);
         connect(session, &RemoteSession::authenticated, this, [this, session] {
-            session->send(remote::welcome(session->deviceName(), host_->canTranscribe(), busy_ || host_->isBusy(), mode_));
+            session->send(remote::welcome(session->deviceName(), host_->canTranscribe(), busy_ || host_->isBusy(), mode_,
+                                          routes_, fingerprint()));
+            if (session->viaTunnel()) qCInfo(lcApp).noquote() << "remote:" << session->deviceName() << "came through a tunnel";
             if (!litNodes_.isEmpty()) session->send(remote::state(mode_, litNodes_));
             if (host_->isLocked()) session->send(remote::lock(true, host_->lockText()));
             for (const RemoteApproval &waiting : host_->approvals()) {
@@ -509,6 +520,22 @@ void RemoteServer::onApprovalAsked(quint64 id, const QString &agent, const QStri
 
 void RemoteServer::onApprovalSettled(quint64 id, bool allowed) {
     broadcast(remote::settled(id, allowed));
+}
+
+void RemoteServer::setRoutes(const QList<RemoteRoute> &routes) {
+    const QList<RemoteRoute> ordered = orderedRoutes(routes);
+    if (ordered == routes_) return;
+    routes_ = ordered;
+    QStringList kinds;
+    for (const RemoteRoute &route : routes_) kinds.append(routeKey(route.kind));
+    qCInfo(lcApp).noquote() << "remote: reachable by" << kinds.join(u", "_s);
+    broadcast(remote::routes(routes_));
+}
+
+int RemoteServer::tunnelClientCount() const {
+    return int(std::count_if(sessions_.cbegin(), sessions_.cend(), [](const RemoteSession *session) {
+        return session->isAuthenticated() && session->viaTunnel();
+    }));
 }
 
 } // namespace nexa

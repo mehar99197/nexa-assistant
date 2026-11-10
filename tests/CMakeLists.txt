@@ -96,6 +96,9 @@ add_executable(nexa_tests
     RemoteClientTest.cc
     RemoteDesktopSessionTest.cc
     RemoteProtocolTest.cc
+    RemoteRoutesTest.cc
+    TunnelLogTest.cc
+    TunnelProcessTest.cc
     RemoteServerTest.cc
     RemoteServerIntegrationTest.cc
     # The helper's own authorisation record. Pure enough to test here without any root privilege,

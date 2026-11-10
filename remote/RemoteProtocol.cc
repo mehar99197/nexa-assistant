@@ -60,10 +60,17 @@ std::optional<ClientMessage> decode(QByteArrayView frame) {
     return parsed;
 }
 
-QByteArray welcome(const QString &device, bool voice, bool busy, const QString &mode) {
+QByteArray welcome(const QString &device, bool voice, bool busy, const QString &mode, const QList<RemoteRoute> &routes,
+                   const QString &fingerprint) {
     QJsonObject fields{{u"version"_s, kVersion}, {u"device"_s, device}, {u"voice"_s, voice}, {u"busy"_s, busy}};
     if (!mode.isEmpty()) fields.insert(u"mode"_s, mode);
+    if (!routes.isEmpty()) fields.insert(u"routes"_s, encodeRoutes(routes));
+    if (!fingerprint.isEmpty()) fields.insert(u"fingerprint"_s, fingerprint);
     return message(u"welcome"_s, fields);
+}
+
+QByteArray routes(const QList<RemoteRoute> &list) {
+    return message(u"routes"_s, {{u"routes"_s, encodeRoutes(list)}});
 }
 
 QByteArray state(const QString &mode, const QStringList &nodes) {
@@ -136,6 +143,7 @@ std::optional<ServerMessage> decodeServer(QByteArrayView frame) {
         {u"transcript"_s, Type::Transcript}, {u"speech"_s, Type::Speech}, {u"busy"_s, Type::Busy},
         {u"error"_s, Type::Error},       {u"pong"_s, Type::Pong},         {u"state"_s, Type::State},
         {u"lock"_s, Type::Lock},         {u"approval"_s, Type::Approval}, {u"settled"_s, Type::Settled},
+        {u"routes"_s, Type::Routes},
     };
     const auto type = types.constFind(object.value(u"t"_s).toString());
     if (type == types.cend()) return std::nullopt;
@@ -158,6 +166,8 @@ std::optional<ServerMessage> decodeServer(QByteArrayView frame) {
     parsed.agent = object.value(u"agent"_s).toString();
     parsed.tool = object.value(u"tool"_s).toString();
     parsed.allow = object.value(u"allow"_s).toBool();
+    parsed.routes = decodeRoutes(object.value(u"routes"_s).toArray());
+    parsed.fingerprint = object.value(u"fingerprint"_s).toString();
     for (const QJsonValue &node : object.value(u"nodes"_s).toArray()) {
         if (node.isString()) parsed.nodes.append(node.toString());
     }

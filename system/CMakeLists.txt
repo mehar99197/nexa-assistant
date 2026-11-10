@@ -34,6 +34,9 @@ add_library(nexa_system STATIC
     media/MprisController.h media/MprisController.cc
     office/OdfWriter.h office/OdfWriter.cc
     office/OfficeTools.h office/OfficeTools.cc
+    net/TailscaleWatcher.h net/TailscaleWatcher.cc
+    net/TunnelLog.h net/TunnelLog.cc
+    net/TunnelProcess.h net/TunnelProcess.cc
     screen/ScreenAwake.h screen/ScreenAwake.cc
     screen/ScreenCapture.h screen/ScreenCapture.cc
 )

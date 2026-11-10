@@ -1,6 +1,7 @@
 #pragma once
 
 #include "core/Result.h"
+#include "remote/RemoteRoutes.h"
 
 #include <QByteArray>
 #include <QDateTime>
@@ -59,6 +60,14 @@ public:
     QString lanUrl() const;             // https://<address>:<port>, empty without TLS
     QString localUrl() const;           // what the phone opens through adb reverse
     int localPort() const { return port_ + 1; }   // where adb reverse must point on the PC
+    // Where a tunnel (cloudflared, ngrok) connects: plain HTTP on loopback, a door of its own, so the server knows a
+    // session came from the internet. The tunnel's HTTPS ends at its own edge.
+    int tunnelPort() const { return port_ + 2; }
+    // Every way a phone can reach this PC (RemoteAccess keeps it): told in each welcome, and to every phone when it
+    // changes, so a phone away from home still knows where to knock.
+    void setRoutes(const QList<RemoteRoute> &routes);
+    QList<RemoteRoute> routes() const { return routes_; }
+    int tunnelClientCount() const;      // phones connected through a tunnel
     QString fingerprint() const;
     QString problem() const { return problem_; }
     int clientCount() const;
@@ -123,6 +132,7 @@ private:
     QString replyStep_;                                 // what the fast path did, for a spoken answer
     QPointer<RemoteSession> speaker_;                   // whose spoken request the reply answers
     QString lanAddress_;
+    QList<RemoteRoute> routes_;
     QString problem_;
     QString mode_{QStringLiteral("idle")};              // the core's state, told to a phone as it connects
     QStringList litNodes_;

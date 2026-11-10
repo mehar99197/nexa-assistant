@@ -4,6 +4,7 @@
 
 #include "remote/IRemoteHost.h"
 #include "remote/PairingManager.h"
+#include "remote/RemoteRoutes.h"
 #include "remote/RemoteServer.h"
 #include "remote/RemoteSession.h"
 #include "remote/TlsIdentity.h"
@@ -64,7 +65,7 @@ public:
     QString spoken;
 };
 
-// Two free ports in a row: the server uses port and port + 1.
+// Three free ports in a row: the server uses port, port + 1 (adb) and port + 2 (tunnels).
 int freePortPair() {
     for (int attempt = 0; attempt < 50; ++attempt) {
         QTcpServer probe;
@@ -73,8 +74,10 @@ int freePortPair() {
         probe.close();
         QTcpServer first;
         QTcpServer second;
+        QTcpServer third;
         if (port < 65000 && first.listen(QHostAddress::Any, quint16(port))
-            && second.listen(QHostAddress::LocalHost, quint16(port + 1))) {
+            && second.listen(QHostAddress::LocalHost, quint16(port + 1))
+            && third.listen(QHostAddress::LocalHost, quint16(port + 2))) {
             return port;
         }
     }
@@ -140,6 +143,9 @@ struct Fixture {
     QString local(const QString &path) const { return u"http://127.0.0.1:%1%2"_s.arg(port + 1).arg(path); }
     QString lan(const QString &path) const { return u"https://127.0.0.1:%1%2"_s.arg(port).arg(path); }
     QString localOrigin() const { return u"http://127.0.0.1:%1"_s.arg(port + 1); }
+    // What a tunnel hands on: its own public origin and Host (here, the loopback door's).
+    QString tunnel(const QString &path) const { return u"http://127.0.0.1:%1%2"_s.arg(port + 2).arg(path); }
+    QString tunnelOrigin() const { return u"http://127.0.0.1:%1"_s.arg(port + 2); }
 
     // POSTs to /api/pair and returns the status and the JSON answer.
     std::pair<int, QJsonObject> pair(const QString &code) {
@@ -366,4 +372,52 @@ TEST_CASE("A locked PC shows on the phone, is unlocked from it, and its question
     phone.send({{u"t"_s, u"answer"_s}, {u"allow"_s, true}});
     CHECK(phone.waitFor(u"error"_s).value(u"code"_s).toString() == u"invalid"_s);
     CHECK(f.host.answers.size() == 1);
+}
+
+TEST_CASE("A phone through a tunnel is told apart, and every phone learns every way to this PC") {
+    if (!haveOpenssl()) SKIP("openssl is needed to make the certificate");
+    Fixture f;
+    REQUIRE(f.start());
+    const QString token = f.pairedToken();
+    REQUIRE_FALSE(token.isEmpty());
+    const QList<RemoteRoute> routes{{RemoteRoute::Kind::Ngrok, u"https://quiet-owl.ngrok-free.app"_s},
+                                    {RemoteRoute::Kind::Tailscale, u"https://100.101.102.103:7777"_s}};
+    f.server.setRoutes(routes);
+
+    // At home, through adb: not a tunnel; told the routes (nearest first) and the certificate the direct ones show.
+    Client home(f.localOrigin());
+    REQUIRE(home.open(f.local(u"/ws"_s).replace(u"http:"_s, u"ws:"_s)));
+    home.send({{u"t"_s, u"hello"_s}, {u"token"_s, token}});
+    const QJsonObject welcome = home.waitFor(u"welcome"_s);
+    REQUIRE_FALSE(welcome.isEmpty());
+    const QList<RemoteRoute> told = decodeRoutes(welcome.value(u"routes"_s).toArray());
+    REQUIRE(told.size() == 2);
+    CHECK(told.first().kind == RemoteRoute::Kind::Tailscale);
+    CHECK(welcome.value(u"fingerprint"_s).toString() == f.server.fingerprint());
+    CHECK_FALSE(f.server.fingerprint().isEmpty());
+    CHECK(f.server.tunnelClientCount() == 0);
+
+    // Away, through the tunnel's door: the same token works, and the session counts as a tunnel's.
+    Client away(f.tunnelOrigin());
+    REQUIRE(away.open(f.tunnel(u"/ws"_s).replace(u"http:"_s, u"ws:"_s)));
+    away.send({{u"t"_s, u"hello"_s}, {u"token"_s, token}});
+    REQUIRE_FALSE(away.waitFor(u"welcome"_s).isEmpty());
+    CHECK(QTest::qWaitFor([&f] { return f.server.tunnelClientCount() == 1; }, 5000));
+    CHECK(f.server.clientCount() == 2);
+
+    // A way comes up: every phone hears it.
+    f.server.setRoutes(routes + QList<RemoteRoute>{{RemoteRoute::Kind::Cloudflare, u"https://nexa.nexacodesolutions.online"_s}});
+    CHECK(decodeRoutes(home.waitFor(u"routes"_s).value(u"routes"_s).toArray()).size() == 3);
+    CHECK(decodeRoutes(away.waitFor(u"routes"_s).value(u"routes"_s).toArray()).size() == 3);
+
+    // Pairing through the tunnel works as at home: the code is the guard.
+    f.pairing.startPairing();
+    QNetworkRequest request(QUrl(f.tunnel(u"/api/pair"_s)));
+    request.setHeader(QNetworkRequest::ContentTypeHeader, u"application/json"_s);
+    QNetworkReply *reply = f.network.post(
+        request, QJsonDocument(QJsonObject{{u"code"_s, f.pairing.code()}, {u"name"_s, u"Away phone"_s}}).toJson());
+    QSignalSpy finished(reply, &QNetworkReply::finished);
+    REQUIRE(finished.wait(5000));
+    CHECK(reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt() == 200);
+    reply->deleteLater();
 }

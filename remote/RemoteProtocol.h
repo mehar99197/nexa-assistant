@@ -1,5 +1,7 @@
 #pragma once
 
+#include "remote/RemoteRoutes.h"
+
 #include <QByteArray>
 #include <QByteArrayView>
 #include <QString>
@@ -35,7 +37,11 @@ std::optional<ClientMessage> decode(QByteArrayView frame);
 // What the server sends. `mode` is the Nexa core's state as NexaCoreSpec names it on the wire
 // ("idle", "listen", "act", …) and `nodes` the satellites an action lights ("pc", "tools", …),
 // so the phone can draw the same core as the PC.
-QByteArray welcome(const QString &device, bool voice, bool busy, const QString &mode = {});
+// `routes`: every way a phone can reach this PC (it keeps them, for when it is away); `fingerprint`: Nexa's own
+// certificate, which the direct routes (the Wi-Fi, Tailscale) must show.
+QByteArray welcome(const QString &device, bool voice, bool busy, const QString &mode = {},
+                   const QList<RemoteRoute> &routes = {}, const QString &fingerprint = {});
+QByteArray routes(const QList<RemoteRoute> &routes);                // the ways changed (a tunnel came up, …)
 QByteArray state(const QString &mode, const QStringList &nodes = {});
 QByteArray accepted(const QString &text, const QString &source);    // a request, from this phone or elsewhere
 QByteArray delta(const QString &text);                              // more of the reply
@@ -58,7 +64,7 @@ QByteArray settled(quint64 id, bool allowed);
 struct ServerMessage {
     enum class Type {
         Welcome, Accepted, Delta, Step, Finished, Failed, Transcript, Speech, Busy, Error, Pong, State, Lock, Approval,
-        Settled,
+        Settled, Routes,
     };
     Type type{Type::Pong};
     QString text;       // Accepted, Delta, Step, Failed, Transcript, Error: the words; Lock: until when; Approval: the question
@@ -78,6 +84,8 @@ struct ServerMessage {
     QString agent;      // Approval: who asks ("CODE-02")
     QString tool;       // Approval: what for
     bool allow{false};  // Settled: how it was answered
+    QList<RemoteRoute> routes;  // Welcome, Routes: the ways to this PC
+    QString fingerprint;        // Welcome: Nexa's own certificate
 };
 
 // Unknown types are refused; missing fields take their empty value.

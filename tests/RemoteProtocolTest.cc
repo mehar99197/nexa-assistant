@@ -2,6 +2,7 @@
 // right is refused, because the other end is a network.
 
 #include "remote/RemoteProtocol.h"
+#include "remote/RemoteRoutes.h"
 
 #include "QtStringMakers.h"
 
@@ -165,4 +166,26 @@ TEST_CASE("Hardcore mode on the phone: the lock, Unlock PC, and the questions a 
     CHECK_FALSE(remote::decode(R"({"t":"answer","id":7})"));
     CHECK_FALSE(remote::decode(R"({"t":"answer","id":7,"allow":"yes"})"));
     CHECK_FALSE(remote::decode(R"({"t":"answer","id":"7","allow":true})"));
+}
+
+TEST_CASE("The welcome tells a phone every way to this PC and the certificate to expect on the direct ones") {
+    using Type = remote::ServerMessage::Type;
+    const QList<RemoteRoute> routes{{RemoteRoute::Kind::Lan, u"https://192.168.0.109:7777"_s},
+                                    {RemoteRoute::Kind::Tailscale, u"https://100.101.102.103:7777"_s},
+                                    {RemoteRoute::Kind::Cloudflare, u"https://nexa.nexacodesolutions.online"_s}};
+    const auto welcome = remote::decodeServer(remote::welcome(u"Phone"_s, true, false, u"idle"_s, routes, u"AB:CD:EF"_s));
+    REQUIRE(welcome);
+    CHECK(welcome->type == Type::Welcome);
+    CHECK(welcome->routes == routes);
+    CHECK(welcome->fingerprint == u"AB:CD:EF"_s);
+    // An older PC's welcome has neither: nothing is assumed.
+    const auto old = remote::decodeServer(remote::welcome(u"Phone"_s, true, false));
+    REQUIRE(old);
+    CHECK(old->routes.isEmpty());
+    CHECK(old->fingerprint.isEmpty());
+
+    const auto changed = remote::decodeServer(remote::routes(routes.mid(0, 2)));
+    REQUIRE(changed);
+    CHECK(changed->type == Type::Routes);
+    CHECK(changed->routes == routes.mid(0, 2));
 }

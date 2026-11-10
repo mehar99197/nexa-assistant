@@ -8,6 +8,7 @@ add_library(nexa_remote STATIC
     QrCode.h QrCode.cc
     RemoteClient.h RemoteClient.cc
     RemoteProtocol.h RemoteProtocol.cc
+    RemoteRoutes.h RemoteRoutes.cc
     RemoteServer.h RemoteServer.cc
     RemoteSession.h RemoteSession.cc
     TlsIdentity.h TlsIdentity.cc
