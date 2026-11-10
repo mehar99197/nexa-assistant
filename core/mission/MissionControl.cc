@@ -83,10 +83,12 @@ TaskId MissionControl::add(const TaskRequest &request) {
                 : request.fastPath ? RoleClassifier::forTool(request.fastPath->toolName)
                                    : RoleClassifier::classify(task.text);
     task.agentId = agentIdFor(task.role, int(id));
+    task.hardcore = request.hardcore;
     if (request.parent) {
         if (const Task *lead = this->task(*request.parent)) {
             task.parent = lead->id;
             task.depth = lead->depth + 1;
+            task.hardcore = task.hardcore || lead->hardcore;
         }
     }
     task.model = request.model ? *request.model : ModelFit::resolve(task.role, config_, environment_->providerFacts());
@@ -470,6 +472,23 @@ void MissionControl::returnToParent(TaskId child) {
     enqueue(delegation.parent, Pending{Pending::Kind::ReturnToParent, {}, {}, {}, std::nullopt, std::nullopt, {},
                                        std::move(result), delegation.done},
             true);
+}
+
+void MissionControl::setHardcore(TaskId id, bool hardcore) {
+    Task *task = find(id);
+    if (!task || task->hardcore == hardcore) return;
+    task->hardcore = hardcore;
+    emit taskChanged(id);
+}
+
+void MissionControl::releaseHardcore() {
+    QList<TaskId> changed;
+    for (Task &task : tasks_) {
+        if (!task.hardcore) continue;
+        task.hardcore = false;
+        changed.append(task.id);
+    }
+    for (const TaskId id : std::as_const(changed)) emit taskChanged(id);
 }
 
 void MissionControl::delegate(TaskId parent, AgentRole role, const QString &text, const QString &context,

@@ -40,6 +40,7 @@ struct Task {
     int steps{0};
     int toolCalls{0};
     bool fastPath{false};
+    bool hardcore{false};           // the laptop's keyboard and mouse are locked while it is active (HardcoreMode)
     std::optional<TaskId> parent;   // a sub-task's (delegate_task)
     int depth{0};
     QList<int> activity;            // tool calls per second over the last 24 s, oldest first: its sparkline

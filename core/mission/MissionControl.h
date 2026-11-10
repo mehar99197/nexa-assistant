@@ -56,6 +56,7 @@ struct TaskRequest {
     std::optional<AgentRole> role;              // none: from the words (RoleClassifier) or the fast path's tool
     std::optional<TaskId> continues;            // the task whose conversation this one carries on
     std::optional<TaskId> parent;               // delegate_task's sub-task of this task
+    bool hardcore{false};                       // lock the keyboard and mouse while it is active (a sub-task: its lead's)
 };
 
 // A question a task waits on (the confirm-risky policy's), shown on its card and in the live activity.
@@ -93,6 +94,8 @@ public:
     void resume(TaskId id);
     void stop(TaskId id);
     void remove(TaskId id);         // a finished or waiting task leaves the board
+    void setHardcore(TaskId id, bool hardcore);
+    void releaseHardcore();         // no task is hardcore any more (the owner said unlock)
     void pauseAll();
     void stopAll();
     void approve(quint64 actionId);

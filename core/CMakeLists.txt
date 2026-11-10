@@ -45,6 +45,8 @@ add_library(nexa_core STATIC
     mission/ActivityFeed.h mission/ActivityFeed.cc
     mission/AgentRole.h mission/AgentRole.cc
     mission/DelegateTool.h mission/DelegateTool.cc
+    mission/HardcoreMode.h mission/HardcoreMode.cc
+    mission/IInputLock.h
     mission/MissionControl.h mission/MissionControl.cc
     mission/ModelFit.h mission/ModelFit.cc
     mission/RoleClassifier.h mission/RoleClassifier.cc

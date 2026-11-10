@@ -33,6 +33,7 @@ add_executable(nexa_tests
     SpeakerGateTest.cc
     ProcessStatsTest.cc
     MissionControlTest.cc
+    HardcoreModeTest.cc
     SignInPresenterTest.cc
     ProviderCatalogTest.cc
     AgyProviderTest.cc
