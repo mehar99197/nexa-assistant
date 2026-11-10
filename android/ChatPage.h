@@ -63,8 +63,13 @@ signals:
     void unlockRequested();
     void approvalAnswered(quint64 id, bool allow);
 
+protected:
+    void resizeEvent(QResizeEvent *event) override;
+
 private:
     void submit();
+    // Large and centred while there is room and no conversation; a row with a small core once there is a conversation,
+    // or when the page is short (the keyboard is up), so the core never covers its own title.
     void layoutPresence();
     void refreshIcons();
 

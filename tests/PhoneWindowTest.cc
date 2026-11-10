@@ -418,3 +418,44 @@ TEST_CASE("The pairing page fits a phone 360 pixels wide") {
     CHECK(QRect(0, 0, 360, 800).contains(button));
     snapshot(f.window, u"phone-360-pair"_s);
 }
+
+TEST_CASE("With the keyboard up, the page is short and the core moves beside its title instead of over it") {
+    if (!haveOpenssl()) SKIP("openssl is needed to make the certificate");
+    Fixture f;
+    REQUIRE(f.wired());
+    REQUIRE(f.start());
+    f.window.resize(360, 800);
+    f.window.show();
+    f.window.start();
+    f.address->setText(u"127.0.0.1:%1"_s.arg(f.port + 1));
+    f.pairing.startPairing();
+    f.code->setText(f.pairing.code());
+    f.clickPair();
+    REQUIRE(QTest::qWaitFor([&f] { return f.onChat(); }, 10'000));
+    // The OnePlus Nord N100 with its keyboard up: about 360 × 450 left for the app. Android fixes the window's size
+    // (an offscreen window would grow back to its layout's minimum instead), so the test does too.
+    f.window.setFixedSize(360, 450);
+    // Laid out again once the resize has gone through (the presence turns into a row on the next turn of the loop).
+    const auto sendInside = [&f] {
+        return QRect(0, 0, 360, 450).contains(QRect(f.send->mapTo(&f.window, QPoint(0, 0)), f.send->size()));
+    };
+    const bool settled = QTest::qWaitFor([&f, &sendInside] { return f.window.height() == 450 && sendInside(); }, 5000);
+    INFO("window " << f.window.width() << "x" << f.window.height() << ", smallest " << f.window.minimumSizeHint().width()
+                   << "x" << f.window.minimumSizeHint().height() << ", chat smallest " << f.chat->minimumSizeHint().height()
+                   << ", messages " << f.messages->count());
+    REQUIRE(settled);
+    auto *core = f.chat->findChild<QWidget *>(u"core"_s);
+    auto *title = f.chat->findChild<QLabel *>(u"stateTitle"_s);
+    REQUIRE(core);
+    REQUIRE(title);
+    const QRect coreBox(core->mapTo(f.chat, QPoint(0, 0)), core->size());
+    const QRect titleBox(title->mapTo(f.chat, QPoint(0, 0)), title->size());
+    CHECK_FALSE(coreBox.intersects(titleBox));
+    CHECK(core->height() <= 80);
+    CHECK(f.chat->minimumSizeHint().height() <= 450);
+    CHECK(sendInside());
+    snapshot(f.window, u"phone-360-keyboard"_s);
+    // The keyboard goes: the large presence comes back while there is no conversation.
+    f.window.setFixedSize(360, 800);
+    CHECK(QTest::qWaitFor([core] { return core->height() >= 150; }, 5000));
+}

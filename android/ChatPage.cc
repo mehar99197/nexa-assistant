@@ -25,6 +25,8 @@ namespace {
 
 constexpr int kPresenceLarge = 200;
 constexpr int kPresenceSmall = 56;
+// Below this height the large presence does not fit with the line to type in and the Talk button.
+constexpr int kRoomForLargePresence = 640;
 
 void repolish(QWidget *widget) {
     widget->style()->unpolish(widget);
@@ -216,8 +218,13 @@ void ChatPage::setLevel(double level) {
     talk_->setLevel(level);
 }
 
+void ChatPage::resizeEvent(QResizeEvent *event) {
+    QWidget::resizeEvent(event);
+    layoutPresence();
+}
+
 void ChatPage::layoutPresence() {
-    const bool compact = messages_->count() > 0;
+    const bool compact = messages_->count() > 0 || (height() > 0 && height() < kRoomForLargePresence);
     if (presenceLaidOut_ && compact == compact_) return;
     presenceLaidOut_ = true;
     compact_ = compact;

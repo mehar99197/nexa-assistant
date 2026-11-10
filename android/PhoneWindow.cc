@@ -370,15 +370,19 @@ void PhoneWindow::showCore() {
     const bool online = client_->isOnline();
     const CoreMode mode = !online ? CoreMode::Offline : localMode_.value_or(pcMode_);
     const CoreNodes nodes = online && !localMode_ ? pcNodes_ : NoNode;
+    // The phone's own listening, recognising and reading aloud say what to do here; the PC's say it is the PC.
+    const bool mine = localMode_.has_value();
     QString hint;
     switch (mode) {
     case CoreMode::Idle: hint = tr("Say a request, or type one."); break;
     case CoreMode::WakeWord: hint = tr("The PC is listening for its name."); break;
-    case CoreMode::Listening: hint = tapRecording_ ? tr("Tap again, or pause, to send.") : tr("Let go to send."); break;
-    case CoreMode::Transcribing: hint = tr("Recognising what you said…"); break;
+    case CoreMode::Listening:
+        hint = !mine ? tr("The PC is listening.") : tapRecording_ ? tr("Tap again, or pause, to send.") : tr("Let go to send.");
+        break;
+    case CoreMode::Transcribing: hint = mine ? tr("Recognising what you said…") : tr("The PC is recognising what it heard…"); break;
     case CoreMode::Thinking: hint = tr("Nexa is writing a reply…"); break;
     case CoreMode::Acting: hint = tr("Running tools on the PC…"); break;
-    case CoreMode::Speaking: hint = tr("Reading the reply aloud."); break;
+    case CoreMode::Speaking: hint = mine ? tr("Reading the reply aloud.") : tr("The PC is reading the reply aloud."); break;
     case CoreMode::FastPath: hint = tr("Done directly, without the model."); break;
     case CoreMode::Offline: hint = online ? tr("The PC cannot reach its AI provider.") : tr("Not connected to the PC."); break;
     }
