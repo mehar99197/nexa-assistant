@@ -297,3 +297,30 @@ TEST_CASE("Tasks are paused, resumed, stopped, approved and asked about by voice
         CHECK((!match || match->control == Control::None));
     }
 }
+
+TEST_CASE("Hardcore mode is switched on and the laptop unlocked by voice, and nothing else unlocks it") {
+    Fixture f;
+    const auto routed = [&f](const QString &text) { return f.router.route(text); };
+    for (const QString &text : {u"unlock"_s, u"Nexa, unlock"_s, u"unlock the laptop"_s, u"unlock my keyboard and mouse"_s,
+                                u"unlock the PC"_s, u"give me my keyboard back"_s, u"give me back my mouse"_s,
+                                u"hardcore off"_s, u"turn off hardcore mode"_s, u"stop hardcore mode"_s,
+                                u"end hardcore"_s, u"exit hardcore mode"_s}) {
+        INFO(text.toStdString());
+        const auto match = routed(text);
+        REQUIRE(match);
+        CHECK(match->control == Control::Unlock);
+    }
+    for (const QString &text : {u"hardcore on"_s, u"turn on hardcore mode"_s, u"hardcore mode"_s,
+                                u"switch on hardcore"_s}) {
+        INFO(text.toStdString());
+        const auto match = routed(text);
+        REQUIRE(match);
+        CHECK(match->control == Control::HardcoreOn);
+    }
+    for (const QString &text : {u"unlock my phone"_s, u"unlock the door"_s, u"how do I unlock a pdf"_s,
+                                u"what is hardcore mode in minecraft"_s, u"unlock the phone and open youtube"_s}) {
+        INFO(text.toStdString());
+        const auto match = routed(text);
+        CHECK((!match || (match->control != Control::Unlock && match->control != Control::HardcoreOn)));
+    }
+}

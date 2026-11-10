@@ -75,6 +75,22 @@ std::optional<IntentMatch> TaskIntent::match(const IntentInput &input) const {
         return IntentMatch{.control = Control::AddTask, .target = found.captured(u"words"_s).trimmed(),
                            .verbatimPayload = true};
     }
+    // Hardcore mode. Only the laptop's own things are unlocked: "unlock my phone" is the phone's, or the model's.
+    static const QString laptop = u"(?:the |my )?(?:pc|computer|laptop|keyboard|mouse|keyboard and mouse|"
+                                  "mouse and keyboard|screen|controls?)"_s;
+    if (whole(u"unlock(?: %1)?|give me (?:back )?%1(?: back)?|(?:turn|switch) off hardcore(?: mode)?|"
+              "(?:turn|switch) hardcore(?: mode)? off|hardcore(?: mode)? off|(?:stop|end|exit|quit|leave) hardcore(?: mode)?"_s
+                  .arg(laptop),
+              text)
+            .hasMatch()) {
+        return IntentMatch{.control = Control::Unlock};
+    }
+    if (whole(u"hardcore(?: mode)?(?: on)?|(?:turn|switch) on hardcore(?: mode)?|(?:turn|switch) hardcore(?: mode)? on|"
+              "(?:start|enter|go) hardcore(?: mode)?"_s,
+              text)
+            .hasMatch()) {
+        return IntentMatch{.control = Control::HardcoreOn};
+    }
     if (whole(u"that'?s (?:all|it)|thanks,? that'?s (?:all|it)|go to sleep|stop listening|goodbye|bye(?: bye)?"_s, text)
             .hasMatch()) {
         return IntentMatch{.control = Control::EndConversation};

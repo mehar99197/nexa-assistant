@@ -30,6 +30,8 @@ enum class Control {
     Status,             // "what are you doing?": a sentence about the board
     AddTask,            // "add a task: …" (`target` holds the task's words)
     EndConversation,    // "that's all", "go to sleep": the conversation by voice ends
+    Unlock,             // "unlock", "hardcore off": the laptop's keyboard and mouse back now (hardcore mode)
+    HardcoreOn,         // "hardcore on": the tasks started from now lock the keyboard and mouse while they run
 };
 
 struct IntentMatch {
