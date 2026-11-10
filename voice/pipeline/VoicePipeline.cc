@@ -210,6 +210,7 @@ void VoicePipeline::toggleListening() {
 }
 
 void VoicePipeline::startListening(bool hold) {
+    ownerHeard_ = false;            // a key press: nobody asks whose voice it is
     if (!recognizer_) {
         emit notice(tr("Speech recognition is not set up — see Settings → Voice."), true);
         return;
@@ -306,6 +307,7 @@ void VoicePipeline::speak(const QString &text) {
 
 void VoicePipeline::submitRecording(const QByteArray &pcm16k) {
     cancel();
+    ownerHeard_ = false;
     if (!recognizer_) {
         emit notice(tr("Speech recognition is not set up — see Settings → Voice."), true);
         return;
@@ -464,6 +466,7 @@ void VoicePipeline::fromOwner(const QByteArray &pcm, std::function<void()> then,
             return;
         }
         if (owner) {
+            ownerHeard_ = true;
             then();
             return;
         }
@@ -670,6 +673,7 @@ void VoicePipeline::submit(const QString &text) {
     qCDebug(lcVoice) << "request:" << text;
     if (replyActive_) emit interruptRequested();    // a reply still running is replaced
     setState(VoiceState::Thinking);
+    lastFromOwner_ = std::exchange(ownerHeard_, false);
     emit request(text);
     // Not accepted (no model, a panic word, …) or already over without anything to say.
     if (state_ == VoiceState::Thinking && !replyActive_) setState(VoiceState::Idle);

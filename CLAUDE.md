@@ -354,7 +354,9 @@ text-only model refuses images with a 400; the `Agent` then resends without them
   capability bitmaps) and writes `inhibited`; it must always come undone — Nexa leaving the bus, a missed heartbeat,
   the helper stopping (`ExecStopPost`) — and never lock a virtual device (Nexa's own typing) or the power button.
   **Never start a hardcore lock against the installed helper without the owner's go**: it locks the real keyboard and
-  touchpad of this laptop (a test copy on private XDG folders does too — the helper is system-wide). Authorise against what the *bus* says about the
+  touchpad of this laptop (a test copy on private XDG folders does too — the helper is system-wide). While locked,
+  only the phone, the web remote or the owner's enrolled voice end the work (`AppController::mayEndHardcore`) — a
+  scripted `--ask "unlock"` is refused too, so a test ends a lock by the task's own end or by stopping Nexa. Authorise against what the *bus* says about the
   caller (uid, unique name), never an identity the caller sent — and against the login it resolves to, so the
   password is asked for once per login rather than once per process. Every call re-checks that the login is
   the one at the screen.

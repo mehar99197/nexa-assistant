@@ -63,6 +63,10 @@ public:
     // Whose voice: what is said hands-free (after the name, in a follow-up, over the speech) goes on only when the gate
     // says it is the owner's; push-to-talk never asks. Not owned; null: anyone.
     void setSpeakerGate(ISpeakerGate *gate) { gate_ = gate; }
+    // Whether the request just emitted was checked by the gate and found to be the owner's (an enrolled voice, said
+    // hands-free); false for Talk, a recording, and any request while no voice is enrolled. Read it in a slot of
+    // request(). Hardcore mode lets only the owner's own voice end its lock.
+    bool lastRequestFromOwner() const { return lastFromOwner_; }
 
     VoiceState state() const { return state_; }
     bool canListen() const { return recognizer_ != nullptr; }
@@ -145,6 +149,8 @@ private:
 
     IAudioInput *input_;
     ISpeakerGate *gate_{nullptr};
+    bool ownerHeard_{false};            // the gate said the owner's for the utterance being turned into a request
+    bool lastFromOwner_{false};         // …and so it was, for the request last emitted
     std::unique_ptr<ISpeechRecognizer> recognizer_;
     std::unique_ptr<ISpeechRecognizer> wakeRecognizer_;
     std::unique_ptr<ITextToSpeech> speech_;

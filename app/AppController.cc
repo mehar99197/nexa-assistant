@@ -169,11 +169,11 @@ AppController::AppController(AppServices services, Config config, QString enviro
     });
 
     if (VoicePipeline *voice = services_.voice) {
-        connect(voice, &VoicePipeline::request, this, [this](const QString &text) {
+        connect(voice, &VoicePipeline::request, this, [this, voice](const QString &text) {
             lastHeard_ = text;
             emit lastHeardChanged(text);
             mission_->noteVoice(u"heard › “%1”"_s.arg(text));
-            submit(text, u"voice"_s);
+            submitVoice(text, voice->lastRequestFromOwner());
         });
         // Speaking over a reply stops the voice (the pipeline does), never the task: with the mission board a new
         // request runs beside the old one, and a wake word heard by mistake can no longer cancel work.
@@ -304,6 +304,16 @@ quint64 AppController::submit(const QString &text, const QString &source) {
     refreshAppContext();
 
     const std::optional<IntentMatch> match = services_.router->route(prompt);
+    if (match && hardcoreHolds() && endsHardcoreWork(*match) && !mayEndHardcore(source)) {
+        emit userMessageAccepted(prompt, source);
+        qCInfo(lcApp).noquote() << "hardcore: refused to end the work from" << source;
+        acknowledge(ownerVoiceReady()
+                        ? tr("While hardcore mode works, only Nexa Phone, the web remote or your own voice can end it.")
+                        : tr("While hardcore mode works, only Nexa Phone or the web remote can end it (or your own "
+                             "voice, once it is enrolled in Settings → Voice → My voice)."),
+                    source);
+        return 0;
+    }
     if (match && match->panic) {
         emit userMessageAccepted(prompt, source);
         panic();
@@ -348,6 +358,54 @@ quint64 AppController::submit(const QString &text, const QString &source) {
     const quint64 id = mission_->add(request);
     heads_.insert(channelOf(source), id);
     return id;
+}
+
+quint64 AppController::submitVoice(const QString &text, bool fromOwner) {
+    const QScopedValueRollback<bool> owner(ownerSpeaking_, fromOwner);
+    return submit(text, u"voice"_s);
+}
+
+bool AppController::hardcoreHolds() const {
+    return hardcore_ && (hardcore_->state() == HardcoreMode::State::Counting || hardcore_->holdsInput());
+}
+
+bool AppController::endsHardcoreWork(const IntentMatch &match) const {
+    if (match.panic || match.control == Control::Unlock) return true;
+    const QList<Task> tasks = mission_->tasks();
+    if (match.control == Control::PauseAll) return HardcoreMode::wantsLock(tasks);
+    if (match.control == Control::StopTask || match.control == Control::PauseTask) {
+        const std::optional<TaskId> target = TaskTarget::resolve(match.target, tasks, shown_);
+        const Task *task = target ? mission_->task(*target) : nullptr;
+        return task && task->hardcore;
+    }
+    return false;
+}
+
+bool AppController::mayEndHardcore(const QString &source) const {
+    if (source.startsWith(u"phone"_s)) return true;         // Nexa Phone and the web remote, typed or spoken
+    return source == u"voice"_s && ownerSpeaking_;          // the owner's own voice, as the gate heard it
+}
+
+bool AppController::ownerVoiceReady() const {
+    return (config_.voice.wakeWord || wakeForced_) && services_.speakerGate && services_.speakerGate->active();
+}
+
+bool AppController::phoneReady() const {
+    return config_.remote.enabled && phonePaired_ && phonePaired_();
+}
+
+bool AppController::canUseHardcore(QString *why) const {
+    if (!hardcore_) {
+        if (why) *why = tr("Hardcore mode needs the root helper.");
+        return false;
+    }
+    if (!hardcore_->canLock(why)) return false;
+    if (ownerVoiceReady() || phoneReady()) return true;
+    if (why) {
+        *why = tr("Hardcore mode needs a way to end a lock early: pair Nexa Phone or the web remote (Settings → Remote), "
+                  "or enrol your voice (Settings → Voice → My voice) with the wake word on.");
+    }
+    return false;
 }
 
 QList<quint64> AppController::addTasks(const QStringList &lines, const std::optional<ModelChoice> &model,
@@ -449,9 +507,7 @@ void AppController::carryOut(const IntentMatch &match, const QString &source) {
     }
     case Control::HardcoreOn: {
         QString why;
-        if (!hardcore_ || !hardcore_->canLock(&why)) {
-            return acknowledge(why.isEmpty() ? tr("Hardcore mode is not available here.") : why, source);
-        }
+        if (!canUseHardcore(&why)) return acknowledge(why, source);
         hardcore_->setSwitch(true);
         return acknowledge(tr("Hardcore mode is on: the next task locks your keyboard and mouse until it is done. %1")
                                .arg(hardcoreWaysOut()),
@@ -470,11 +526,11 @@ void AppController::unlockHardcore(const QString &source) {
 
 QString AppController::hardcoreWaysOut() const {
     QStringList ways;
-    if (config_.voice.wakeWord || wakeForced_) ways.append(tr("say “%1, unlock”").arg(config_.voice.wakeName));
-    // A phone is a way out only if one is paired already: pairing needs the PC's own screen and keyboard.
-    if (config_.remote.enabled && phonePaired_ && phonePaired_()) ways.append(tr("press Unlock PC on your phone"));
+    // Only the owner's enrolled voice, and only a phone paired already (pairing needs the PC's own screen and keyboard).
+    if (phoneReady()) ways.append(tr("press Unlock PC on Nexa Phone or the web remote"));
+    if (ownerVoiceReady()) ways.append(tr("say “%1, unlock” in your own voice").arg(config_.voice.wakeName));
     if (ways.isEmpty()) {
-        return tr("Nothing can end it early — the wake word and the web remote are both off — so only the task's end "
+        return tr("Nothing can end it early — no phone is paired and no voice is enrolled — so only the task's end "
                   "(or holding the power button) gives the keyboard and mouse back.");
     }
     return tr("To end it early, %1.").arg(ways.join(tr(" or ")));

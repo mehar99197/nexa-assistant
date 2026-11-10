@@ -97,6 +97,8 @@ public:
     // A request, as a task carrying on this channel's conversation (the PC's or the phone's). The task's id; 0 when
     // none was made (nothing said, the panic, no model to ask).
     quint64 submit(const QString &text, const QString &source = QStringLiteral("gui"));
+    // A spoken request from the PC's microphone; `fromOwner`: the enrolled voice was checked and it is the owner's.
+    quint64 submitVoice(const QString &text, bool fromOwner);
     // Several at once (Add tasks): one task per line that says something, independent of the conversation, on
     // `model` when one is given (else what each role is given).
     // `hardcore`: they lock the laptop's keyboard and mouse while they run (Add tasks' box).
@@ -105,8 +107,12 @@ public:
     MissionControl *mission() const { return mission_.get(); }
     // Hardcore mode: the switch, the lock and its state; null without an input lock to hold (no helper wired).
     HardcoreMode *hardcore() const { return hardcore_.get(); }
-    // The keyboard and mouse back now ("unlock" by voice, Unlock PC on the phone); the tasks go on.
+    // The keyboard and mouse back now (Unlock PC on the phone, "unlock" from the phone or the owner's voice); the tasks
+    // go on.
     void unlockHardcore(const QString &source);
+    // Whether hardcore mode may be switched on: the root helper can lock, and something can end a lock early — a paired
+    // phone with the web remote on, or the owner's enrolled voice with the wake word on. `why` says what is missing.
+    bool canUseHardcore(QString *why = nullptr) const;
     // How the owner can end a lock early, in a sentence: the voice when the wake word is on, the phone when the web
     // remote is; otherwise that only the task's end (or the power button) will.
     QString hardcoreWaysOut() const;
@@ -192,6 +198,13 @@ signals:
 
 private:
     bool handlesControl(const IntentMatch &match) const;
+    // While hardcore mode holds the keyboard and mouse, what would end that work early — unlock, stopping or pausing a
+    // hardcore task, "stop everything" — is taken only from the phone, the web remote or the owner's own voice.
+    bool hardcoreHolds() const;
+    bool endsHardcoreWork(const IntentMatch &match) const;
+    bool mayEndHardcore(const QString &source) const;
+    bool ownerVoiceReady() const;       // the wake word on and an enrolled voice the gate checks
+    bool phoneReady() const;            // the web remote on and a phone paired
     void carryOut(const IntentMatch &match, const QString &source);
     void acknowledge(const QString &text, const QString &source);
     bool shouldAnnounce(const Task &task) const;
@@ -233,6 +246,7 @@ private:
     std::unique_ptr<MissionControl> mission_;
     std::unique_ptr<HardcoreMode> hardcore_;
     std::function<bool()> phonePaired_;
+    bool ownerSpeaking_{false};                 // the request being handled is the owner's verified voice
     std::unique_ptr<IAiProvider> provider_;     // the first choice's chain, for the model list
     std::shared_ptr<IAiProvider> spare_;        // made and warmed up for the next Auto task
     QStringList models_;

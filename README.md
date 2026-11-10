@@ -43,9 +43,11 @@ Not to be confused with Nexa Download Manager: this is a separate program, named
 - **Hardcore mode** — switch on **Hardcore** beside Share screen (Ctrl+Shift+H, or say "hardcore on") and every
   task you start locks this laptop's own keyboard and touchpad until it is done, so nothing typed or clicked here
   spoils what it types and clicks; the screen stays on and you watch. A banner says until when. Its questions are
-  answered by voice ("approve" / "deny") or on your phone. End it early by saying "Nexa, unlock" or "stop
-  everything", or with **Unlock PC** on Nexa Phone or the web remote; Nexa closing or hanging always gives the
-  keyboard and mouse back. It needs the root helper (reinstall it once after updating Nexa).
+  answered by voice ("approve" / "deny") or on your phone. While it works, only **Nexa Phone, the web remote or your
+  own enrolled voice** can end it early (**Unlock PC**, or "Nexa, unlock" / "stop everything" said by you — Settings →
+  Voice → My voice); anyone else's voice is refused, and hardcore mode switches on only when one of those ways exists.
+  Nexa closing or hanging always gives the keyboard and mouse back. It needs the root helper (reinstall it once after
+  updating Nexa).
 - **Types and clicks for you** — in any window, including native Wayland ones. Point at anything you
   can see: coordinates are read straight off the screenshot Nexa last took, and land on the exact
   pixel even with fractional scaling.

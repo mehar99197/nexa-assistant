@@ -860,3 +860,38 @@ TEST_CASE("Only the owner's voice: a stranger's follow-up, name and sentence go 
     REQUIRE(QTest::qWaitFor([&room] { return room.local->pending(); }, 2000));
     CHECK(tv.checks == 2);
 }
+
+TEST_CASE("A request says whether the owner's own voice was heard: only the gate's yes counts, never Talk") {
+    Rig rig;
+    ScriptedGate gate;
+    rig.pipeline.setSpeakerGate(&gate);
+    rig.pipeline.setSettings({.followUpMs = 2000});
+    QList<bool> fromOwner;
+    QObject::connect(&rig.pipeline, &VoicePipeline::request, &rig.pipeline,
+                     [&rig, &fromOwner] { fromOwner.append(rig.pipeline.lastRequestFromOwner()); });
+    askAndHear(rig);                        // pressed Talk: nobody checked whose voice it was
+    QTest::qWait(250);
+    REQUIRE(rig.pipeline.state() == VoiceState::Listening);
+    gate.owners = {true};
+    rig.microphone.play(testaudio::quiet(500) + testaudio::speech(800) + testaudio::quiet(1600));
+    REQUIRE(QTest::qWaitFor([&rig] { return rig.recognizer->pending(); }, 2000));
+    rig.recognizer->answer(u"Unlock."_s);
+    REQUIRE(rig.requests.size() == 2);
+    CHECK(fromOwner == QList<bool>{false, true});
+
+    // Without an enrolled voice (the gate off), a hands-free request is anyone's.
+    Rig open;
+    ScriptedGate off;
+    off.on = false;
+    open.pipeline.setSpeakerGate(&off);
+    open.pipeline.setSettings({.followUpMs = 2000});
+    bool openOwner = true;
+    QObject::connect(&open.pipeline, &VoicePipeline::request, &open.pipeline,
+                     [&open, &openOwner] { openOwner = open.pipeline.lastRequestFromOwner(); });
+    askAndHear(open);
+    QTest::qWait(250);
+    open.microphone.play(testaudio::quiet(500) + testaudio::speech(800) + testaudio::quiet(1600));
+    REQUIRE(QTest::qWaitFor([&open] { return open.recognizer->pending(); }, 2000));
+    open.recognizer->answer(u"Unlock."_s);
+    CHECK_FALSE(openOwner);
+}

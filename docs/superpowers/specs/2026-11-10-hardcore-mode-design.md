@@ -19,6 +19,11 @@ Decided with the owner (2026-11-10):
   during the lock is locked too (not an escape).
 - **The switch**: "Hardcore" in the input bar beside Share screen (every task started while it is on), the same
   checkbox in Add tasks; off at every start.
+- **Revised by the owner (2026-11-10, after the first live run)**: while a hardcore lock is held, what ends that work
+  early — unlock, stopping or pausing a hardcore task, "stop everything" — is taken **only from Nexa Phone, the web
+  remote, or the owner's own enrolled voice** (the speaker gate said so for that request); anyone else's voice, a
+  request typed or scripted on the PC, is refused with a sentence that says so. Hardcore mode is switched on only when
+  one of those exists: a paired phone with the web remote on, or an enrolled voice with the wake word on.
 
 ## How it locks
 

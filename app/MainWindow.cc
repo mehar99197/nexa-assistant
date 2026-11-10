@@ -1234,7 +1234,7 @@ void MainWindow::openAddTasks() {
     if (!input_->toPlainText().trimmed().isEmpty()) dialog.setText(input_->toPlainText());
     if (HardcoreMode *hardcore = controller_->hardcore()) {
         QString why;
-        const bool available = hardcore->canLock(&why);
+        const bool available = controller_->canUseHardcore(&why);
         dialog.setHardcore(hardcore->isSwitchOn(), available, controller_->hardcoreWaysOut(), why);
     } else {
         dialog.setHardcore(false, false, {}, tr("Hardcore mode needs the root helper."));
@@ -1264,7 +1264,7 @@ void MainWindow::setHardcore(bool on, bool ask) {
         return;
     }
     if (hardcore->isSwitchOn()) return;
-    if (QString why; !hardcore->canLock(&why)) {
+    if (QString why; !controller_->canUseHardcore(&why)) {
         untick();
         QMessageBox::warning(this, tr("Hardcore mode"), why);
         return;
@@ -1275,7 +1275,8 @@ void MainWindow::setHardcore(bool on, bool ask) {
         box.setInformativeText(
             tr("Every task you start while hardcore mode is on locks this laptop's keyboard and touchpad from a moment "
                "after it starts until it is done — its questions are answered by voice or from the phone. The screen "
-               "stays on so you can watch.\n\n%1\n\nNexa closing always gives them back.")
+               "stays on so you can watch. While it works, only Nexa Phone, the web remote or your own enrolled voice "
+               "can end it early.\n\n%1\n\nNexa closing always gives them back.")
                 .arg(controller_->hardcoreWaysOut()));
         QPushButton *lock = box.addButton(tr("Lock while tasks run"), QMessageBox::AcceptRole);
         QPushButton *cancel = box.addButton(QMessageBox::Cancel);

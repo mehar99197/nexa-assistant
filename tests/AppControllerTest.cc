@@ -284,8 +284,16 @@ TEST_CASE("A board task asked for by voice says when it is done; the chat's own 
     CHECK(announced.at(0).at(0).toString().contains(u"is done"_s));
 }
 
-TEST_CASE("Hardcore on, a request locks the keyboard and mouse, and 'unlock' gives them back while it runs") {
-    ControllerRig rig;
+// A config where hardcore mode has a way out: the web remote on, with a phone paired (setPhonePaired in the rig).
+Config withPhone() {
+    Config config = withScriptedModel();
+    config.remote.enabled = true;
+    return config;
+}
+
+TEST_CASE("Hardcore on, a request locks the keyboard and mouse, and only the phone or the owner's voice unlocks it") {
+    ControllerRig rig(withPhone());
+    rig.controller->setPhonePaired([] { return true; });
     rig.scripts = {{}, {}, {}};     // the task's model hangs until told
     rig.controller->start();
     CHECK(rig.controller->submit(u"hardcore on"_s, u"voice"_s) == 0);
@@ -295,14 +303,83 @@ TEST_CASE("Hardcore on, a request locks the keyboard and mouse, and 'unlock' giv
     CHECK(rig.controller->mission()->task(id)->hardcore);
     REQUIRE(QTest::qWaitFor([&rig] { return rig.lock.held; }, kWaitMs));
 
+    // Anyone's voice (no enrolled voice checked it), or a request typed or scripted on the PC: refused.
     QSignalSpy notices(rig.controller.get(), &AppController::replyNotice);
     CHECK(rig.controller->submit(u"Nexa, unlock"_s, u"voice"_s) == 0);
+    CHECK(rig.controller->submit(u"unlock"_s, u"gui"_s) == 0);
+    CHECK(rig.lock.held);
+    REQUIRE_FALSE(notices.isEmpty());
+    CHECK(notices.last().at(0).toString().contains(u"only Nexa Phone or the web remote"_s));
+
+    // The owner's own voice, as the gate heard it: the keyboard and mouse come back, the task goes on.
+    CHECK(rig.controller->submitVoice(u"Nexa, unlock"_s, true) == 0);
     CHECK_FALSE(rig.lock.held);
     CHECK_FALSE(rig.controller->hardcore()->isSwitchOn());
     CHECK(rig.controller->mission()->task(id)->state == TaskState::Running);
-    REQUIRE_FALSE(notices.isEmpty());
     CHECK(notices.last().at(0).toString().contains(u"keyboard and mouse are back"_s));
     rig.controller->panic();
+}
+
+TEST_CASE("While locked, stopping or pausing the hardcore work is the phone's or the owner's; other tasks are anyone's") {
+    ControllerRig rig(withPhone());
+    rig.controller->setPhonePaired([] { return true; });
+    rig.scripts = {{}, {}, {}, {}};
+    rig.controller->start();
+    TaskRequest ordinary;
+    ordinary.text = u"keep thinking"_s;
+    const quint64 other = rig.controller->mission()->add(ordinary);
+    rig.controller->hardcore()->setSwitch(true);
+    const quint64 hard = rig.controller->submit(u"sort the photos"_s);
+    REQUIRE(QTest::qWaitFor([&rig] { return rig.lock.held; }, kWaitMs));
+
+    for (const QString &text : {u"stop everything"_s, u"stop"_s, u"pause all"_s, u"pause task %1"_s.arg(hard),
+                                u"hardcore off"_s}) {
+        INFO(text.toStdString());
+        CHECK(rig.controller->submit(text, u"voice"_s) == 0);
+        CHECK(rig.lock.held);
+        CHECK(rig.controller->mission()->task(hard)->state == TaskState::Running);
+    }
+    // A task that is not hardcore stays the voice's to pause.
+    CHECK(rig.controller->submit(u"pause task %1"_s.arg(other), u"voice"_s) == 0);
+    CHECK(rig.controller->mission()->task(other)->state == TaskState::Paused);
+    CHECK(rig.lock.held);
+
+    // From the phone, "stop everything" stops the work and the lock with it.
+    CHECK(rig.controller->submit(u"stop everything"_s, u"phone"_s) == 0);
+    CHECK_FALSE(rig.lock.held);
+    CHECK(rig.controller->mission()->task(hard)->state == TaskState::Stopped);
+}
+
+TEST_CASE("Unlock PC on the phone gives the keyboard and mouse back") {
+    ControllerRig rig(withPhone());
+    rig.controller->setPhonePaired([] { return true; });
+    rig.scripts = {{}, {}};
+    rig.controller->start();
+    rig.controller->hardcore()->setSwitch(true);
+    const quint64 id = rig.controller->submit(u"sort the photos"_s);
+    REQUIRE(QTest::qWaitFor([&rig] { return rig.lock.held; }, kWaitMs));
+    rig.controller->unlockHardcore(u"phone"_s);
+    CHECK_FALSE(rig.lock.held);
+    CHECK(rig.controller->mission()->task(id)->state == TaskState::Running);
+    rig.controller->panic();
+}
+
+TEST_CASE("Hardcore mode is not switched on while nothing could end a lock early") {
+    ControllerRig rig;      // no phone paired, no voice enrolled
+    QString why;
+    CHECK_FALSE(rig.controller->canUseHardcore(&why));
+    CHECK(why.contains(u"pair Nexa Phone"_s));
+    CHECK(rig.controller->submit(u"hardcore on"_s, u"voice"_s) == 0);
+    CHECK_FALSE(rig.controller->hardcore()->isSwitchOn());
+
+    Config config = withPhone();
+    ControllerRig paired(config);
+    paired.controller->setPhonePaired([] { return true; });
+    CHECK(paired.controller->canUseHardcore());
+    // The remote on, but no phone paired yet: pairing needs the PC's own keyboard, so it is no way out.
+    ControllerRig unpaired(config);
+    unpaired.controller->setPhonePaired([] { return false; });
+    CHECK_FALSE(unpaired.controller->canUseHardcore());
 }
 
 TEST_CASE("Stop everything ends hardcore mode as well as the tasks") {
@@ -356,15 +433,15 @@ TEST_CASE("The ways out are named from what is switched on") {
         CHECK(rig.controller->hardcoreWaysOut().contains(u"power button"_s));
     }
     config.remote.enabled = true;
+    config.voice.wakeWord = true;
     {
-        // The web remote on but no phone paired: pairing needs the PC's keyboard, so it is no way out.
+        // The web remote on but no phone paired, and no voice enrolled (no gate): no way out.
         ControllerRig rig(config);
         rig.controller->setPhonePaired([] { return false; });
         CHECK(rig.controller->hardcoreWaysOut().contains(u"power button"_s));
     }
-    config.voice.wakeWord = true;
     ControllerRig rig(config);
     rig.controller->setPhonePaired([] { return true; });
-    CHECK(rig.controller->hardcoreWaysOut().contains(u"“Nexa, unlock”"_s));
     CHECK(rig.controller->hardcoreWaysOut().contains(u"Unlock PC"_s));
+    CHECK_FALSE(rig.controller->hardcoreWaysOut().contains(u"own voice"_s));    // nobody's voice is enrolled
 }
