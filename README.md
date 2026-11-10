@@ -178,7 +178,7 @@ pipx install aqtinstall
 aqt install-qt all_os android 6.10.2 android_arm64_v8a -m qtwebsockets qtmultimedia \
     --archives qtbase qtsvg qtwebsockets qtmultimedia -O ~/Qt
 # Android SDK: command-line tools from developer.android.com into ~/Android/Sdk/cmdline-tools/latest, then
-sdkmanager "platform-tools" "platforms;android-35" "build-tools;35.0.0" "ndk;27.2.12479018"
+sdkmanager "platform-tools" "platforms;android-36" "build-tools;36.0.0" "ndk;27.2.12479018"
 sudo apt install -y openjdk-21-jdk-headless   # a JDK with javac (the JRE is not enough); or a Temurin JDK in ~/Android/jdk-21
 scripts/download-android-openssl.sh           # OpenSSL for the APK (5 MB): Qt for Android has no TLS without it
 scripts/build-phone-apk.sh                    # configures with the kit, builds, signs, prints the APK's path

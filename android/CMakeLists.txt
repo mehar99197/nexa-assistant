@@ -79,7 +79,8 @@ if(ANDROID)
         QT_ANDROID_VERSION_NAME "${PROJECT_VERSION}"
         QT_ANDROID_VERSION_CODE 1
         QT_ANDROID_MIN_SDK_VERSION 28
-        QT_ANDROID_TARGET_SDK_VERSION 35
+        # Qt 6.11's Android template brings androidx.core 1.17, which needs API 36 to compile against.
+        QT_ANDROID_TARGET_SDK_VERSION 36
     )
     # Only what it does: reach Nexa, and hear the user while Talk is held.
     qt_add_android_permission(nexa-phone NAME android.permission.INTERNET)
