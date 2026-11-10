@@ -7,6 +7,9 @@ Documentation=file:///usr/local/share/doc/nexa/ARCHITECTURE.md
 Type=dbus
 BusName=org.nexa.Helper
 ExecStart=/usr/local/libexec/nexa-helper
+# After every stop — a crash, a kill, an uninstall — whatever hardcore mode left switched off is
+# given back, from the record the helper keeps in /run/nexa-helper. The laptop is never left locked.
+ExecStopPost=/usr/local/libexec/nexa-helper --release-input
 Restart=no
 
 # Hardening is deliberately light: the helper's whole purpose is to run arbitrary commands as root

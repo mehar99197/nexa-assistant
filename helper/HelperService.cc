@@ -1,6 +1,7 @@
 #include "helper/HelperService.h"
 
 #include "core/Logging.h"
+#include "helper/DeviceLock.h"
 #include "helper/JobManager.h"
 #include "helper/LoginSessions.h"
 #include "helper/PolkitAuthorizer.h"
@@ -11,6 +12,8 @@
 
 #include <QDBusConnectionInterface>
 #include <QDBusReply>
+#include <QDBusServiceWatcher>
+#include <QFileSystemWatcher>
 
 #include <linux/input-event-codes.h>
 
@@ -62,11 +65,29 @@ void sendResult(const QDBusConnection &bus, const QDBusMessage &request, const R
 } // namespace
 
 HelperService::HelperService(PolkitAuthorizer *authorizer, LoginSessions *sessions, SessionGrants *grants,
-                             JobManager *jobs, UinputDevice *input, QObject *parent)
-    : QObject(parent), authorizer_(authorizer), sessions_(sessions), grants_(grants), jobs_(jobs), input_(input) {
+                             JobManager *jobs, UinputDevice *input, DeviceLock *lock, QObject *parent)
+    : QObject(parent),
+      authorizer_(authorizer),
+      sessions_(sessions),
+      grants_(grants),
+      jobs_(jobs),
+      input_(input),
+      lock_(lock) {
     connect(jobs_, &JobManager::outputChunk, this, &HelperService::OutputChunk);
     connect(jobs_, &JobManager::finished, this, &HelperService::Finished);
+    heartbeat_.setSingleShot(true);
+    heartbeat_.setInterval(kHeartbeatMs);
+    connect(&heartbeat_, &QTimer::timeout, this, [this] {
+        endLock(tr("Nexa stopped answering for %1 seconds.").arg(kHeartbeatMs / 1000), true);
+    });
 }
+
+// The helper going away (a stop, the idle exit) never leaves the laptop locked.
+HelperService::~HelperService() {
+    if (lock_->isLocked()) endLock(tr("The helper stopped."), false);
+}
+
+bool HelperService::isInputLocked() const { return lock_->isLocked(); }
 
 LoginSession HelperService::callerSession() const {
     QDBusConnectionInterface *daemon = connection().interface();
@@ -242,6 +263,75 @@ void HelperService::MouseScroll(int dx, int dy) {
         if (const Result<void> scrolled = input_->scroll(dx, dy); !scrolled) return scrolled.error();
         return QVariantList{};
     });
+}
+
+QStringList HelperService::LockInput() {
+    emit called();
+    const QString caller = message().service();
+    if (lock_->isLocked() && lock_->owner() != caller) {
+        // Refused before polkit is asked: there is nothing a password could change about it.
+        sendErrorReply(helper::kErrorLocked, tr("Another Nexa holds the keyboard and mouse."));
+        return {};
+    }
+    if (lock_->isLocked() && !callerSession().isAtTheScreen()) {
+        endLock(tr("This login is no longer the one at the screen."), true);
+    }
+    const QDBusConnection bus = connection();
+    whenAllowed([this, bus, caller]() -> Result<QVariantList> {
+        const bool first = !lock_->isLocked();
+        const Result<QStringList> held = lock_->lock(caller);
+        if (!held) return held.error();
+        if (first) {
+            watchLockHolder(bus, caller);
+            qCInfo(lcApp).noquote() << "keyboard and pointer locked for" << caller << ":" << held.value().join(u", "_s);
+        }
+        heartbeat_.start();
+        return QVariantList{held.value()};
+    });
+    return {};
+}
+
+void HelperService::UnlockInput() {
+    emit called();
+    if (!lock_->isLocked()) return;
+    const QString caller = message().service();
+    QDBusConnectionInterface *daemon = connection().interface();
+    const QDBusReply<uint> uid = daemon ? daemon->serviceUid(caller) : QDBusReply<uint>();
+    if (caller != lock_->owner() && !(uid.isValid() && uid.value() == 0)) {
+        sendErrorReply(helper::kErrorDenied, tr("Only the Nexa that locked the keyboard and mouse may unlock them."));
+        return;
+    }
+    endLock(tr("Nexa unlocked them."), false);
+}
+
+void HelperService::watchLockHolder(const QDBusConnection &bus, const QString &holder) {
+    holderWatcher_ = new QDBusServiceWatcher(holder, bus, QDBusServiceWatcher::WatchForUnregistration, this);
+    connect(holderWatcher_, &QDBusServiceWatcher::serviceUnregistered, this,
+            [this] { endLock(tr("Nexa closed."), true); });
+    hotplug_ = new QFileSystemWatcher({u"/dev/input"_s}, this);
+    connect(hotplug_, &QFileSystemWatcher::directoryChanged, this, [this] {
+        if (!lock_->isLocked()) return;
+        // udev makes the node a moment after the kernel's device; the heartbeat's rescan catches one missed here.
+        QTimer::singleShot(300, this, [this] {
+            if (!lock_->isLocked()) return;
+            if (const Result<QStringList> held = lock_->lock(lock_->owner()); !held) {
+                qCWarning(lcApp).noquote() << "a new input device could not be locked:" << held.error().message;
+            }
+        });
+    });
+}
+
+void HelperService::endLock(const QString &reason, bool byItself) {
+    if (!lock_->isLocked()) return;
+    lock_->unlock();
+    heartbeat_.stop();
+    // Later: this may be running inside the watcher's own signal.
+    if (holderWatcher_) holderWatcher_->deleteLater();
+    holderWatcher_ = nullptr;
+    if (hotplug_) hotplug_->deleteLater();
+    hotplug_ = nullptr;
+    qCInfo(lcApp).noquote() << "keyboard and pointer unlocked:" << reason;
+    if (byItself) emit InputUnlocked(reason);
 }
 
 } // namespace nexa

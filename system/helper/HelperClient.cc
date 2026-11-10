@@ -50,6 +50,7 @@ HelperClient::HelperClient(QObject *parent) : QObject(parent) {
     proxy_->setTimeout(kPrivilegedTimeoutMs);
     connect(proxy_.get(), &HelperProxy::OutputChunk, this, &HelperClient::onOutputChunk);
     connect(proxy_.get(), &HelperProxy::Finished, this, &HelperClient::onFinished);
+    connect(proxy_.get(), &HelperProxy::InputUnlocked, this, &HelperClient::inputUnlocked);
 
     // The helper exits when idle and is started again on demand; if it goes while a job is running,
     // that job would never report, so it is ended here instead of hanging.
@@ -71,6 +72,10 @@ Error HelperClient::errorFrom(const QDBusError &error) const {
         return Error{ErrorCode::PermissionDenied,
                      u"D-Bus refused the call to the helper. Is packaging/org.nexa.Helper.conf installed? (%1)"_s
                          .arg(error.message())};
+    case QDBusError::UnknownMethod:
+        // An older helper, installed before this method existed.
+        return Error{ErrorCode::NotSupported, u"The installed root helper is older than Nexa. Update it with: sudo "
+                                              "./packaging/install-helper.sh"_s};
     case QDBusError::NoReply:
     case QDBusError::Timeout:
     case QDBusError::TimedOut:
@@ -83,6 +88,7 @@ Error HelperClient::errorFrom(const QDBusError &error) const {
         return Error{ErrorCode::PermissionDenied, reason};
     }
     if (error.name() == helper::kErrorInvalidArgument) return Error{ErrorCode::InvalidArgument, error.message()};
+    if (error.name() == helper::kErrorLocked) return Error{ErrorCode::PermissionDenied, error.message()};
     if (error.name() == helper::kErrorNoInputDevice) return Error{ErrorCode::NotSupported, error.message()};
     return Error{ErrorCode::Unknown, error.message().isEmpty() ? error.name() : error.message()};
 }
@@ -206,6 +212,7 @@ void HelperClient::onFinished(qulonglong jobId, int exitCode, const QString &sta
 }
 
 void HelperClient::onHelperGone() {
+    emit helperGone();
     if (jobs_.empty()) return;
     qCWarning(lcApp) << "the root helper stopped while" << jobs_.size() << "job(s) were running";
     const auto running = std::exchange(jobs_, {});
@@ -239,6 +246,21 @@ void HelperClient::mouseButton(int button, bool down, Done done) {
 
 void HelperClient::mouseScroll(int dx, int dy, Done done) {
     awaitVoid(proxy_->MouseScroll(dx, dy), std::move(done));
+}
+
+void HelperClient::lockInput(std::function<void(Result<QStringList>)> done) {
+    auto *watcher = new QDBusPendingCallWatcher(proxy_->LockInput(), this);
+    connect(watcher, &QDBusPendingCallWatcher::finished, this, [this, done](QDBusPendingCallWatcher *finished) {
+        finished->deleteLater();
+        const QDBusPendingReply<QStringList> reply = *finished;
+        const Error error = reply.isError() ? errorFrom(reply.error()) : Error{};
+        noteOutcome(reply.isError(), error);
+        done(reply.isError() ? Result<QStringList>{error} : Result<QStringList>{reply.value()});
+    });
+}
+
+void HelperClient::unlockInput(Done done) {
+    awaitVoid(proxy_->UnlockInput(), std::move(done));
 }
 
 } // namespace nexa

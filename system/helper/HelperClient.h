@@ -70,8 +70,17 @@ public:
     void mouseButton(int button, bool down, Done done);
     void mouseScroll(int dx, int dy, Done done);
 
+    // Hardcore mode: the laptop's own keyboards and pointers off (the names of those held), and back. Locking again
+    // while locked is the heartbeat the helper needs every few seconds.
+    void lockInput(std::function<void(Result<QStringList>)> done);
+    void unlockInput(Done done);
+
 signals:
     void readyChanged(bool ready);
+    // The helper ended the lock by itself (Nexa missed its heartbeat, its login left the screen).
+    void inputUnlocked(const QString &reason);
+    // The helper left the bus (an idle exit, a stop, a crash).
+    void helperGone();
 
 private:
     struct Job {

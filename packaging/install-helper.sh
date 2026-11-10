@@ -84,6 +84,13 @@ else
     ok=1
 fi
 
+if grep -q -- "--release-input" /etc/systemd/system/nexa-helper.service; then
+    echo "  a stopped or crashed helper gives the keyboard and mouse back (hardcore mode)"
+else
+    echo "  the unit lacks ExecStopPost=--release-input — hardcore mode would not be safe" >&2
+    ok=1
+fi
+
 if [[ -e /dev/uinput ]]; then
     echo "  /dev/uinput is present, so typing and clicking will work"
 else
@@ -92,9 +99,10 @@ fi
 
 echo
 if [[ "$ok" -eq 0 ]]; then
-    echo "Done. Nexa can now run commands as root and type for you. It asks for your password once"
-    echo "per login — the desktop's own prompt, never Nexa's — and the helper exits on its own after"
-    echo "ten idle minutes. To be asked again: Settings → Helper → Forget my password, or log out."
+    echo "Done. Nexa can now run commands as root, type for you, and lock the keyboard and mouse"
+    echo "in hardcore mode. It asks for your password once per login — the desktop's own prompt,"
+    echo "never Nexa's — and the helper exits on its own after ten idle minutes. To be asked again:"
+    echo "Settings → Helper → Forget my password, or log out."
 else
     echo "Installed, but the checks above did not all pass." >&2
 fi
