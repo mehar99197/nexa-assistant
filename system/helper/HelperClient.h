@@ -74,6 +74,8 @@ public:
     // while locked is the heartbeat the helper needs every few seconds.
     void lockInput(std::function<void(Result<QStringList>)> done);
     void unlockInput(Done done);
+    // The same, waiting up to two seconds for the answer: for Nexa's last moments, when nothing would get to it later.
+    void unlockInputAndWait();
 
 signals:
     void readyChanged(bool ready);

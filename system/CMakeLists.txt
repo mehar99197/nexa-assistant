@@ -24,6 +24,7 @@ add_library(nexa_system STATIC
     input/IInputBackend.h
     input/CombinedInputBackend.h input/CombinedInputBackend.cc
     input/HelperInputBackend.h input/HelperInputBackend.cc
+    input/HelperInputLock.h input/HelperInputLock.cc
     input/InputBackendSelector.h input/InputBackendSelector.cc
     input/PortalInputBackend.h input/PortalInputBackend.cc
     input/RemoteDesktopSession.h input/RemoteDesktopSession.cc
@@ -33,6 +34,7 @@ add_library(nexa_system STATIC
     media/MprisController.h media/MprisController.cc
     office/OdfWriter.h office/OdfWriter.cc
     office/OfficeTools.h office/OfficeTools.cc
+    screen/ScreenAwake.h screen/ScreenAwake.cc
     screen/ScreenCapture.h screen/ScreenCapture.cc
 )
 

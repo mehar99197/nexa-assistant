@@ -263,4 +263,12 @@ void HelperClient::unlockInput(Done done) {
     awaitVoid(proxy_->UnlockInput(), std::move(done));
 }
 
+void HelperClient::unlockInputAndWait() {
+    proxy_->setTimeout(2'000);
+    QDBusPendingReply<> reply = proxy_->UnlockInput();
+    reply.waitForFinished();
+    proxy_->setTimeout(kPrivilegedTimeoutMs);
+    if (reply.isError()) qCWarning(lcApp).noquote() << "hardcore: the last unlock was not answered:" << reply.error().message();
+}
+
 } // namespace nexa
