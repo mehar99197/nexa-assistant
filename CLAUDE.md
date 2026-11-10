@@ -272,6 +272,13 @@ text-only model refuses images with a 400; the `Agent` then resends without them
   question, Approve / Deny on the page and in Nexa Phone). Phone requests carry the
   source `phone` or `phone-voice`. `RemoteClient` is the phone's end of the same protocol (pair, hello, backoff, trust on first
   use pinned to the certificate's fingerprint); `RemoteProtocol` decodes both directions.
+- **Away from home** (M21): `remote/RemoteRoutes` (pure: the ways a phone reaches this PC, ordered, on the wire),
+  `RemoteServer`'s tunnel door (loopback, port + 2; its sessions are `viaTunnel`), `system/net/` (`TunnelLog` pure,
+  `TunnelProcess` = cloudflared / ngrok as a child with backoff and an `--edge` fallback, `TailscaleWatcher` =
+  `tailscale status --json`, read only, and `tailscale up --operator` for the sign-in), `app/RemoteAccess` (Mediator:
+  Settings → Remote → Away from home → the tunnels and the routes). The programs keep their own credentials
+  (tailscaled's key, `~/.cloudflared`, ngrok's config): Nexa never reads them. A live tunnel test uses an isolated copy
+  (private XDG folders, no paired phone, no keys, `tunnels` linked into its data folder) — never the owner's remote.
 - `android/` — Nexa Phone, the native client: a Qt Widgets app (`PhoneWindow` mediator, `PairPage`, `ChatPage`,
   `PhoneSettings`, `Recorder`, `SpeechPlayer`) over `remote/RemoteClient`, wearing `ui/`'s theme and core (the
   PC's state, except while the phone itself listens, waits for its words or reads a reply aloud; a tap on Talk

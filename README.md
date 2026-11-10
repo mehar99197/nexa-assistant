@@ -48,6 +48,11 @@ Not to be confused with Nexa Download Manager: this is a separate program, named
   Voice → My voice); anyone else's voice is refused, and hardcore mode switches on only when one of those ways exists.
   Nexa closing or hanging always gives the keyboard and mouse back. It needs the root helper (reinstall it once after
   updating Nexa).
+- **From anywhere** — away from home, Nexa Phone and the web remote still reach the laptop: privately over
+  **Tailscale** (sign in on the laptop and the phone with the same account), or through a public **Cloudflare**
+  tunnel on your own domain or **ngrok**'s free fixed domain (Settings → Remote → Away from home). The phone learns
+  every way while it is connected, tries them in turn, and says "via Tailscale" when it is not at home.
+  `scripts/download-tunnels.sh` installs cloudflared and ngrok without sudo; each keeps its own sign-in.
 - **Types and clicks for you** — in any window, including native Wayland ones. Point at anything you
   can see: coordinates are read straight off the screenshot Nexa last took, and land on the exact
   pixel even with fractional scaling.
