@@ -355,9 +355,16 @@ TEST_CASE("The ways out are named from what is switched on") {
         ControllerRig rig(config);
         CHECK(rig.controller->hardcoreWaysOut().contains(u"power button"_s));
     }
-    config.voice.wakeWord = true;
     config.remote.enabled = true;
+    {
+        // The web remote on but no phone paired: pairing needs the PC's keyboard, so it is no way out.
+        ControllerRig rig(config);
+        rig.controller->setPhonePaired([] { return false; });
+        CHECK(rig.controller->hardcoreWaysOut().contains(u"power button"_s));
+    }
+    config.voice.wakeWord = true;
     ControllerRig rig(config);
+    rig.controller->setPhonePaired([] { return true; });
     CHECK(rig.controller->hardcoreWaysOut().contains(u"“Nexa, unlock”"_s));
     CHECK(rig.controller->hardcoreWaysOut().contains(u"Unlock PC"_s));
 }

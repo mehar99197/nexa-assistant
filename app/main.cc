@@ -424,6 +424,7 @@ int main(int argc, char *argv[]) {
     PairingManager pairing(PairingManager::defaultPath());
     TlsIdentity tlsIdentity(TlsIdentity::defaultDirectory());
     RemoteBridge remoteBridge(&controller, &http);
+    controller.setPhonePaired([&pairing] { return !pairing.devices().isEmpty(); });
     RemoteServer remote(&pairing, &remoteBridge, &tlsIdentity);
     QObject::connect(&controller, &AppController::userMessageAccepted, &remote, &RemoteServer::onUserMessage);
     // Hardcore mode's lock and the questions tasks wait on: the phone shows them, unlocks and answers.

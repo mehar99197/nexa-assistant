@@ -471,7 +471,8 @@ void AppController::unlockHardcore(const QString &source) {
 QString AppController::hardcoreWaysOut() const {
     QStringList ways;
     if (config_.voice.wakeWord || wakeForced_) ways.append(tr("say “%1, unlock”").arg(config_.voice.wakeName));
-    if (config_.remote.enabled) ways.append(tr("press Unlock PC on your phone"));
+    // A phone is a way out only if one is paired already: pairing needs the PC's own screen and keyboard.
+    if (config_.remote.enabled && phonePaired_ && phonePaired_()) ways.append(tr("press Unlock PC on your phone"));
     if (ways.isEmpty()) {
         return tr("Nothing can end it early — the wake word and the web remote are both off — so only the task's end "
                   "(or holding the power button) gives the keyboard and mouse back.");

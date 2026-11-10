@@ -66,6 +66,12 @@ public:
     }
     void rename(const QString &sysfs, const QString &name) { write(classRoot() + u"/"_s + sysfs + u"/name"_s, name); }
 
+    // The kernel refusing a write to `inhibited` (a driver that fails to open again), or taking it again.
+    void refuseWrites(const QString &sysfs, bool refuse) {
+        QFile::setPermissions(classRoot() + u"/"_s + sysfs + u"/inhibited"_s,
+                              refuse ? QFileDevice::ReadOwner : QFileDevice::ReadOwner | QFileDevice::WriteOwner);
+    }
+
     QString classRoot() const { return dir_.filePath(u"class/input"_s); }
     QString record() const { return dir_.filePath(u"run/nexa-helper/locked-input.json"_s); }
 
@@ -140,7 +146,7 @@ TEST_CASE("A second Nexa cannot take the lock another one holds") {
     REQUIRE(lock.lock(u":1.42"_s));
     const Result<QStringList> other = lock.lock(u":1.99"_s);
     REQUIRE_FALSE(other);
-    CHECK(other.error().code == ErrorCode::PermissionDenied);
+    CHECK(other.error().code == ErrorCode::Unauthorized);
     CHECK(lock.owner() == u":1.42"_s);
     CHECK(sys.inhibited(u"input0"_s) == u"1"_s);
 }
@@ -204,4 +210,67 @@ TEST_CASE("A device in the same place is released even if it now gives another n
     lock.unlock();
     CHECK(sys.inhibited(u"input0"_s) == u"0"_s);
     CHECK(sys.inhibited(u"input6"_s) == u"0"_s);
+}
+
+TEST_CASE("A device the kernel will not give back stays recorded, and is tried again until it is back") {
+    FakeSys sys;
+    DeviceLock lock(sys.classRoot(), sys.record());
+    REQUIRE(lock.lock(u":1.42"_s));
+    sys.refuseWrites(u"input6"_s, true);
+    CHECK_FALSE(lock.unlock());
+    CHECK_FALSE(lock.isLocked());
+    CHECK(lock.hasStuck());
+    CHECK(sys.inhibited(u"input0"_s) == u"0"_s);
+    CHECK(sys.inhibited(u"input6"_s) == u"1"_s);
+    CHECK(recordedNames(sys.record()) == QStringList{u"input6"_s});     // never forgotten
+    CHECK(lock.retryStuck() == 1);
+    sys.refuseWrites(u"input6"_s, false);
+    CHECK(lock.retryStuck() == 0);
+    CHECK(sys.inhibited(u"input6"_s) == u"0"_s);
+    CHECK_FALSE(QFile::exists(sys.record()));
+}
+
+TEST_CASE("Released from the record, what will not come back stays in it for the next helper") {
+    FakeSys sys;
+    {
+        DeviceLock lock(sys.classRoot(), sys.record());
+        REQUIRE(lock.lock(u":1.42"_s));
+    }
+    sys.refuseWrites(u"input0"_s, true);
+    CHECK(DeviceLock::releaseRecorded(sys.record(), sys.classRoot()) == 1);
+    CHECK(recordedNames(sys.record()) == QStringList{u"input0"_s});
+    // The next helper takes it up as stuck, and gets it back once the kernel lets it.
+    DeviceLock next(sys.classRoot(), sys.record());
+    CHECK(next.hasStuck());
+    sys.refuseWrites(u"input0"_s, false);
+    CHECK(next.retryStuck() == 0);
+    CHECK(sys.inhibited(u"input0"_s) == u"0"_s);
+}
+
+TEST_CASE("A device plugged in while locked that will not switch off leaves the lock as it was") {
+    FakeSys sys;
+    DeviceLock lock(sys.classRoot(), sys.record());
+    REQUIRE(lock.lock(u":1.42"_s));
+    sys.add(u"input30"_s, u"devices/pci0000:00/usb1/1-2/input/input30"_s, u"Logitech USB Optical Mouse"_s, u"17"_s,
+            u"ff0000 0 0 0 0"_s, u"1943"_s);
+    sys.refuseWrites(u"input30"_s, true);
+    const Result<QStringList> again = lock.lock(u":1.42"_s);
+    REQUIRE(again);
+    CHECK_FALSE(again.value().contains(u"Logitech USB Optical Mouse"_s));
+    CHECK(lock.isLocked());
+    CHECK(sys.inhibited(u"input0"_s) == u"1"_s);
+    CHECK(sys.inhibited(u"input6"_s) == u"1"_s);
+    CHECK(recordedNames(sys.record()) == QStringList{u"input0"_s, u"input6"_s});
+}
+
+TEST_CASE("A Bluetooth keyboard, made through uhid, is locked; only uinput's own devices are exempt") {
+    FakeSys sys;
+    sys.add(u"input40"_s, u"devices/virtual/misc/uhid/0005:046D:B342.0001/input/input40"_s, u"Keys-To-Go 2"_s,
+            u"120013"_s, kKeyboardKeys);
+    DeviceLock lock(sys.classRoot(), sys.record());
+    const Result<QStringList> held = lock.lock(u":1.42"_s);
+    REQUIRE(held);
+    CHECK(held.value().contains(u"Keys-To-Go 2"_s));
+    CHECK(sys.inhibited(u"input40"_s) == u"1"_s);
+    CHECK(sys.inhibited(u"input20"_s) == u"0"_s);      // Nexa's own, under devices/virtual/input
 }

@@ -28,7 +28,8 @@ browser profile out of the real ones, or to try another model, give it a private
 `XDG_CONFIG_HOME=/tmp/x/config XDG_DATA_HOME=/tmp/x/data`, with `playwright`, `models` and `piper` symlinked into
 `/tmp/x/data/nexa`) — it still reads the real config, so
 run it with `QT_QPA_PLATFORM=offscreen` to keep it off the user's screen (it still registers the global Talk hotkey and
-the web remote's port like the real one, so a press of the hotkey during a scripted run goes to the test copy). `--say "<text>"` speaks, `--voice-file <wav>` feeds a recording in as a spoken
+the web remote's port like the real one, so a press of the hotkey during a scripted run goes to the test copy). `--hardcore` switches hardcore mode on for that run without asking (it locks the laptop while the requests run — see
+the helper rule below). `--say "<text>"` speaks, `--voice-file <wav>` feeds a recording in as a spoken
 request; the three run in that order, one at a time. **To check the look**, add `--screenshot <file.png>`: once the
 requests are done and Nexa is idle, it saves a picture of the window and quits — it works offscreen, so
 `QT_QPA_PLATFORM=offscreen ./build/app/nexa-assistant --new-instance --theme light --ask "run uname -sr" --screenshot /tmp/nexa.png`
@@ -132,7 +133,10 @@ text-only model refuses images with a 400; the `Agent` then resends without them
   pause / resume / stop, the policy's questions routed to the task that asked, `delegate_task`, the live activity),
   `TaskRunner` = one task's Agent, Conversation, provider instance and model, `ITaskEnvironment` = what the app gives
   every task (AppController), `RoleClassifier` (the kind of agent from the words), `ModelFit` (the model a kind gets),
-  `AgentRole`, `Task`, `TaskTranscript`, `ActivityFeed`, `DelegateTool`), `agent/` (Agent loop, Conversation, AppContext = the app Nexa opened last for the user — its kind from the desktop
+  `AgentRole`, `Task`, `TaskTranscript`, `ActivityFeed`, `DelegateTool`; **hardcore mode**: `HardcoreMode` = when the
+  laptop's own keyboard and mouse are locked (State over the board: a hardcore task queued, running, awaiting the owner
+  or delegating, after a 3 s countdown; `unlockNow` clears every task's flag and the switch) through an `IInputLock`),
+  `agent/` (Agent loop, Conversation, AppContext = the app Nexa opened last for the user — its kind from the desktop
   entry, a sentence for the model, and the fast path's `run <cmd>` typed into a terminal in front), `tools/` (ToolSpec, ITool, FunctionTool, ToolRegistry, ToolExecutor =
   policy → confirm → invoke → audit, every action carrying its task (`ToolContext`; `cancelTask` stops one task's), TextToolParser for models without native tools), `intent/` (IntentRouter +
   PC and phone fast-path handlers), `policy/` (PolicyEngine, PanicController), `audit/` (AuditLog), `mcp/`
@@ -230,6 +234,12 @@ text-only model refuses images with a 400; the `Agent` then resends without them
   commands in their own process group, streamed output), `UinputDevice` (three virtual devices, write-only),
   `HelperService` (every privileged method replies late, after polkit). It is started by D-Bus on demand and
   exits after ten idle minutes.
+- Hardcore mode's lock in the helper: `InputDevices` (pure: capability bitmaps → keyboard / pointer / other, physical
+  devices only) and `DeviceLock` (the kernel's `/sys/class/input/inputN/inhibited`, a record in
+  `/run/nexa-helper/locked-input.json` that `nexa-helper --release-input` — the unit's `ExecStopPost` — undoes after any
+  stop or crash); `LockInput` (again = the heartbeat, every 5 s; 30 s without one and the helper unlocks), `UnlockInput`,
+  `InputUnlocked`. On the client side `system/input/HelperInputLock` (the `IInputLock`) and `system/screen/ScreenAwake`
+  (the portal's idle inhibit, or GNOME's, while locked).
 - `system/helper/`, `system/commands/RootCommandRunner`, `system/input/` — the client side:
   `HelperInputBackend` (uinput, reaches every window), `RemoteDesktopSession` + `PortalInputBackend` (the
   desktop's RemoteDesktop portal: no root, GNOME asks once and the restore token is kept in
@@ -256,7 +266,9 @@ text-only model refuses images with a 400; the `Agent` then resends without them
   by `app/RemoteBridge`, so remote/ depends only on core. The page itself is `remote/web/` (strict CSP: no inline
   script or style; server text only through `textContent`); it draws the same core as SVG built by `app.js` and
   moved by `style.css` with `NexaCoreSpec`'s timings, and follows the PC's state through the `state` message
-  (`mode` = the wire key, `nodes` = the satellites lit), which `welcome` carries too. Phone requests carry the
+  (`mode` = the wire key, `nodes` = the satellites lit), which `welcome` carries too; `lock` (hardcore mode holds the
+  PC's keyboard and mouse) with the phone's `unlock`, and `approval` / `settled` with the phone's `answer` (a task's
+  question, Approve / Deny on the page and in Nexa Phone). Phone requests carry the
   source `phone` or `phone-voice`. `RemoteClient` is the phone's end of the same protocol (pair, hello, backoff, trust on first
   use pinned to the certificate's fingerprint); `RemoteProtocol` decodes both directions.
 - `android/` — Nexa Phone, the native client: a Qt Widgets app (`PhoneWindow` mediator, `PairPage`, `ChatPage`,
@@ -337,7 +349,11 @@ text-only model refuses images with a 400; the `Agent` then resends without them
   may not save what a page or a tool's output told it to, and `save_skill` is privileged. Tools that a setting
   switches off are **removed** from the registry, not withheld (the fast path and the executor find withheld ones).
 - The helper is the only root-privileged code, and it is **write-only** for input: never add a method that
-  reads keystrokes, pointer position or window contents. Authorise against what the *bus* says about the
+  reads keystrokes, pointer position or window contents. Hardcore mode's lock reads device metadata only (names,
+  capability bitmaps) and writes `inhibited`; it must always come undone — Nexa leaving the bus, a missed heartbeat,
+  the helper stopping (`ExecStopPost`) — and never lock a virtual device (Nexa's own typing) or the power button.
+  **Never start a hardcore lock against the installed helper without the owner's go**: it locks the real keyboard and
+  touchpad of this laptop (a test copy on private XDG folders does too — the helper is system-wide). Authorise against what the *bus* says about the
   caller (uid, unique name), never an identity the caller sent — and against the login it resolves to, so the
   password is asked for once per login rather than once per process. Every call re-checks that the login is
   the one at the screen.

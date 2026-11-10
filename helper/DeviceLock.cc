@@ -11,6 +11,7 @@
 #include <QJsonObject>
 #include <QRegularExpression>
 #include <QSaveFile>
+#include <QThread>
 
 #include <sys/stat.h>
 
@@ -35,7 +36,10 @@ QString readLine(const QString &path) {
 } // namespace
 
 DeviceLock::DeviceLock(QString classRoot, QString recordPath)
-    : classRoot_(std::move(classRoot)), recordPath_(std::move(recordPath)) {}
+    : classRoot_(std::move(classRoot)), recordPath_(std::move(recordPath)) {
+    // What a record still names when the helper starts (releaseRecorded ran first) is stuck: keep trying it.
+    stuck_ = load(recordPath_);
+}
 
 QString DeviceLock::defaultClassRoot() { return u"/sys/class/input"_s; }
 
@@ -43,13 +47,14 @@ QString DeviceLock::defaultRecordPath() { return u"/run/nexa-helper/locked-input
 
 Result<QStringList> DeviceLock::lock(const QString &owner) {
     if (isLocked() && owner != owner_) {
-        return Error{ErrorCode::PermissionDenied, u"Another Nexa holds the keyboard and mouse."_s};
+        return Error{ErrorCode::Unauthorized, u"Another Nexa holds the keyboard and mouse."_s};
     }
+    const auto sameSysfs = [](const QString &sysfs) { return [&sysfs](const Device &d) { return d.sysfs == sysfs; }; };
     const QDir root(classRoot_);
     QList<Device> found;
+    QList<Device> adopted;          // stuck from an earlier lock, and switched off still: this lock's now
     for (const QString &sysfs : root.entryList({u"input*"_s}, QDir::Dirs | QDir::NoDotAndDotDot, QDir::Name)) {
-        const bool held = std::any_of(held_.cbegin(), held_.cend(), [&sysfs](const Device &d) { return d.sysfs == sysfs; });
-        if (held) continue;
+        if (std::any_of(held_.cbegin(), held_.cend(), sameSysfs(sysfs))) continue;
         const QString base = root.filePath(sysfs);
         const QString path = QFileInfo(base).canonicalFilePath();
         inputdevices::Caps caps;
@@ -58,70 +63,112 @@ Result<QStringList> DeviceLock::lock(const QString &owner) {
         caps.key = readLine(base + u"/capabilities/key"_s);
         caps.rel = readLine(base + u"/capabilities/rel"_s);
         caps.abs = readLine(base + u"/capabilities/abs"_s);
-        caps.isVirtual = path.contains(u"/devices/virtual/"_s);
+        caps.isVirtual = path.contains(u"/devices/virtual/input/"_s);      // uinput's: Nexa's own
         if (inputdevices::classify(caps) == inputdevices::Kind::Other) continue;
+        const Device device{sysfs, caps.name, path};
+        if (const auto stuck = std::find_if(stuck_.cbegin(), stuck_.cend(), sameSysfs(sysfs)); stuck != stuck_.cend()) {
+            if (stuck->path == path) {
+                adopted.append(device);
+                continue;
+            }
+        }
         if (readLine(base + u"/inhibited"_s) != u"0"_s) continue;      // someone else's, or no inhibit at all
-        found.append(Device{sysfs, caps.name, path});
+        found.append(device);
     }
     std::sort(found.begin(), found.end(), [](const Device &a, const Device &b) {
         return a.sysfs.mid(5).toInt() < b.sysfs.mid(5).toInt();
     });
-    if (found.isEmpty() && held_.isEmpty()) {
+    if (found.isEmpty() && adopted.isEmpty() && held_.isEmpty()) {
         return Error{ErrorCode::NotFound, u"No keyboard or pointer was found to lock."_s};
     }
 
     const bool first = held_.isEmpty();
     if (first) owner_ = owner;
+    for (const Device &device : std::as_const(adopted)) {
+        stuck_.removeIf([&device](const Device &d) { return d.sysfs == device.sysfs; });
+        held_.append(device);
+    }
     // Recorded before it is switched off: the record must never know less than the kernel.
     const QList<Device> before = held_;
     held_.append(found);
     if (!found.isEmpty() && !save()) {
         held_ = before;
-        if (first) owner_.clear();
+        if (first && held_.isEmpty()) owner_.clear();
         return Error{ErrorCode::Io, u"The lock could not be recorded in %1, so nothing was locked."_s.arg(recordPath_)};
     }
     for (const Device &device : std::as_const(found)) {
         QString why;
-        if (setInhibited(classRoot_, device, true, &why)) continue;
-        unlock();       // all or nothing: a half-locked laptop is the worst of both
-        return Error{ErrorCode::Io, u"%1 could not be switched off: %2"_s.arg(device.name, why)};
+        if (setInhibited(classRoot_, device, true, &why)) {
+            qCInfo(lcApp).noquote() << "locked" << device.sysfs << device.name;
+            continue;
+        }
+        if (first) {
+            unlock();       // all or nothing: a half-locked laptop is the worst of both
+            return Error{ErrorCode::Io, u"%1 could not be switched off: %2"_s.arg(device.name, why)};
+        }
+        // A device plugged in while locked that will not switch off: it stays working, and the lock holds.
+        qCWarning(lcApp).noquote() << "cannot lock" << device.sysfs << device.name << ":" << why;
+        held_.removeIf([&device](const Device &d) { return d.sysfs == device.sysfs; });
+        save();
     }
-    for (const Device &device : std::as_const(found)) qCInfo(lcApp).noquote() << "locked" << device.sysfs << device.name;
 
     QStringList names;
     for (const Device &device : std::as_const(held_)) names.append(device.name);
     return names;
 }
 
-void DeviceLock::unlock() {
+bool DeviceLock::unlock() {
     for (const Device &device : std::as_const(held_)) {
         if (!stillThere(classRoot_, device)) continue;      // unplugged meanwhile
         QString why;
         if (setInhibited(classRoot_, device, false, &why)) {
             qCInfo(lcApp).noquote() << "released" << device.sysfs << device.name;
         } else {
-            qCWarning(lcApp).noquote() << "cannot release" << device.sysfs << device.name << ":" << why;
+            qCWarning(lcApp).noquote() << "cannot release" << device.sysfs << device.name << ":" << why << "— trying again";
+            stuck_.append(device);
         }
     }
     held_.clear();
     owner_.clear();
-    QFile::remove(recordPath_);
+    save();
+    return stuck_.isEmpty();
+}
+
+int DeviceLock::retryStuck() {
+    const qsizetype before = stuck_.size();
+    stuck_.removeIf([this](const Device &device) {
+        if (!stillThere(classRoot_, device)) return true;   // unplugged: nothing left to give back
+        if (!setInhibited(classRoot_, device, false)) return false;
+        qCInfo(lcApp).noquote() << "released" << device.sysfs << device.name << "at last";
+        return true;
+    });
+    if (stuck_.size() != before) save();
+    return int(stuck_.size());
 }
 
 int DeviceLock::releaseRecorded(const QString &recordPath, const QString &classRoot) {
-    const QList<Device> recorded = load(recordPath);
+    QList<Device> left = load(recordPath);
     int released = 0;
-    for (const Device &device : recorded) {
-        if (!stillThere(classRoot, device)) continue;
-        QString why;
-        if (setInhibited(classRoot, device, false, &why)) {
+    for (int attempt = 0; attempt < 5 && !left.isEmpty(); ++attempt) {
+        if (attempt > 0) QThread::msleep(200);
+        left.removeIf([&classRoot, &released](const Device &device) {
+            if (!stillThere(classRoot, device)) return true;
+            QString why;
+            if (!setInhibited(classRoot, device, false, &why)) {
+                qCWarning(lcApp).noquote() << "cannot release" << device.sysfs << device.name << ":" << why;
+                return false;
+            }
             ++released;
             qCInfo(lcApp).noquote() << "released" << device.sysfs << device.name << "from the record";
-        } else {
-            qCWarning(lcApp).noquote() << "cannot release" << device.sysfs << device.name << ":" << why;
-        }
+            return true;
+        });
     }
-    QFile::remove(recordPath);
+    // What still will not come back stays recorded, for the next helper to keep trying.
+    if (left.isEmpty()) {
+        QFile::remove(recordPath);
+    } else {
+        write(recordPath, QString(), left);
+    }
     return released;
 }
 
@@ -161,7 +208,15 @@ QList<DeviceLock::Device> DeviceLock::load(const QString &recordPath) {
 }
 
 bool DeviceLock::save() const {
-    const QString directory = QFileInfo(recordPath_).absolutePath();
+    if (held_.isEmpty() && stuck_.isEmpty()) {
+        QFile::remove(recordPath_);
+        return true;
+    }
+    return write(recordPath_, owner_, held_ + stuck_);
+}
+
+bool DeviceLock::write(const QString &recordPath, const QString &owner, const QList<Device> &devices) {
+    const QString directory = QFileInfo(recordPath).absolutePath();
     if (!QDir().mkpath(directory)) {
         qCWarning(lcApp).noquote() << "cannot create" << directory;
         return false;
@@ -170,16 +225,16 @@ bool DeviceLock::save() const {
         qCWarning(lcApp).noquote() << "cannot restrict" << directory << ":" << ::strerror(errno);
         return false;
     }
-    QJsonArray devices;
-    for (const Device &device : held_) {
-        devices.append(QJsonObject{{u"sysfs"_s, device.sysfs}, {u"name"_s, device.name}, {u"path"_s, device.path}});
+    QJsonArray list;
+    for (const Device &device : devices) {
+        list.append(QJsonObject{{u"sysfs"_s, device.sysfs}, {u"name"_s, device.name}, {u"path"_s, device.path}});
     }
-    QSaveFile file(recordPath_);
+    QSaveFile file(recordPath);
     if (!file.open(QIODevice::WriteOnly | QIODevice::Truncate)) return false;
-    file.write(QJsonDocument(QJsonObject{{u"version"_s, kVersion}, {u"owner"_s, owner_}, {u"devices"_s, devices}})
+    file.write(QJsonDocument(QJsonObject{{u"version"_s, kVersion}, {u"owner"_s, owner}, {u"devices"_s, list}})
                    .toJson(QJsonDocument::Indented));
     if (!file.commit()) return false;
-    QFile::setPermissions(recordPath_, QFileDevice::ReadOwner | QFileDevice::WriteOwner);
+    QFile::setPermissions(recordPath, QFileDevice::ReadOwner | QFileDevice::WriteOwner);
     return true;
 }
 

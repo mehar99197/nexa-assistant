@@ -27,8 +27,8 @@ public:
 
 private:
     void beat();
-    // `tellHelper`: the helper may still hold the devices (a heartbeat went unanswered), so it is told to let go.
-    void lose(const QString &reason, bool tellHelper);
+    // The lock is gone (or doubtful): the helper is told to let go anyway — it ignores that when it holds nothing.
+    void lose(const QString &reason);
 
     HelperClient *helper_;
     ScreenAwake *awake_;

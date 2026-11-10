@@ -15,11 +15,11 @@ HelperInputLock::HelperInputLock(HelperClient *helper, ScreenAwake *awake, QObje
     heartbeat_.setInterval(kHeartbeatMs);
     connect(&heartbeat_, &QTimer::timeout, this, &HelperInputLock::beat);
     connect(helper_, &HelperClient::inputUnlocked, this, [this](const QString &reason) {
-        if (held_) lose(reason, false);
+        if (held_) lose(reason);
     });
     connect(helper_, &HelperClient::helperGone, this, [this] {
         // Its ExecStopPost has given the devices back.
-        if (held_) lose(tr("The root helper stopped."), false);
+        if (held_) lose(tr("The root helper stopped."));
     });
 }
 
@@ -64,17 +64,23 @@ void HelperInputLock::beat() {
     if (!held_) return;
     const QPointer<HelperInputLock> self(this);
     helper_->lockInput([self](Result<QStringList> held) {
-        if (!self || !self->held_ || held) return;
-        self->lose(tr("The root helper stopped answering: %1").arg(held.error().message), true);
+        if (!self) return;
+        if (!self->held_) {
+            // A heartbeat answered after the lock was let go (a helper restarted, a reply that came late): the helper
+            // now holds a lock nobody wants.
+            if (held) self->helper_->unlockInput([](Result<void>) {});
+            return;
+        }
+        if (!held) self->lose(tr("The root helper stopped answering: %1").arg(held.error().message));
     });
 }
 
-void HelperInputLock::lose(const QString &reason, bool tellHelper) {
+void HelperInputLock::lose(const QString &reason) {
     if (!held_) return;
     held_ = false;
     heartbeat_.stop();
     awake_->release();
-    if (tellHelper) helper_->unlockInput([](Result<void>) {});
+    helper_->unlockInput([](Result<void>) {});
     emit lost(reason);
 }
 

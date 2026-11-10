@@ -17,6 +17,8 @@
 
 #include <linux/input-event-codes.h>
 
+#include <algorithm>
+
 using namespace Qt::StringLiterals;
 
 namespace nexa {
@@ -30,6 +32,8 @@ QLatin1StringView errorNameFor(ErrorCode code) {
         return helper::kErrorInvalidArgument;
     case ErrorCode::PermissionDenied:
         return helper::kErrorNoInputDevice;     // only /dev/uinput reports this here
+    case ErrorCode::Unauthorized:
+        return helper::kErrorLocked;            // only DeviceLock: another caller holds the keyboard and mouse
     default:
         return helper::kErrorFailed;
     }
@@ -80,6 +84,20 @@ HelperService::HelperService(PolkitAuthorizer *authorizer, LoginSessions *sessio
     connect(&heartbeat_, &QTimer::timeout, this, [this] {
         endLock(tr("Nexa stopped answering for %1 seconds.").arg(kHeartbeatMs / 1000), true);
     });
+    // Every 2 s, then less often up to every 30 s, for as long as it takes.
+    retry_.setInterval(2'000);
+    connect(&retry_, &QTimer::timeout, this, [this] {
+        if (lock_->retryStuck() == 0) {
+            retry_.stop();
+            qCInfo(lcApp) << "every input device is back";
+            return;
+        }
+        retry_.setInterval(std::min(retry_.interval() * 2, 30'000));
+    });
+    if (lock_->hasStuck()) {
+        qCWarning(lcApp) << "input devices a previous helper could not give back: trying again";
+        retry_.start();
+    }
 }
 
 // The helper going away (a stop, the idle exit) never leaves the laptop locked.
@@ -87,7 +105,7 @@ HelperService::~HelperService() {
     if (lock_->isLocked()) endLock(tr("The helper stopped."), false);
 }
 
-bool HelperService::isInputLocked() const { return lock_->isLocked(); }
+bool HelperService::isInputLocked() const { return lock_->isLocked() || lock_->hasStuck(); }
 
 LoginSession HelperService::callerSession() const {
     QDBusConnectionInterface *daemon = connection().interface();
@@ -278,6 +296,10 @@ QStringList HelperService::LockInput() {
     }
     const QDBusConnection bus = connection();
     whenAllowed([this, bus, caller]() -> Result<QVariantList> {
+        // Answered after a password prompt, the caller may be gone: nobody would hold, or end, this lock.
+        if (QDBusConnectionInterface *daemon = bus.interface(); daemon && !daemon->isServiceRegistered(caller)) {
+            return Error{ErrorCode::Cancelled, u"The caller left before the lock could be taken."_s};
+        }
         const bool first = !lock_->isLocked();
         const Result<QStringList> held = lock_->lock(caller);
         if (!held) return held.error();
@@ -305,6 +327,8 @@ void HelperService::UnlockInput() {
 }
 
 void HelperService::watchLockHolder(const QDBusConnection &bus, const QString &holder) {
+    if (holderWatcher_) holderWatcher_->deleteLater();
+    if (hotplug_) hotplug_->deleteLater();
     holderWatcher_ = new QDBusServiceWatcher(holder, bus, QDBusServiceWatcher::WatchForUnregistration, this);
     connect(holderWatcher_, &QDBusServiceWatcher::serviceUnregistered, this,
             [this] { endLock(tr("Nexa closed."), true); });
@@ -323,7 +347,11 @@ void HelperService::watchLockHolder(const QDBusConnection &bus, const QString &h
 
 void HelperService::endLock(const QString &reason, bool byItself) {
     if (!lock_->isLocked()) return;
-    lock_->unlock();
+    if (!lock_->unlock()) {
+        qCWarning(lcApp) << "some input devices were not given back by the kernel: trying again";
+        retry_.setInterval(2'000);
+        retry_.start();
+    }
     heartbeat_.stop();
     // Later: this may be running inside the watcher's own signal.
     if (holderWatcher_) holderWatcher_->deleteLater();

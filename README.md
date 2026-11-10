@@ -40,6 +40,12 @@ Not to be confused with Nexa Download Manager: this is a separate program, named
   card for every question the policy asks, with Approve and Deny — no task waits behind a dialog, and stopping
   one stops nothing else. The latency, tokens per second, CPU and memory are measured live. A conversation still
   carries on: the next request sees the last one, on the same warm program.
+- **Hardcore mode** — switch on **Hardcore** beside Share screen (Ctrl+Shift+H, or say "hardcore on") and every
+  task you start locks this laptop's own keyboard and touchpad until it is done, so nothing typed or clicked here
+  spoils what it types and clicks; the screen stays on and you watch. A banner says until when. Its questions are
+  answered by voice ("approve" / "deny") or on your phone. End it early by saying "Nexa, unlock" or "stop
+  everything", or with **Unlock PC** on Nexa Phone or the web remote; Nexa closing or hanging always gives the
+  keyboard and mouse back. It needs the root helper (reinstall it once after updating Nexa).
 - **Types and clicks for you** — in any window, including native Wayland ones. Point at anything you
   can see: coordinates are read straight off the screenshot Nexa last took, and land on the exact
   pixel even with fractional scaling.
@@ -188,8 +194,9 @@ reach Nexa only over adb, so the build refuses to go on without it.
 ## Security, in brief
 
 - The root helper is the only privileged part. It runs only when needed, exits when idle, can only
-  *send* keyboard and mouse input (never read it), and authorises against what the system bus says
-  about the caller. Your password goes into the desktop's own prompt, never into Nexa; what Nexa
+  *send* keyboard and mouse input (never read it) — and, for hardcore mode, switch the laptop's own
+  keyboards and pointers off and on, giving them back whenever Nexa or the helper itself stops — and
+  authorises against what the system bus says about the caller. Your password goes into the desktop's own prompt, never into Nexa; what Nexa
   remembers is only that you said yes, until you log out (Settings → Helper → Forget my password ends
   it sooner).
 - The web remote is off until you switch it on. A phone gets in only with a six-digit code shown on
@@ -241,6 +248,7 @@ nexa-assistant --ask "open calculator" --ask "volume 50"   # requests, in order,
 nexa-assistant --say "hello" --voice-file request.wav      # speak; feed a recording in as a spoken request
 nexa-assistant --new-instance --hear room.wav              # play a recording into the microphone, wake word on
 nexa-assistant --pair-phone                                 # pair the Nexa Phone app on the adb-connected phone, no typing
+nexa-assistant --hardcore --ask "tidy my downloads folder"   # hardcore mode on without asking: the task locks the laptop
 ```
 
 If Nexa is already running, these go to the running copy. `--new-instance` starts a separate one

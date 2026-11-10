@@ -49,6 +49,11 @@ void HardcoreMode::setSwitch(bool on) {
     }
     if (!switch_) return;
     switch_ = false;
+    {
+        // Off means off: a paused hardcore task resumed later, or asked again, must not lock behind the owner's back.
+        const QScopedValueRollback<bool> quiet(unlocking_, true);
+        mission_->releaseHardcore();
+    }
     emit switchChanged(false);
     setState(State::Off);
 }

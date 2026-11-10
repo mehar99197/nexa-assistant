@@ -110,6 +110,8 @@ public:
     // How the owner can end a lock early, in a sentence: the voice when the wake word is on, the phone when the web
     // remote is; otherwise that only the task's end (or the power button) will.
     QString hardcoreWaysOut() const;
+    // Whether a phone is paired (the web remote's devices): only then is the phone a way out of a lock.
+    void setPhonePaired(std::function<bool()> paired) { phonePaired_ = std::move(paired); }
     // Takes a screenshot of the phone and asks the model about it (default: describe it).
     void askAboutPhone(const QString &question);
     // The Share screen switch. Off at every start: the model is not offered take_screenshot and is
@@ -230,6 +232,7 @@ private:
     QString environment_;
     std::unique_ptr<MissionControl> mission_;
     std::unique_ptr<HardcoreMode> hardcore_;
+    std::function<bool()> phonePaired_;
     std::unique_ptr<IAiProvider> provider_;     // the first choice's chain, for the model list
     std::shared_ptr<IAiProvider> spare_;        // made and warmed up for the next Auto task
     QStringList models_;

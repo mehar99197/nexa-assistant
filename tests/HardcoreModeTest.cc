@@ -208,3 +208,18 @@ TEST_CASE("wantsLock: active hardcore tasks only") {
     CHECK(HardcoreMode::wantsLock({awaiting}));     // the owner answers by voice or phone: the lock holds
     CHECK_FALSE(HardcoreMode::wantsLock({paused, done, ordinary}));
 }
+
+TEST_CASE("Hardcore switched off means a paused hardcore task no longer locks when it goes on") {
+    Rig rig;
+    rig.hardcore.setSwitch(true);
+    const TaskId id = rig.hardTask();
+    REQUIRE(rig.waitForState(State::Locked));
+    rig.board.mission->pause(id);
+    REQUIRE(rig.waitForState(State::Armed));
+    rig.hardcore.setSwitch(false);
+    CHECK_FALSE(rig.board.mission->task(id)->hardcore);
+    rig.board.mission->resume(id);
+    QTest::qWait(80);
+    CHECK(rig.hardcore.state() == State::Off);
+    CHECK(rig.lock.locks == 1);
+}

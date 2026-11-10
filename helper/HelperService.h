@@ -50,7 +50,7 @@ public:
                   UinputDevice *input, DeviceLock *lock, QObject *parent = nullptr);
     ~HelperService() override;
 
-    bool isInputLocked() const;
+    bool isInputLocked() const;     // locked, or a device not given back yet: the helper must not exit
 
 public slots:
     void Ping();
@@ -98,6 +98,7 @@ private:
     UinputDevice *input_;
     DeviceLock *lock_;
     QTimer heartbeat_;                              // the holder's LockInput calls keep it from running out
+    QTimer retry_;                                  // devices the kernel did not give back: tried again until it does
     QDBusServiceWatcher *holderWatcher_{nullptr};   // the holder leaving the bus
     QFileSystemWatcher *hotplug_{nullptr};          // /dev/input: a device plugged in while locked
     // Calls that arrived while one password prompt was already on screen, by login. They are all
