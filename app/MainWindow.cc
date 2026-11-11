@@ -24,6 +24,8 @@
 #include "system/files/AttachmentLoader.h"
 #include "system/helper/HelperClient.h"
 #include "system/info/ProcessStats.h"
+#include "ui/BackdropWidget.h"
+#include "ui/ChromeFrame.h"
 #include "ui/NexaCoreWidget.h"
 #include "voice/pipeline/VoicePipeline.h"
 
@@ -410,7 +412,7 @@ void MainWindow::rebuildCentral() {
     for (QWidget *piece : std::initializer_list<QWidget *>{rail_, coreCard_, centreStack_, stream_}) piece->setVisible(false);
     for (QWidget *piece : std::initializer_list<QWidget *>{header_, chatView_}) piece->setVisible(!mission);
     inputBar_->setVisible(true);
-    auto *central = new QWidget(this);
+    auto *central = new BackdropWidget(this);     // the ground, wearing the theme's backdrop
     auto *column = new QVBoxLayout(central);
     column->setContentsMargins(0, 0, 0, 0);
     column->setSpacing(0);
@@ -461,7 +463,7 @@ void MainWindow::rebuildCentral() {
         return row;
     };
     const auto tile = [central](QWidget *widget) {
-        auto *frame = new QFrame(central);
+        auto *frame = new ChromeFrame(central);     // a card, in the theme's chrome
         frame->setObjectName(u"tile"_s);
         auto *inside = new QVBoxLayout(frame);
         inside->setContentsMargins(6, 6, 6, 6);
@@ -868,7 +870,7 @@ void MainWindow::connectController() {
         const DesignSpec design = NexaDesigns::resolve(updated.ui.design);
         if (design.id != design_.id) {
             applyDesign(design);
-            NexaTheme::apply(qApp, pack_.tokens, pack_.style, design_);
+            NexaTheme::apply(qApp, pack_.tokens, pack_.style, design_, pack_.chrome);
             refreshTheme();
         }
     });
@@ -1108,7 +1110,7 @@ void MainWindow::toggleTheme() {
 void MainWindow::applyPack(const ThemePack &pack) {
     if (pack.id == pack_.id) return;
     pack_ = pack;
-    NexaTheme::apply(qApp, pack_.tokens, pack_.style, design_);
+    NexaTheme::apply(qApp, pack_.tokens, pack_.style, design_, pack_.chrome);
     refreshTheme();
 }
 
@@ -1133,7 +1135,7 @@ void MainWindow::wear(const QString &palette, const QString &design) {
     if (!design.isEmpty()) applyDesign(NexaDesigns::resolve(design));
     const ThemePack pack = NexaThemes::resolve(palette.isEmpty() ? NexaThemes::settingFor(pack_) : palette);
     pack_ = pack;
-    NexaTheme::apply(qApp, pack_.tokens, pack_.style, design_);
+    NexaTheme::apply(qApp, pack_.tokens, pack_.style, design_, pack_.chrome);
     refreshTheme();
 }
 

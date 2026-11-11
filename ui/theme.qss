@@ -71,7 +71,9 @@ QPushButton#stopAll {
 QPushButton#stopAll:hover { background: @errorSoft2@; }
 QPushButton#stopAll:pressed { background: @error@; color: @ground@; }
 
-QWidget#stateHeader { background: @ground@; border-bottom: 1px solid @line@; }
+QWidget#stateHeader { background: transparent; border-bottom: 1px solid @line@; }
+QWidget#stateHeader > QWidget { background: transparent; }
+QWidget#inputBar { background: transparent; }
 QLabel#stateTitle { font-size: 22px; font-weight: 700; }
 QLabel#stateHint { color: @muted@; }
 
@@ -365,11 +367,31 @@ QPushButton#galleryChip:checked { background: @accentSoft@; border-color: @accen
 QLabel#galleryCount { color: @muted@; }
 QListWidget#galleryList::item { padding: 0; }
 
+/* ---- the theme's chrome: the window's ground wears the backdrop (a grid, dots, a glow, a horizon, scan lines —
+   or nothing), and a panel wears the chrome. In the Flat chrome the sheet draws the panel itself (panelFill is the
+   panel's colour, panelBorder a hairline); in any other the panel paints its own fill and frame in these colours,
+   and the sheet leaves it bare (panelFill transparent, panelBorder 0). */
+nexa--BackdropWidget {
+    qproperty-backdrop: @backdrop@;
+    qproperty-groundColor: @ground@;
+    qproperty-lineColor: @line@;
+    qproperty-accentColor: @idle@;
+}
+nexa--ChromeFrame {
+    qproperty-panelChrome: @panelChrome@;
+    qproperty-cornerRadius: @radius@;
+    qproperty-groundColor: @ground@;
+    qproperty-panelColor: @panel@;
+    qproperty-lineColor: @line@;
+    qproperty-accentColor: @idle@;
+    qproperty-textColor: @text@;
+}
+
 /* ---- designs: cards and tiles (Dashboard), the state in the status line (Console) */
-QFrame#tile { background: @panel@; border: 1px solid @line@; border-radius: @radius@px; }
+QFrame#tile { background: @panelFill@; border: @panelBorder@; border-radius: @radius@px; }
 QFrame#tile > QWidget { background: transparent; }
 QWidget#stateHeader[tile="true"] { border: 0; }
-nexa--ChatView[tile="true"] { background: @panel@; }
+nexa--ChatView[tile="true"] { background: @panelFill@; }
 QLabel#statusState { color: @text@; font-weight: 700; }
 QLabel#orbTitle { font-size: 30px; font-weight: 700; }
 
@@ -377,14 +399,11 @@ QLabel#orbTitle { font-size: 30px; font-weight: 700; }
    palette has (stt = web, think = code, wake = screen and "online", listen = phone, speak = voice, act = what needs the
    user, error = a failure), and every chip says its state in words too. */
 nexa--MissionPanel {
-    background: @panel@;
-    border: 1px solid @line@;
+    background: @panelFill@;
+    border: @panelBorder@;
     border-radius: @radius@px;
-    qproperty-textColor: @text@;
     qproperty-mutedColor: @muted@;
-    qproperty-lineColor: @line@;
     qproperty-raisedColor: @panel2@;
-    qproperty-accentColor: @idle@;
     qproperty-goodColor: @wake@;
     qproperty-warnColor: @act@;
     qproperty-errorColor: @error@;
@@ -395,7 +414,7 @@ nexa--MissionPanel {
     qproperty-voiceColor: @speak@;
     qproperty-monoFamily: "@mono@";
 }
-nexa--TaskStrip { background: transparent; border: 0; border-bottom: 1px solid @line@; border-radius: 0; }
+nexa--TaskStrip { background: transparent; border: 0; border-bottom: 1px solid @line@; border-radius: 0; qproperty-panelChrome: 0; }
 QStackedWidget#missionCentre { background: transparent; }
 QLabel#sectionTitle { color: @muted@; font-family: "@mono@"; font-size: 11px; font-weight: 700; background: transparent; }
 QLabel#sectionNote, QLabel#boardCounts { color: @muted@; font-family: "@mono@"; font-size: 11px; background: transparent; }

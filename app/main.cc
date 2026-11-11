@@ -275,7 +275,7 @@ int main(int argc, char *argv[]) {
     if (!runDesign.isEmpty() && runPalette.isEmpty()) runPalette = NexaDesigns::resolve(runDesign).palette;
     const ThemePack startingTheme = NexaThemes::resolve(runPalette.isEmpty() ? config.ui.theme : runPalette);
     const DesignSpec startingDesign = NexaDesigns::resolve(runDesign.isEmpty() ? config.ui.design : runDesign);
-    NexaTheme::apply(&app, startingTheme.tokens, startingTheme.style, startingDesign);
+    NexaTheme::apply(&app, startingTheme.tokens, startingTheme.style, startingDesign, startingTheme.chrome);
 
     // AI providers
     HttpClient http;

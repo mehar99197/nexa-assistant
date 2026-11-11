@@ -268,9 +268,11 @@ If Nexa is already running, these go to the running copy. `--new-instance` start
 (for testing). `--screenshot <file.png>` saves a picture of the window once the requests are done,
 then quits (it works with `QT_QPA_PLATFORM=offscreen`); `--screenshot-settings <dir>` does the same
 for every Settings tab; `--theme <theme>` and `--design <design>` pick the look for
-that run only (a theme is one of the 71 dark packs in Settings → General, such as `neon-cyan` or `ocean`, in
-eleven categories — Nexa, Neon, Nature, Ocean, Space, Fire & Ember, Minimal & Mono, Retro, Cyber, Pastel Night,
-Gems; `dark`, `light`, `system` and the old `ocean-dark`-style names still resolve to one; a design is one of
+that run only (a theme is one of the 85 dark packs in Settings → General, such as `neon-cyan`, `ocean` or
+`hud-console`, in twelve categories — Nexa, HUD, Neon, Nature, Ocean, Space, Fire & Ember, Minimal & Mono, Retro,
+Cyber, Pastel Night, Gems; the HUD ones are heads-up displays — bracketed, neon, cut-cornered, glass or railed
+panels over a grid, dots, a glow, a horizon or scan lines; `dark`, `light`, `system` and the old
+`ocean-dark`-style names still resolve to one; a design is one of
 the eight there — `studio`, `focus`, `console`, `sidebar`, `orb`, `dashboard`, `gauge`, `paper` — each its
 own arrangement, core shape, corners and type), while the galleries there and the palette button in the
 toolbar (the next theme of the same category) set them for good.

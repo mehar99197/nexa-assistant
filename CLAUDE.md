@@ -181,14 +181,20 @@ text-only model refuses images with a 400; the `Agent` then resends without them
   happens, 30 Hz idle, stopped while hidden; a state change cross-fades over 350 ms and the fast-path snap stays
   for its 0.9 s ping), `NexaTheme` + `theme.qss` (the tokens for the dark and light schemes; the sheet names which
   widget wears which token and sets widget colours through `qproperty-*`, so no widget hard-codes a colour),
-  `NexaThemes` (the catalogue: 71 theme packs, **every one dark** (the owner wants no light look), in 11 categories —
-  Nexa, Neon, Nature, Ocean, Space, Fire & Ember, Minimal & Mono, Retro, Cyber, Pastel Night, Gems — each a recipe
+  `NexaThemes` (the catalogue: 85 theme packs, **every one dark** (the owner wants no light look), in 12 categories —
+  Nexa, HUD, Neon, Nature, Ocean, Space, Fire & Ember, Minimal & Mono, Retro, Cyber, Pastel Night, Gems — most a recipe
   (an accent, the ground's tint and depth, how far the states wander and how bright they glow) generated with the
   design's own shape of palette and contrast guaranteed, each wearing one of eight motion styles —
   `CoreStyle`: Classic, Orbit, Pulse, Aurora, Comet, Nebula, Storm, Minimal — which `coreFrame` applies and the sheet
   hands the core as `qproperty-coreStyle`; `nexa-dark` and `mission-dark` are hand-tuned; `config.ui.theme` is a pack
   id, and `resolve` maps `system`, `dark`, `light`, the old `<family>-dark` / `-light` ids and anything unknown to a
-  pack; `nextInCategory` is the toolbar's palette button),
+  pack; `nextInCategory` is the toolbar's palette button). The **HUD** packs (M24: `hud-console`, `hud-jarvis`,
+  `hud-stark`, … fourteen, drawn from the owner's reference pictures — a ground, an accent, a second hue, a warm one)
+  carry a **chrome** (`NexaChrome`, pure painting: `PanelChrome` = how the panels are framed — Flat, Brackets, Glow,
+  Chamfer, Glass, Rail — and `Backdrop` = what lies behind them — Plain, Grid, Dots, Vignette, Horizon, Scan), which
+  `ChromeFrame` (a QFrame: Mission Control's panels and the Dashboard's tiles) and `BackdropWidget` (the main window's
+  central widget) paint; in any chrome but Flat the sheet leaves the panel bare (`@panelFill@` transparent,
+  `@panelBorder@` 0) and the frame paints its own fill and frame, so no widget colours itself;
   `NexaDesigns` (the **designs** — a palette is colours, a design is the shape of everything else: a
   `WindowLayout` (Studio, Focus, Console, Sidebar, Orb, Dashboard, Bottom), a `CoreShape` (Ring, Orb, Hex, Bars,
   Iris, Crystal, Arc, Dot — each a `Shape` strategy in `NexaCorePainter` reading the same frames in its own
@@ -207,7 +213,8 @@ text-only model refuses images with a 400; the `Agent` then resends without them
   (category chips over the tiles, the choice kept while a chip hides it),
   TrayIcon; **Mission Control**, the default design (`mission`): `AgentsRail`, `CoreCard` + `MetricsTiles`, `MissionBoard`,
   `ActivityStream` (approval cards), `TaskTranscriptDrawer`, `AddTasksDialog` (Ctrl+T), `MissionSettingsPage`, all
-  `MissionPanel`s (their colours from theme.qss, a token per lane and state) over `TaskListModel` + `TaskFilter`, and
+  `MissionPanel`s (`ChromeFrame`s wearing the theme's chrome; their colours from theme.qss, a token per lane and state)
+  over `TaskListModel` + `TaskFilter`, and
   `TaskStrip` (the tasks in the other designs' Actions panel); `ProviderSignInBlock` = the sign-in row of a program's form in Settings → Providers (status line, Sign in… /
   Sign out / Cancel, the login link as selectable text, a code field for a paste-the-code flow; it owns the `ISignIn`
   and waits while a chat turn runs) and `ProviderGalleryDialog` = Add → Browse all… (search, category chips, one row per

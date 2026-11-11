@@ -22,6 +22,7 @@
 #include "system/helper/HelperClient.h"
 #include "ui/NexaCoreWidget.h"
 #include "ui/NexaDesigns.h"
+#include "ui/NexaChrome.h"
 #include "ui/NexaThemes.h"
 #include "voice/VoiceBackends.h"
 #include "voice/listen/SpeakerGate.h"
@@ -49,6 +50,7 @@
 #include <QMenu>
 #include <QMessageBox>
 #include <QPainter>
+#include <QPainterPath>
 #include <QPlainTextEdit>
 #include <QProcess>
 #include <QPointer>
@@ -1967,7 +1969,8 @@ QStringList lines(const QString &text) {
     return kept;
 }
 
-// A theme as a picture: its core at rest on its ground, with four of its state colours beside.
+// A theme as a picture: its core at rest on its ground — the backdrop behind it — with a small panel in its chrome
+// beside, holding four of its state colours.
 QPixmap themeSwatch(const ThemePack &pack) {
     constexpr int kWidth = 96;
     constexpr int kHeight = 64;
@@ -1977,9 +1980,19 @@ QPixmap themeSwatch(const ThemePack &pack) {
     pixmap.fill(Qt::transparent);
     QPainter painter(&pixmap);
     painter.setRenderHint(QPainter::Antialiasing, true);
+    const QRectF frame(0.5, 0.5, kWidth - 1, kHeight - 1);
     painter.setPen(QPen(pack.tokens.line, 1));
     painter.setBrush(pack.tokens.ground);
-    painter.drawRoundedRect(QRectF(0.5, 0.5, kWidth - 1, kHeight - 1), 10, 10);
+    painter.drawRoundedRect(frame, 10, 10);
+    const ChromeColours colours{pack.tokens.ground, pack.tokens.panel, pack.tokens.line, pack.tokens.idle, pack.tokens.text};
+    {
+        QPainterPath clip;
+        clip.addRoundedRect(frame, 10, 10);
+        painter.save();
+        painter.setClipPath(clip);
+        paintBackdrop(painter, frame, pack.chrome.backdrop, colours);
+        painter.restore();
+    }
 
     NexaCoreWidget core;
     core.setAnimated(false);
@@ -2000,14 +2013,21 @@ QPixmap themeSwatch(const ThemePack &pack) {
     core.setGroundColor(pack.tokens.ground);
     painter.drawPixmap(QRectF(6, 6, 52, 52), core.snapshot(CoreMode::Idle, 52, true, ratio), QRectF(0, 0, 52 * ratio, 52 * ratio));
 
+    // The panel beside the core, in the pack's chrome (the sheet's rounded panel when Flat).
+    const QRectF panel(64, 6, 26, 52);
+    if (pack.chrome.panels == PanelChrome::Flat) {
+        painter.setPen(QPen(pack.tokens.line, 1));
+        painter.setBrush(pack.tokens.panel);
+        painter.drawRoundedRect(panel, 4, 4);
+    } else {
+        paintPanelChrome(painter, panel, pack.chrome.panels, 6, colours);
+    }
     painter.setPen(Qt::NoPen);
     const QColor states[] = {pack.tokens.listen, pack.tokens.think, pack.tokens.act, pack.tokens.error};
     for (int i = 0; i < 4; ++i) {
         painter.setBrush(states[i]);
-        painter.drawEllipse(QRectF(72, 10 + i * 12, 9, 9));
+        painter.drawEllipse(QRectF(72.5, 11 + i * 11, 9, 9));
     }
-    painter.setBrush(pack.tokens.text);
-    painter.drawRoundedRect(QRectF(66, 54, 22, 3), 1.5, 1.5);
     return pixmap;
 }
 
@@ -2157,9 +2177,15 @@ void SettingsDialog::fillThemeGallery() {
     themeGallery_->clear();
     for (const ThemePack &pack : NexaThemes::all()) {
         if (!themeCategory_.isEmpty() && pack.category != themeCategory_) continue;
-        auto *item = new QListWidgetItem(u"%1\n%2"_s.arg(pack.name, coreStyleName(pack.style)));
+        const QString look = pack.chrome.panels == PanelChrome::Flat
+                                 ? coreStyleName(pack.style)
+                                 : u"%1 · %2"_s.arg(coreStyleName(pack.style), panelChromeName(pack.chrome.panels));
+        auto *item = new QListWidgetItem(u"%1\n%2"_s.arg(pack.name, look));
         item->setData(Qt::UserRole, NexaThemes::settingFor(pack));
-        item->setToolTip(u"%1 · %2"_s.arg(pack.category, coreStyleBlurb(pack.style)));
+        QString tip = u"%1 · %2"_s.arg(pack.category, coreStyleBlurb(pack.style));
+        if (pack.chrome.panels != PanelChrome::Flat) tip += u' ' + panelChromeBlurb(pack.chrome.panels);
+        if (pack.chrome.backdrop != Backdrop::Plain) tip += u" Behind the panels: %1."_s.arg(backdropName(pack.chrome.backdrop).toLower());
+        item->setToolTip(tip);
         item->setIcon(themeSwatch(pack));
         themeGallery_->addItem(item);
         if (pack.id == themeChoice_) themeGallery_->setCurrentItem(item);

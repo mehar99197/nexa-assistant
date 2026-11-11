@@ -67,6 +67,7 @@ add_executable(nexa_tests
     PairingManagerTest.cc
     MdnsBrowserTest.cc
     MdnsPacketTest.cc
+    NexaChromeTest.cc
     NexaCoreSpecTest.cc
     NexaDesignsTest.cc
     NexaThemesTest.cc

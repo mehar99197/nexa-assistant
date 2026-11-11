@@ -26,11 +26,14 @@ struct Recipe {
     CoreStyle style;
 };
 
-// The two house packs are hand-tuned (below); the rest are recipes. Ten categories, each a look of its own:
-// Neon is hot colour on near black; Nature is green and bark on a mossy ground; Ocean is blue-green on deep
-// water; Space is dark and far; Fire & Ember is warm; Minimal & Mono is grey with a trace; Retro is phosphor
-// and synthwave; Cyber is green-on-black and chrome; Pastel Night is soft and gentle; Gems are jewel tones.
+// The two house packs are hand-tuned (below), the HUD packs are drawn from pictures (below too); the rest are
+// recipes. Twelve categories, each a look of its own: HUD is the heads-up displays of the films — bracketed
+// panels, neon edges, a grid behind; Neon is hot colour on near black; Nature is green and bark on a mossy
+// ground; Ocean is blue-green on deep water; Space is dark and far; Fire & Ember is warm; Minimal & Mono is
+// grey with a trace; Retro is phosphor and synthwave; Cyber is green-on-black and chrome; Pastel Night is soft
+// and gentle; Gems are jewel tones.
 constexpr const char *kNexa = "Nexa";
+constexpr const char *kHud = "HUD";
 constexpr const char *kNeon = "Neon";
 constexpr const char *kNature = "Nature";
 constexpr const char *kOcean = "Ocean";
@@ -123,6 +126,53 @@ constexpr Recipe kRecipes[] = {
     {"gem-jade", "Jade", kGems, 155, 0.75, 160, 0.22, 0.060, 1.0, 0.62, CoreStyle::Pulse},
     {"gem-onyx", "Onyx", kGems, 270, 0.30, 260, 0.10, 0.025, 1.0, 0.70, CoreStyle::Minimal},
     {"gem-garnet", "Garnet", kGems, 345, 0.70, 350, 0.22, 0.060, 0.8, 0.60, CoreStyle::Storm},
+};
+
+// A HUD pack, as the owner's reference pictures draw them: a ground, the accent that lights everything, a
+// second hue for the words and the thought, a warm one for action and what needs the user, how much of the
+// accent the panels and lines carry, and the chrome. The rest of the palette follows (hudTokens).
+struct Hud {
+    const char *id;
+    const char *name;
+    const char *ground;
+    const char *accent;
+    const char *second;
+    const char *warm;
+    double tint;         // of the accent in the panels and lines: 0.05 almost none … 0.4 deep
+    PanelChrome chrome;
+    Backdrop backdrop;
+    CoreStyle style;
+};
+
+constexpr Hud kHuds[] = {
+    // The owner's own console: cyan on navy, orange for what waits on them, bracketed panels on a grid.
+    {"hud-console", "Nexa Console", "#07111F", "#4FD1FF", "#7FA8FF", "#F5A742", 0.22, PanelChrome::Brackets, Backdrop::Grid, CoreStyle::Orbit},
+    // A hologram in blue light, the panels edged in it.
+    {"hud-jarvis", "Jarvis", "#04101C", "#38C6F4", "#6EE7FF", "#F0B454", 0.30, PanelChrome::Glow, Backdrop::Grid, CoreStyle::Comet},
+    // Black, white and cobalt, a bar down each panel: the rainmeter desk.
+    {"hud-mark-three", "Mark III", "#000000", "#3B82F6", "#9CA3AF", "#F59E0B", 0.05, PanelChrome::Rail, Backdrop::Plain, CoreStyle::Classic},
+    // Teal on black, thin lines, scan lines, nothing else.
+    {"hud-stark", "Stark", "#020B0C", "#22D3E6", "#5EEAD4", "#F2C14E", 0.25, PanelChrome::Brackets, Backdrop::Scan, CoreStyle::Minimal},
+    // Magenta on purple-black with the corners cut.
+    {"hud-violet-circuit", "Violet Circuit", "#120818", "#E040FB", "#B388FF", "#FFB74D", 0.30, PanelChrome::Chamfer, Backdrop::Vignette, CoreStyle::Storm},
+    // Indigo and cyan, soft panes: the assistant that listens.
+    {"hud-indigo", "Indigo Assistant", "#151533", "#3DD9F2", "#8B8CF5", "#F5B263", 0.25, PanelChrome::Glass, Backdrop::Vignette, CoreStyle::Nebula},
+    // Violet, cyan and pink neon over a horizon.
+    {"hud-synth-deck", "Synth Deck", "#160A2A", "#C04CF5", "#3DE8F5", "#F55AB0", 0.30, PanelChrome::Glow, Backdrop::Horizon, CoreStyle::Aurora},
+    // Teal and coral on charcoal, a rail on every panel.
+    {"hud-coral", "Cyber Coral", "#0B0D10", "#2EE6D6", "#7CF3EA", "#FF7A6B", 0.12, PanelChrome::Rail, Backdrop::Dots, CoreStyle::Pulse},
+    // A pane of blue light.
+    {"hud-holo", "Holo Blue", "#03122E", "#4FC3FF", "#8FE3FF", "#FFC65C", 0.40, PanelChrome::Glass, Backdrop::Grid, CoreStyle::Aurora},
+    // Pale reactor light and amber on near black.
+    {"hud-reactor", "Arc Reactor", "#050A0D", "#9FF3FF", "#38BDF8", "#F6A03C", 0.20, PanelChrome::Glow, Backdrop::Vignette, CoreStyle::Pulse},
+    // Amber on charcoal: an aircraft's display.
+    {"hud-sentinel", "Sentinel", "#0D0B08", "#F2A93B", "#FFD27A", "#FF7043", 0.12, PanelChrome::Brackets, Backdrop::Scan, CoreStyle::Storm},
+    // Silver and ice on black, cut corners, a lattice of dots.
+    {"hud-ghost", "Ghost", "#0A0B0D", "#CFD8E3", "#8FD3FF", "#FFB454", 0.05, PanelChrome::Chamfer, Backdrop::Dots, CoreStyle::Minimal},
+    // The display in green.
+    {"hud-emerald", "Emerald HUD", "#04110B", "#2EE88A", "#8BF5C8", "#F5C542", 0.25, PanelChrome::Brackets, Backdrop::Grid, CoreStyle::Comet},
+    // Violet, electric blue and pink with the corners cut, over a grid.
+    {"hud-ultraviolet", "Ultraviolet", "#0B0618", "#8B5CF6", "#38BDF8", "#F472B6", 0.30, PanelChrome::Chamfer, Backdrop::Grid, CoreStyle::Aurora},
 };
 
 // The catalogue before this one was 26 colour families, each in dark and light: a setting from then
@@ -231,16 +281,63 @@ ThemeTokens missionTokens() {
     return t;
 }
 
+QColor mix(const QColor &from, const QColor &to, double amount) {
+    amount = std::clamp(amount, 0.0, 1.0);
+    return QColor::fromRgbF(from.redF() + (to.redF() - from.redF()) * amount,
+                            from.greenF() + (to.greenF() - from.greenF()) * amount,
+                            from.blueF() + (to.blueF() - from.blueF()) * amount);
+}
+
+QColor lighter(const QColor &colour, double by) {
+    return QColor::fromHslF(std::max(0.0, double(colour.hslHueF())), colour.hslSaturationF(),
+                            std::clamp(double(colour.lightnessF()) + by, 0.0, 1.0));
+}
+
+// A HUD pack's palette from its picture: the panels and lines are the ground lifted towards the accent, the
+// text is white with a breath of it, the states are the accent, the second hue and the warm one in their roles
+// (idle, listening and the fast path on the accent; the words and the thought on the second; action and what
+// needs the user warm), and the whole held to the same contrast as every other pack.
+ThemeTokens hudTokens(const Hud &h) {
+    const QColor ground(QString::fromLatin1(h.ground));
+    const QColor accent(QString::fromLatin1(h.accent));
+    const QColor second(QString::fromLatin1(h.second));
+    const QColor warm(QString::fromLatin1(h.warm));
+    ThemeTokens t;
+    t.ground = ground;
+    t.panel = lighter(mix(ground, accent, 0.03 + h.tint * 0.10), 0.030);
+    t.panelRaised = lighter(mix(ground, accent, 0.04 + h.tint * 0.14), 0.060);
+    t.line = lighter(mix(ground, accent, 0.10 + h.tint * 0.35), 0.110);
+    t.text = mix(QColor(Qt::white), accent, 0.08);
+    t.muted = mix(t.text, ground, 0.48);
+    t.idle = accent;
+    t.listen = lighter(accent, 0.08);
+    t.fast = mix(QColor(Qt::white), accent, 0.25);
+    t.wake = mix(accent, second, 0.5);
+    t.stt = second;
+    t.think = lighter(mix(second, accent, 0.35), 0.06);
+    t.act = warm;
+    t.speak = lighter(mix(accent, second, 0.3), 0.12);
+    t.error = hsl(10, 0.92, 0.68);
+    t.onAccent = ground.lightness() < 8 ? QColor(0x06, 0x08, 0x0C) : ground;
+    guaranteed(t);
+    return t;
+}
+
 QList<ThemePack> generate() {
     QList<ThemePack> packs;
-    // Nexa's own look first, exactly as the design draws it, then Mission Control's; then the recipes.
+    // Nexa's own look first, exactly as the design draws it, then Mission Control's; then the HUD packs from the
+    // pictures; then the recipes.
     packs.append(ThemePack{u"nexa-dark"_s, u"Nexa"_s, QString::fromLatin1(kNexa), CoreStyle::Classic,
-                           NexaTheme::tokens(ThemeScheme::Dark)});
+                           NexaTheme::tokens(ThemeScheme::Dark), {}});
     packs.append(ThemePack{u"mission-dark"_s, u"Mission Control"_s, QString::fromLatin1(kNexa), CoreStyle::Comet,
-                           missionTokens()});
+                           missionTokens(), {}});
+    for (const Hud &hud : kHuds) {
+        packs.append(ThemePack{QString::fromLatin1(hud.id), QString::fromLatin1(hud.name), QString::fromLatin1(kHud),
+                               hud.style, hudTokens(hud), ThemeChrome{hud.chrome, hud.backdrop}});
+    }
     for (const Recipe &recipe : kRecipes) {
         packs.append(ThemePack{QString::fromLatin1(recipe.id), QString::fromLatin1(recipe.name),
-                               QString::fromLatin1(recipe.category), recipe.style, tokensFor(recipe)});
+                               QString::fromLatin1(recipe.category), recipe.style, tokensFor(recipe), {}});
     }
     return packs;
 }

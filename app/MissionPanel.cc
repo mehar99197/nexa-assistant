@@ -8,7 +8,15 @@ using namespace Qt::StringLiterals;
 
 namespace nexa {
 
-MissionPanel::MissionPanel(QWidget *parent) : QFrame(parent) {}
+MissionPanel::MissionPanel(QWidget *parent) : ChromeFrame(parent) {
+    // The Mission palette's own, until the sheet says otherwise.
+    setGroundColor(QColor(0x0B, 0x0D, 0x12));
+    setPanelColor(QColor(0x12, 0x14, 0x1B));
+    setLineColor(QColor(0x23, 0x27, 0x36));
+    setAccentColor(QColor(0xA8, 0x55, 0xF7));
+    setTextColor(QColor(0xE7, 0xE9, 0xF2));
+    connect(this, &ChromeFrame::chromeChanged, this, &MissionPanel::coloursChanged);
+}
 
 void MissionPanel::set(QColor &member, const QColor &colour) {
     member = colour;
@@ -23,9 +31,9 @@ QColor MissionPanel::laneColor(Lane lane) const {
     case Lane::Screen: return screen_;
     case Lane::Phone: return phone_;
     case Lane::Voice: return voice_;
-    case Lane::General: return accent_;
+    case Lane::General: return accentColor();
     }
-    return accent_;
+    return accentColor();
 }
 
 QColor MissionPanel::stateColor(TaskState state) const {

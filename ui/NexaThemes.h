@@ -1,5 +1,6 @@
 #pragma once
 
+#include "ui/NexaChrome.h"
 #include "ui/NexaCoreSpec.h"
 #include "ui/NexaTheme.h"
 
@@ -12,23 +13,27 @@
 namespace nexa {
 
 // One theme pack: a palette (the tokens theme.qss takes) with the core's motion style that suits it, named,
-// in a category. Every pack is dark — the owner wants no light look — so a pack differs from the next in
-// its accent, how its ground is tinted and how deep it is, how far the state colours wander from the accent
-// and how bright they glow, and the motion of its core.
+// in a category, and its chrome — how its panels are framed and what lies behind them (NexaChrome). Every
+// pack is dark — the owner wants no light look — so a pack differs from the next in its accent, how its
+// ground is tinted and how deep it is, how far the state colours wander from the accent and how bright they
+// glow, the motion of its core, and, for the HUD packs, its brackets, neon, cut corners, glass or rail over a
+// grid, dots, a glow, a horizon or scan lines.
 struct ThemePack {
     QString id;          // stable, kebab-case: "neon-cyan"; config.ui.theme holds it
     QString name;        // "Neon Cyan"
     QString category;    // "Neon", "Nature", … — the gallery's chips
     CoreStyle style;
     ThemeTokens tokens;
+    ThemeChrome chrome;  // Flat panels on the bare ground unless the pack says otherwise
 };
 
-// The catalogue of theme packs (Factory): sixty-odd dark packs in ten categories, each written as a recipe
-// (an accent, a ground, a spread, a glow, a motion style) and generated with the design's own shape of
-// palette and its contrast guaranteed — text 7:1 on the panels, muted text 3.5:1 and every state colour 3:1
-// on the ground. Nexa's own pack and Mission Control's are hand-tuned. Old settings keep working: the
-// catalogue's former `<family>-dark` and `<family>-light` ids, "system", "dark" and "light" all resolve to a
-// pack, and so does anything unknown.
+// The catalogue of theme packs (Factory): eighty-odd dark packs in twelve categories. Most are written as a
+// recipe (an accent, a ground, a spread, a glow, a motion style) and generated with the design's own shape of
+// palette; the HUD packs are drawn from the owner's reference pictures (a ground, an accent, a second hue, a
+// warm one, a chrome, a backdrop); every one has its contrast guaranteed — text 7:1 on the panels, muted text
+// 3.5:1 and every state colour 3:1 on the ground. Nexa's own pack and Mission Control's are hand-tuned. Old
+// settings keep working: the catalogue's former `<family>-dark` and `<family>-light` ids, "system", "dark"
+// and "light" all resolve to a pack, and so does anything unknown.
 class NexaThemes {
 public:
     static const QList<ThemePack> &all();

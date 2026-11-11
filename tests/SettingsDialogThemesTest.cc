@@ -6,6 +6,7 @@
 #include "app/SystemStatus.h"
 #include "core/ai/ProviderRegistry.h"
 #include "core/net/HttpClient.h"
+#include "ui/NexaChrome.h"
 #include "ui/NexaThemes.h"
 
 #include "QtStringMakers.h"
@@ -13,6 +14,8 @@
 #include <QAbstractButton>
 #include <QListWidget>
 #include <QPushButton>
+#include <QTabWidget>
+#include <QTest>
 
 #include <catch2/catch_test_macros.hpp>
 
@@ -104,5 +107,36 @@ TEST_CASE("An old or odd setting lands on its pack in the gallery, and every til
         REQUIRE(NexaThemes::find(id).has_value());
         CHECK_FALSE(id.endsWith(u"-light"_s));
         CHECK_FALSE(id == u"system"_s);
+    }
+}
+
+// NEXA_TEST_SCREENSHOTS=<dir>: the HUD category's tiles — each swatch wearing its chrome and its backdrop — as a
+// picture to look at. Without the variable it only checks the chip shows them, named for their chrome.
+TEST_CASE("The HUD chip shows the packs from the owner's pictures, each tile naming its chrome") {
+    ThemeRig rig;
+    rig.open(u"hud-console"_s);
+    REQUIRE(rig.chip(u"HUD"_s));
+    rig.chip(u"HUD"_s)->click();
+    const QList<ThemePack> huds = NexaThemes::inCategory(u"HUD"_s);
+    CHECK(rig.shown().size() == huds.size());
+    CHECK(rig.current() == u"hud-console"_s);
+    for (int i = 0; i < rig.gallery()->count(); ++i) {
+        const QListWidgetItem *item = rig.gallery()->item(i);
+        const ThemePack pack = *NexaThemes::find(item->data(Qt::UserRole).toString());
+        INFO(pack.id.toStdString());
+        CHECK(item->text().startsWith(pack.name));
+        if (pack.chrome.panels != PanelChrome::Flat) CHECK(item->text().contains(panelChromeName(pack.chrome.panels)));
+        CHECK_FALSE(item->icon().isNull());
+    }
+    const QString directory = qEnvironmentVariable("NEXA_TEST_SCREENSHOTS");
+    if (!directory.isEmpty()) {
+        if (auto *tabs = rig.dialog->findChild<QTabWidget *>()) {
+            for (int i = 0; i < tabs->count(); ++i) {
+                if (tabs->tabText(i) == u"General"_s) tabs->setCurrentIndex(i);
+            }
+        }
+        rig.dialog->resize(760, 720);
+        QTest::qWait(300);
+        rig.dialog->grab().save(directory + u"/theme-gallery-hud.png"_s);
     }
 }

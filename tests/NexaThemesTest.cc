@@ -1,7 +1,9 @@
 // ui/NexaThemes: the catalogue of themes — fifty and more, every one dark, each readable, each with a
 // motion style, in categories — what an old setting resolves to, and what the styles do to the core's frames.
 
+#include "ui/NexaChrome.h"
 #include "ui/NexaCoreSpec.h"
+#include "ui/NexaDesigns.h"
 #include "ui/NexaTheme.h"
 #include "ui/NexaThemes.h"
 
@@ -33,9 +35,9 @@ double contrast(const QColor &a, const QColor &b) {
 
 } // namespace
 
-TEST_CASE("There are more than fifty themes, every one dark and readable, in categories, every style in use") {
+TEST_CASE("There are more than eighty themes, every one dark and readable, in categories, every style in use") {
     const QList<ThemePack> &packs = NexaThemes::all();
-    CHECK(packs.size() >= 50);
+    CHECK(packs.size() >= 80);
     QSet<QString> ids;
     QSet<QString> names;
     QSet<QString> looks;
@@ -62,10 +64,19 @@ TEST_CASE("There are more than fifty themes, every one dark and readable, in cat
         CHECK(contrast(pack.tokens.text, pack.tokens.panelRaised) >= 7.0);
         CHECK(contrast(pack.tokens.muted, pack.tokens.ground) >= 3.0);
         for (const CoreMode mode : kCoreModes) CHECK(contrast(pack.tokens.stateColor(mode), pack.tokens.ground) >= 2.5);
-        // The stylesheet fills in, and carries the motion style for the core.
-        const QString sheet = NexaTheme::styleSheet(pack.tokens, pack.style);
+        // The stylesheet fills in, and carries the motion style for the core and the chrome for the panels and the
+        // ground; a pack with a chrome of its own has the sheet leave the panels bare for the frames to paint.
+        const QString sheet = NexaTheme::styleSheet(pack.tokens, pack.style, NexaDesigns::resolve(u"mission"_s), pack.chrome);
         CHECK_FALSE(sheet.contains(u'@'));
         CHECK(sheet.contains(u"qproperty-coreStyle: %1;"_s.arg(static_cast<int>(pack.style))));
+        CHECK(sheet.contains(u"qproperty-panelChrome: %1;"_s.arg(static_cast<int>(pack.chrome.panels))));
+        CHECK(sheet.contains(u"qproperty-backdrop: %1;"_s.arg(static_cast<int>(pack.chrome.backdrop))));
+        if (pack.chrome.panels == PanelChrome::Flat) {
+            CHECK(sheet.contains(u"nexa--MissionPanel {\n    background: %1;\n    border: 1px solid %2;"_s.arg(
+                pack.tokens.panel.name(), pack.tokens.line.name())));
+        } else {
+            CHECK(sheet.contains(u"nexa--MissionPanel {\n    background: transparent;\n    border: 0;"_s));
+        }
         // The setting round-trips.
         CHECK(NexaThemes::resolve(NexaThemes::settingFor(pack)).id == pack.id);
     }
@@ -77,10 +88,11 @@ TEST_CASE("There are more than fifty themes, every one dark and readable, in cat
     for (const ThemePack &pack : packs) CHECK(pack.id.endsWith(u"-light"_s) == false);
 }
 
-TEST_CASE("The categories: eight and more, none empty, each a mix of motion styles, and the step through one") {
+TEST_CASE("The categories: ten and more, none empty, each a mix of motion styles, and the step through one") {
     const QStringList categories = NexaThemes::categories();
-    CHECK(categories.size() >= 8);
+    CHECK(categories.size() >= 10);
     CHECK(categories.first() == u"Nexa"_s);
+    CHECK(categories.at(1) == u"HUD"_s);      // the owner's pictures, right after the house packs
     for (const QString &name : {u"Neon"_s, u"Nature"_s, u"Ocean"_s, u"Space"_s, u"Fire & Ember"_s, u"Minimal & Mono"_s,
                                 u"Retro"_s, u"Cyber"_s, u"Pastel Night"_s, u"Gems"_s}) {
         CHECK(categories.contains(name));
@@ -182,6 +194,50 @@ TEST_CASE("Each motion style bends the frames its own way") {
             CHECK(scale <= 1.14 + 1e-9);
         }
     }
+}
+
+TEST_CASE("The HUD packs are the owner's pictures: each with a chrome or a backdrop, every chrome and backdrop in use") {
+    const QList<ThemePack> huds = NexaThemes::inCategory(u"HUD"_s);
+    CHECK(huds.size() >= 12);
+    QSet<int> chromes;
+    QSet<int> backdrops;
+    QSet<int> styles;
+    for (const ThemePack &pack : huds) {
+        INFO(pack.id.toStdString());
+        CHECK(pack.id.startsWith(u"hud-"_s));
+        CHECK((pack.chrome.panels != PanelChrome::Flat || pack.chrome.backdrop != Backdrop::Plain));
+        chromes.insert(static_cast<int>(pack.chrome.panels));
+        backdrops.insert(static_cast<int>(pack.chrome.backdrop));
+        styles.insert(static_cast<int>(pack.style));
+        // Dark text on the accent (the Send button, the chips): the ground, or near it.
+        CHECK(pack.tokens.onAccent.lightness() < 40);
+    }
+    CHECK(chromes.size() == kPanelChromeCount - 1);     // every chrome but Flat
+    CHECK(backdrops.size() == kBackdropCount);          // every backdrop, Plain included (Mark III)
+    CHECK(styles.size() == kCoreStyleCount);
+    // Every pack outside HUD is as it was: the sheet's rounded panels on the bare ground.
+    for (const ThemePack &pack : NexaThemes::all()) {
+        if (pack.category == u"HUD"_s) continue;
+        INFO(pack.id.toStdString());
+        CHECK(pack.chrome.panels == PanelChrome::Flat);
+        CHECK(pack.chrome.backdrop == Backdrop::Plain);
+    }
+    // The owner's own console: cyan on navy, orange for what waits on them, bracketed panels over a grid.
+    const std::optional<ThemePack> console = NexaThemes::find(u"hud-console"_s);
+    REQUIRE(console.has_value());
+    CHECK(console->tokens.ground == QColor(0x07, 0x11, 0x1F));
+    CHECK(console->tokens.idle == QColor(0x4F, 0xD1, 0xFF));
+    CHECK(console->tokens.act == QColor(0xF5, 0xA7, 0x42));
+    CHECK(console->chrome.panels == PanelChrome::Brackets);
+    CHECK(console->chrome.backdrop == Backdrop::Grid);
+    CHECK(console->style == CoreStyle::Orbit);
+    // The black one keeps the ground black, with a rail and nothing behind.
+    const std::optional<ThemePack> mark = NexaThemes::find(u"hud-mark-three"_s);
+    REQUIRE(mark.has_value());
+    CHECK(mark->tokens.ground == QColor(Qt::black));
+    CHECK(mark->chrome.panels == PanelChrome::Rail);
+    CHECK(mark->chrome.backdrop == Backdrop::Plain);
+    CHECK(mark->tokens.panel.lightness() > 0);
 }
 
 TEST_CASE("The Mission palette is the mock-up's: violet on near-black, green online, amber for the user") {
