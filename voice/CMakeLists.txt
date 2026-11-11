@@ -25,16 +25,19 @@ add_library(nexa_voice STATIC
     stt/RecognizerChain.h stt/RecognizerChain.cc
     stt/Transcript.h stt/Transcript.cc
     tts/AudioFileDecoder.h tts/AudioFileDecoder.cc
+    tts/ClonedVoiceSynthesizer.h tts/ClonedVoiceSynthesizer.cc
     tts/CloudSynthesizer.h tts/CloudSynthesizer.cc
     tts/CloudVoices.h tts/CloudVoices.cc
     tts/ISpeechSynthesizer.h
     tts/ITextToSpeech.h
     tts/PcmPlayer.h tts/PcmPlayer.cc
+    tts/Phonemizer.h tts/Phonemizer.cc
     tts/PiperSynthesizer.h tts/PiperSynthesizer.cc
     tts/SentenceChunker.h tts/SentenceChunker.cc
     tts/SpeechdTtsBackend.h tts/SpeechdTtsBackend.cc
     tts/SynthesizedSpeech.h tts/SynthesizedSpeech.cc
     tts/TtsFileRenderer.h tts/TtsFileRenderer.cc
+    tts/VoiceSample.h tts/VoiceSample.cc
     wake/IWakeSpotter.h
     wake/KeywordSpotter.h wake/KeywordSpotter.cc
     wake/SherpaRuntime.h wake/SherpaRuntime.cc

@@ -63,6 +63,7 @@ struct VoiceConfig {
     bool noiseReduction{true};                          // clean the sound for the speech detector and the spotter
     QString sttProvider;                                // the provider that recognises requests; empty: automatic
     QString ttsProvider;                                // the provider whose voice speaks; empty: automatic
+    bool ownVoice{false};                               // speak in the owner's voice, from the sample they recorded
     QString listenTo{QStringLiteral("owner")};          // owner (once the voice is enrolled) | anyone
     QString ownerStrictness{QStringLiteral("normal")};  // low | normal | high: how sure "it is the owner" must be
     bool conversation{false};                           // keep listening to the owner after each reply, no name needed

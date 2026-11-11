@@ -439,7 +439,7 @@ int main(int argc, char *argv[]) {
     // then every request it makes goes through the controller like one typed here.
     PairingManager pairing(PairingManager::defaultPath());
     TlsIdentity tlsIdentity(TlsIdentity::defaultDirectory());
-    RemoteBridge remoteBridge(&controller, &http);
+    RemoteBridge remoteBridge(&controller, &http, &sherpa);
     controller.setPhonePaired([&pairing] { return !pairing.devices().isEmpty(); });
     RemoteServer remote(&pairing, &remoteBridge, &tlsIdentity);
     // Away from home: Tailscale watched, the Cloudflare and ngrok tunnels run as Settings → Remote says.

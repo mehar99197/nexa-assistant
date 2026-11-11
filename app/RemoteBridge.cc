@@ -16,8 +16,8 @@ using namespace Qt::StringLiterals;
 
 namespace nexa {
 
-RemoteBridge::RemoteBridge(AppController *controller, HttpClient *http, QObject *parent)
-    : QObject(parent), controller_(controller), http_(http), config_(controller->config()) {}
+RemoteBridge::RemoteBridge(AppController *controller, HttpClient *http, SherpaRuntime *sherpa, QObject *parent)
+    : QObject(parent), controller_(controller), http_(http), sherpa_(sherpa), config_(controller->config()) {}
 
 RemoteBridge::~RemoteBridge() = default;
 
@@ -38,7 +38,7 @@ void RemoteBridge::build() const {
     } else {
         qCInfo(lcVoice).noquote() << "remote: no speech recognition for the phone:" << recognizer.error().message;
     }
-    renderer_ = std::make_unique<TtsFileRenderer>(VoiceBackends::createSynthesizers(config_, http_));
+    renderer_ = std::make_unique<TtsFileRenderer>(VoiceBackends::createSynthesizers(config_, http_, nullptr, sherpa_));
 }
 
 bool RemoteBridge::isBusy() const {

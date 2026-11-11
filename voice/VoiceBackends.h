@@ -36,6 +36,7 @@ class VoiceBackends {
 public:
     static QString dataDir();
     static QString whisperModelPath(const QString &model);     // …/models/ggml-<model>.bin
+    static QString piperDir();                                  // ~/.local/share/nexa/piper
     static QString piperBinary();
     static QStringList piperVoices();                           // installed voice names
     static bool whisperBuilt();
@@ -52,13 +53,19 @@ public:
     static Result<std::unique_ptr<ISpeechRecognizer>> createRecognizer(const Config &config, HttpClient *http);
     // Local recogniser (whisper.cpp) — the only kind the wake word may use.
     static Result<std::unique_ptr<ISpeechRecognizer>> createLocalRecognizer(const VoiceConfig &voice);
-    // Speech output; a null pointer when the user switched it off.
-    static Result<std::unique_ptr<ITextToSpeech>> createTextToSpeech(const Config &config, HttpClient *http);
-    // The engines that hand back audio instead of playing it — the provider's voice, Piper — in the
-    // order Settings → Voice asks for. Empty when speech is off. speech-dispatcher can only play,
+    // Speech output; a null pointer when the user switched it off. With `sherpa`, and "Speak in my voice" on, the
+    // owner's own voice (ZipVoice over the sample they recorded) comes first, the rest behind it.
+    static Result<std::unique_ptr<ITextToSpeech>> createTextToSpeech(const Config &config, HttpClient *http,
+                                                                     SherpaRuntime *sherpa = nullptr);
+    // The engines that hand back audio instead of playing it — the owner's voice when on, the provider's voice,
+    // Piper — in the order Settings → Voice asks for. Empty when speech is off. speech-dispatcher can only play,
     // so with it the others are used the way "auto" would. `problems` says what was left out.
     static std::vector<std::unique_ptr<ISpeechSynthesizer>> createSynthesizers(const Config &config, HttpClient *http,
-                                                                               QStringList *problems = nullptr);
+                                                                               QStringList *problems = nullptr,
+                                                                               SherpaRuntime *sherpa = nullptr);
+    // Nexa in the owner's voice: ZipVoice (scripts/download-sherpa.sh) over the sample recorded in Settings → Voice,
+    // with Piper's phonemizer. The error says what is missing, in order: the sample, ZipVoice, the phonemizer.
+    static Result<std::unique_ptr<ISpeechSynthesizer>> createOwnVoice(const VoiceConfig &voice, SherpaRuntime *sherpa);
 
     // What hears speech and the name: Silero, noise reduction (when on) and — `withSpotter` — the keyword
     // spotter, on a worker thread, when sherpa-onnx is installed; loudness alone otherwise. `problems` says what

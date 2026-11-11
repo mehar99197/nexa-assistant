@@ -75,6 +75,10 @@ Not to be confused with Nexa Download Manager: this is a separate program, named
   ignored, and a stranger's sentence is not even transcribed. Pressing Talk always works. A wake word the words
   do not confirm asks nothing, and "next", "Max" or "Rex" are no longer taken for "Nexa". By default only its
   name interrupts Nexa while it speaks, so it never interrupts itself.
+- **Speaks in your voice** — record yourself reading one short passage (Settings → Voice → Speak in my voice →
+  Record my voice…) and Nexa's replies come out in your own voice, made on this computer by ZipVoice from that one
+  recording, which stays here (readable by you alone) and is removed by "Forget the sample". "Hear it" plays a
+  test sentence; the phone and the web remote hear the same voice.
 - **Voice control** — "stop talking" stops the voice and leaves the work going; "stop" stops the task you are
   looking at, "stop everything" every task. "Pause task two", "resume the code agent", "approve" / "deny" (when a
   task waits for you), "what are you doing?", "add a task: …". With **Keep the conversation going** on, Nexa
@@ -140,7 +144,7 @@ scripts/install-desktop-entry.sh             # app grid entry and icon; needed f
 sudo ./packaging/install-helper.sh           # typing, clicking and root commands (asks for your password once per login)
 scripts/download-whisper-model.sh base.en    # offline speech recognition (148 MB), optional
 scripts/download-piper.sh                    # offline voice (26 MB + a 63 MB voice), optional
-scripts/download-sherpa.sh                   # wake-name spotter, voice detection, noise reduction (27 MB), optional
+scripts/download-sherpa.sh                   # wake-name spotter, voice detection, noise reduction, your voice (220 MB), optional
 ```
 
 On first start Nexa offers opencode and agy if they are installed, and installs Playwright — the browser automation that is

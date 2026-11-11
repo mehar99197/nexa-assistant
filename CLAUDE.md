@@ -65,8 +65,11 @@ To inspect the GUI from a script, run it on XWayland (`QT_QPA_PLATFORM=xcb`) and
 Voice engines (optional, no sudo): `scripts/download-whisper-model.sh base.en` for offline recognition,
 `scripts/download-piper.sh` for the offline voice, and `scripts/download-sherpa.sh` for sherpa-onnx 2.0.1 and its
 models (`~/.local/share/nexa/sherpa`: the keyword spotter that hears the wake name, Silero voice detection, GTCRN
-noise reduction — loaded at run time with `QLibrary` against the vendored `voice/wake/sherpa/c-api.h`, nothing
-linked; without it the energy VAD and the whisper second net work alone), all into `~/.local/share/nexa`. The
+noise reduction, the speaker model, and **ZipVoice** with its Vocos vocoder, the voice Nexa makes from a sample of the
+owner's own (M26, Settings → Voice → Speak in my voice: `Record my voice…` records the owner reading a passage,
+`Hear it` speaks a sentence in it; needs Piper too, for its phonemizer) — loaded at run time with `QLibrary` against
+the vendored `voice/wake/sherpa/c-api.h`, nothing linked; without it the energy VAD and the whisper second net work
+alone), all into `~/.local/share/nexa`. The
 cloud recogniser and voice are the provider chosen in Settings → Voice, or automatically the first choice and then
 every provider with a speech model (agy, opencode and Codex have none). Local recognition is compiled in only with
 `-DNEXA_BUILD_WHISPER=ON` (on in the release and debug presets; whisper.cpp is fetched at configure time).
@@ -242,7 +245,12 @@ text-only model refuses images with a 400; the `Agent` then resends without them
   for offline, RecognizerChain tries them in order, Transcript cleans the text), `tts/` (ITextToSpeech;
   CloudSynthesizer and PiperSynthesizer produce PCM, SynthesizedSpeech chains them and PcmPlayer plays it,
   SpeechdTtsBackend is the fallback, SentenceChunker splits a streamed reply into speakable sentences, CloudVoices
-  = which models hear or speak and their voices), `pipeline/` (VoicePipeline state machine: the spotter's hits, the
+  = which models hear or speak and their voices; **the owner's voice**: `VoiceSample` = the recording of the owner
+  reading a passage (`~/.local/share/nexa/voice-sample.wav` + `.json`, 0600, trimmed of its quiet, at most 12 s),
+  `Phonemizer` = words → IPA tokens through Piper's `piper_phonemize` (so Nexa's own name is said, not skipped as
+  ZipVoice's lexicon would), `ClonedVoiceSynthesizer` = ZipVoice through `SherpaRuntime` on a worker thread, the
+  sample's tokens and the sentence's as one pre-tokenized pair, first in the chain when `voice.ownVoice` is on —
+  the phone and the web remote hear it too, since they build from the same `VoiceBackends`), `pipeline/` (VoicePipeline state machine: the spotter's hits, the
   whisper second net, requests, follow-ups; WakeWordDetector = any name, anywhere in a sentence), `VoiceBackends`
   builds what Settings → Voice asks for (one choice of cloud voice for the PC, the phone app and the web remote,
   and the listening front), `VoiceTools` adds `speak`.
@@ -320,7 +328,8 @@ text-only model refuses images with a 400; the `Agent` then resends without them
 - Runtime files: `~/.config/nexa/config.json` (settings, 0600; a save that removes providers first keeps the file as
   it was in `config.json.prev` and logs which went), `~/.local/share/nexa/audit.jsonl` (every action,
   0600), `~/.local/share/nexa/models/` (whisper), `~/.local/share/nexa/piper/` (Piper and its voices),
-  `~/.local/share/nexa/memory.json` (what Nexa remembers, 0600), `~/.local/share/nexa/skills/` (the user's
+  `~/.local/share/nexa/memory.json` (what Nexa remembers, 0600), `~/.local/share/nexa/voice-sample.wav` + `.json`
+  (the owner's recording for "Speak in my voice", 0600), `~/.local/share/nexa/skills/` (the user's
   skills), `~/.local/share/nexa/attachments/` (copies of attached files from outside the home folder and pasted
   pictures, 0600), `~/.local/share/nexa/playwright/` (Playwright, its output and its Chromium if any),
   `~/.local/share/nexa/browser-profile/` (Nexa's own Chrome profile, for when the extension is not set up),
@@ -400,7 +409,11 @@ text-only model refuses images with a 400; the `Agent` then resends without them
   capture, the second net's sentence (before whisper hears it), the request after the name, a follow-up, a barge-in.
   Interrupting Nexa is by its name by default (`voice.bargeIn`: name | speech | off): Nexa must not hear itself. "Stop
   talking" stops the voice only, "stop" the task in view, "stop everything" is the panic. The voice profile is a
-  person's biometric data: 0600, never logged, never sent anywhere, and no recording is kept.
+  person's biometric data: 0600, never logged, never sent anywhere, and no recording is kept — except the one
+  sample the owner records on purpose for "Speak in my voice" (`VoiceSample`), which is kept 0600 on this machine
+  only, used by ZipVoice locally, and removed by "Forget the sample". With that voice on, the owner gate cannot
+  tell Nexa's speech from the owner's, so the self-guard on the name in a reply is what keeps Nexa from
+  interrupting itself.
 - Nothing listens to the microphone unless the user asked: `VoicePipeline` opens it for a press of Talk, for the
   follow-up window after a spoken reply (when that setting is on), and continuously while the wake word is on —
   and then **only offline recognition hears the room** (the spotter and the local recogniser,

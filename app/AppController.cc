@@ -853,7 +853,7 @@ void AppController::applyVoiceConfig() {
     }
     voice->setWakeRecognizer(std::move(wake));
 
-    Result<std::unique_ptr<ITextToSpeech>> speech = VoiceBackends::createTextToSpeech(config_, services_.http);
+    Result<std::unique_ptr<ITextToSpeech>> speech = VoiceBackends::createTextToSpeech(config_, services_.http, services_.sherpa);
     if (speech) {
         voice->setTextToSpeech(std::move(speech).value());
     } else {

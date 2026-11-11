@@ -1,11 +1,13 @@
 #!/usr/bin/env bash
 # Installs sherpa-onnx (k2-fsa, v2.0.1, x86_64) and the models Nexa uses with it into ~/.local/share/nexa/sherpa:
 # the keyword spotter that hears the wake name (gigaspeech 3.3M, int8), the Silero voice detector, the GTCRN
-# noise reducer, and the speaker-embedding model that tells the owner's voice from others (3D-Speaker ERes2Net,
-# VoxCeleb). Nexa loads the library at run time; without it, the wake name is found by whisper alone and
-# speech is told by loudness. No sudo.
+# noise reducer, the speaker-embedding model that tells the owner's voice from others (3D-Speaker ERes2Net,
+# VoxCeleb), and ZipVoice (distilled, int8, with the Vocos vocoder), the voice that speaks from a sample of the
+# owner's own (Settings → Voice → Speak in my voice; it also needs Piper's phonemizer, scripts/download-piper.sh).
+# Nexa loads the library at run time; without it, the wake name is found by whisper alone and speech is told by
+# loudness. No sudo.
 #
-#   scripts/download-sherpa.sh              # install (about 53 MB of downloads)
+#   scripts/download-sherpa.sh              # install (about 220 MB of downloads)
 #   scripts/download-sherpa.sh --uninstall  # remove ~/.local/share/nexa/sherpa
 set -euo pipefail
 
@@ -36,8 +38,16 @@ SPEAKER_MODEL="3dspeaker_speech_eres2net_sv_en_voxceleb_16k.onnx"
 SPEAKER_SHA256="c59158379255ad66e161679cca6af8d52d51e389e3224ab7d7a7baae295c2db5"
 KWS_FILES=(encoder-epoch-12-avg-2-chunk-16-left-64.int8.onnx decoder-epoch-12-avg-2-chunk-16-left-64.int8.onnx
            joiner-epoch-12-avg-2-chunk-16-left-64.int8.onnx tokens.txt bpe.model)
+# ZipVoice (k2-fsa, trained on Emilia, Chinese and English; distilled, int8) and its vocoder. No digests listed
+# for these assets either: pinned to the files downloaded on 2026-11-12 (109 162 785 and 54 157 409 bytes).
+ZIPVOICE_NAME="sherpa-onnx-zipvoice-distill-int8-zh-en-emilia"
+ZIPVOICE_ARCHIVE="$ZIPVOICE_NAME.tar.bz2"
+ZIPVOICE_SHA256="77219c8b40f4ee8d73a7f902305ff6c1128ef9b54461c41b4ca6ed890b6c2803"
+ZIPVOICE_FILES=(encoder.int8.onnx decoder.int8.onnx tokens.txt lexicon.txt)
+VOCODER="vocos_24khz.onnx"
+VOCODER_SHA256="bcb3b970e384161c4d634f0bb9e999ff1c471b34c9bc0b1049a5014065ed3cc0"
 
-mkdir -p "$DEST/lib" "$DEST/kws" "$DEST/speaker" "$CACHE"
+mkdir -p "$DEST/lib" "$DEST/kws" "$DEST/speaker" "$DEST/zipvoice" "$CACHE"
 
 # Downloads $1 to $2 unless it is already there, then checks the SHA-256 $3.
 fetch() {
@@ -79,5 +89,15 @@ install -m 0644 "$CACHE/gtcrn_simple.onnx" "$DEST/gtcrn_simple.onnx"
 
 fetch "$RELEASES/speaker-recongition-models/$SPEAKER_MODEL" "$CACHE/$SPEAKER_MODEL" "$SPEAKER_SHA256"
 install -m 0644 "$CACHE/$SPEAKER_MODEL" "$DEST/speaker/$SPEAKER_MODEL"
+
+fetch "$RELEASES/tts-models/$ZIPVOICE_ARCHIVE" "$CACHE/$ZIPVOICE_ARCHIVE" "$ZIPVOICE_SHA256"
+mkdir -p "$WORK/zipvoice"
+tar -xjf "$CACHE/$ZIPVOICE_ARCHIVE" -C "$WORK/zipvoice" --exclude='*/espeak-ng-data' --exclude='*/test_wavs'
+for file in "${ZIPVOICE_FILES[@]}"; do
+    install -m 0644 "$WORK/zipvoice/$ZIPVOICE_NAME/$file" "$DEST/zipvoice/$file"
+done
+fetch "$RELEASES/vocoder-models/$VOCODER" "$CACHE/$VOCODER" "$VOCODER_SHA256"
+install -m 0644 "$CACHE/$VOCODER" "$DEST/zipvoice/$VOCODER"
 echo "Installed sherpa-onnx 2.0.1 and its models into $DEST"
-echo "Restart Nexa (or close Settings with OK) to use instant name spotting, Silero, noise reduction and your voice."
+echo "Restart Nexa (or close Settings with OK) to use instant name spotting, Silero, noise reduction, your voice,"
+echo "and — with a sample recorded in Settings → Voice — Nexa speaking in it."

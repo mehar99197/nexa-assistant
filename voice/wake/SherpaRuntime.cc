@@ -37,6 +37,10 @@ QString SherpaRuntime::speakerModel() const {
     return dir_ + u"/speaker/3dspeaker_speech_eres2net_sv_en_voxceleb_16k.onnx"_s;
 }
 
+QString SherpaRuntime::zipVoiceDir() const {
+    return dir_ + u"/zipvoice"_s;
+}
+
 bool SherpaRuntime::load() {
     if (attempted_) return loaded_;
     attempted_ = true;
@@ -111,6 +115,21 @@ bool SherpaRuntime::load() {
     optional(speakerDestroyEmbedding, "SherpaOnnxSpeakerEmbeddingExtractorDestroyEmbedding");
     optional(inputFinished, "SherpaOnnxOnlineStreamInputFinished");
     speakers_ = speakerMissing.isEmpty() && QFileInfo::exists(speakerModel());
+    // Optional: a voice from a sample (ZipVoice). Missing, Piper and the cloud voices still speak.
+    QString ttsMissing;
+    const auto optionalTts = [this, &ttsMissing](auto &function, const char *name) {
+        function = reinterpret_cast<std::remove_reference_t<decltype(function)>>(library_.resolve(name));
+        if (!function && ttsMissing.isEmpty()) ttsMissing = QString::fromLatin1(name);
+    };
+    optionalTts(createOfflineTts, "SherpaOnnxCreateOfflineTts");
+    optionalTts(destroyOfflineTts, "SherpaOnnxDestroyOfflineTts");
+    optionalTts(offlineTtsSampleRate, "SherpaOnnxOfflineTtsSampleRate");
+    optionalTts(offlineTtsGenerateWithConfig, "SherpaOnnxOfflineTtsGenerateWithConfig");
+    optionalTts(destroyGeneratedAudio, "SherpaOnnxDestroyOfflineTtsGeneratedAudio");
+    tts_ = ttsMissing.isEmpty();
+    for (const QString &file : {u"encoder.int8.onnx"_s, u"decoder.int8.onnx"_s, u"vocos_24khz.onnx"_s, u"tokens.txt"_s, u"lexicon.txt"_s}) {
+        if (!QFileInfo::exists(zipVoiceDir() + u'/' + file)) tts_ = false;
+    }
     loaded_ = true;
     problem_.clear();
     return true;

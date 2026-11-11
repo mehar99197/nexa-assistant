@@ -26,9 +26,12 @@ public:
     QString sileroModel() const;
     QString gtcrnModel() const;
     QString speakerModel() const;   // the speaker-embedding model (speaker/…onnx)
+    QString zipVoiceDir() const;    // ZipVoice: encoder, decoder, tokens, lexicon and the Vocos vocoder (zipvoice/)
     // The owner's voice can be told: the library has the speaker-embedding functions and the model is installed.
     // Optional — without it the spotter, Silero and the noise reducer still work.
     bool canTellSpeakers() const { return loaded_ && speakers_; }
+    // Nexa can speak in a voice from a sample: the library has the TTS functions and ZipVoice is installed. Optional too.
+    bool canCloneVoice() const { return loaded_ && tts_; }
 
     // The keyword spotter.
     decltype(&SherpaOnnxCreateKeywordSpotter) createKeywordSpotter{nullptr};
@@ -66,6 +69,12 @@ public:
     decltype(&SherpaOnnxSpeakerEmbeddingExtractorComputeEmbedding) speakerCompute{nullptr};
     decltype(&SherpaOnnxSpeakerEmbeddingExtractorDestroyEmbedding) speakerDestroyEmbedding{nullptr};
     decltype(&SherpaOnnxOnlineStreamInputFinished) inputFinished{nullptr};
+    // Text to speech (ZipVoice, a voice from a sample).
+    decltype(&SherpaOnnxCreateOfflineTts) createOfflineTts{nullptr};
+    decltype(&SherpaOnnxDestroyOfflineTts) destroyOfflineTts{nullptr};
+    decltype(&SherpaOnnxOfflineTtsSampleRate) offlineTtsSampleRate{nullptr};
+    decltype(&SherpaOnnxOfflineTtsGenerateWithConfig) offlineTtsGenerateWithConfig{nullptr};
+    decltype(&SherpaOnnxDestroyOfflineTtsGeneratedAudio) destroyGeneratedAudio{nullptr};
 
 private:
     QString dir_;
@@ -73,6 +82,7 @@ private:
     bool attempted_{false};
     bool loaded_{false};
     bool speakers_{false};
+    bool tts_{false};
     QString problem_;
 };
 

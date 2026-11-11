@@ -11,6 +11,7 @@ namespace nexa {
 
 class AppController;
 class HttpClient;
+class SherpaRuntime;
 class ISpeechRecognizer;
 class TtsFileRenderer;
 
@@ -21,7 +22,8 @@ class TtsFileRenderer;
 class RemoteBridge : public QObject, public IRemoteHost {
     Q_OBJECT
 public:
-    RemoteBridge(AppController *controller, HttpClient *http, QObject *parent = nullptr);
+    // `sherpa`: so the phone hears the owner's own voice too, when "Speak in my voice" is on.
+    RemoteBridge(AppController *controller, HttpClient *http, SherpaRuntime *sherpa = nullptr, QObject *parent = nullptr);
     ~RemoteBridge() override;
 
     // Settings changed: the next phone request builds its voice backends afresh.
@@ -44,6 +46,7 @@ private:
 
     AppController *controller_;
     HttpClient *http_;
+    SherpaRuntime *sherpa_;
     Config config_;
     mutable bool built_{false};
     mutable std::unique_ptr<ISpeechRecognizer> recognizer_;

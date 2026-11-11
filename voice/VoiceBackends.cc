@@ -5,10 +5,12 @@
 #include "voice/listen/SileroVoiceDetector.h"
 #include "voice/stt/CloudRecognizer.h"
 #include "voice/stt/RecognizerChain.h"
+#include "voice/tts/ClonedVoiceSynthesizer.h"
 #include "voice/tts/CloudSynthesizer.h"
 #include "voice/tts/PiperSynthesizer.h"
 #include "voice/tts/SpeechdTtsBackend.h"
 #include "voice/tts/SynthesizedSpeech.h"
+#include "voice/tts/VoiceSample.h"
 #include "voice/wake/KeywordSpotter.h"
 #include "voice/wake/SherpaRuntime.h"
 #include "voice/wake/WakePhrases.h"
@@ -81,9 +83,6 @@ QString baseUrl(const ProviderConfig &provider) {
     return url;
 }
 
-QString piperDir() {
-    return VoiceBackends::dataDir() + u"/piper"_s;
-}
 
 } // namespace
 
@@ -93,6 +92,10 @@ QString VoiceBackends::dataDir() {
 
 QString VoiceBackends::whisperModelPath(const QString &model) {
     return dataDir() + u"/models/ggml-%1.bin"_s.arg(model);
+}
+
+QString VoiceBackends::piperDir() {
+    return VoiceBackends::dataDir() + u"/piper"_s;
 }
 
 QString VoiceBackends::piperBinary() {
@@ -183,16 +186,37 @@ Result<std::unique_ptr<ISpeechRecognizer>> VoiceBackends::createRecognizer(const
     return std::unique_ptr<ISpeechRecognizer>(std::make_unique<RecognizerChain>(std::move(chain)));
 }
 
-Result<std::unique_ptr<ITextToSpeech>> VoiceBackends::createTextToSpeech(const Config &config, HttpClient *http) {
+Result<std::unique_ptr<ISpeechSynthesizer>> VoiceBackends::createOwnVoice(const VoiceConfig &voice, SherpaRuntime *sherpa) {
+    const Result<VoiceSample> sample = VoiceSample::load();
+    if (!sample) return Error{ErrorCode::NotFound, u"No voice sample is recorded yet (Settings → Voice → Record my voice)."_s};
+    if (!sherpa || !sherpa->load() || !sherpa->canCloneVoice()) {
+        return Error{ErrorCode::NotFound, u"ZipVoice is not installed — run scripts/download-sherpa.sh."_s};
+    }
+    Phonemizer phonemizer(piperDir());
+    if (!phonemizer.available()) return Error{ErrorCode::NotFound, phonemizer.problem()};
+    return std::unique_ptr<ISpeechSynthesizer>(
+        std::make_unique<ClonedVoiceSynthesizer>(sherpa, sample.value(), std::move(phonemizer), voice.ttsRate));
+}
+
+Result<std::unique_ptr<ITextToSpeech>> VoiceBackends::createTextToSpeech(const Config &config, HttpClient *http,
+                                                                         SherpaRuntime *sherpa) {
     const VoiceConfig &voice = config.voice;
     const QString backend = voice.ttsBackend;
     if (backend == u"off"_s) return std::unique_ptr<ITextToSpeech>();
     if (backend == u"speechd"_s) {
+        // The owner's voice still comes first when it is on and there: speech-dispatcher is what is left otherwise.
+        if (voice.ownVoice) {
+            if (Result<std::unique_ptr<ISpeechSynthesizer>> own = createOwnVoice(voice, sherpa)) {
+                std::vector<std::unique_ptr<ISpeechSynthesizer>> chain;
+                chain.push_back(std::move(own).value());
+                return std::unique_ptr<ITextToSpeech>(std::make_unique<SynthesizedSpeech>(std::move(chain)));
+            }
+        }
         return std::unique_ptr<ITextToSpeech>(std::make_unique<SpeechdTtsBackend>(voice.speechdVoice, voice.ttsRate));
     }
 
     QStringList problems;
-    std::vector<std::unique_ptr<ISpeechSynthesizer>> chain = createSynthesizers(config, http, &problems);
+    std::vector<std::unique_ptr<ISpeechSynthesizer>> chain = createSynthesizers(config, http, &problems, sherpa);
     if (!chain.empty()) return std::unique_ptr<ITextToSpeech>(std::make_unique<SynthesizedSpeech>(std::move(chain)));
     if (backend != u"cloud"_s && backend != u"piper"_s) {
         return std::unique_ptr<ITextToSpeech>(std::make_unique<SpeechdTtsBackend>(voice.speechdVoice, voice.ttsRate));
@@ -201,13 +225,23 @@ Result<std::unique_ptr<ITextToSpeech>> VoiceBackends::createTextToSpeech(const C
 }
 
 std::vector<std::unique_ptr<ISpeechSynthesizer>> VoiceBackends::createSynthesizers(const Config &config, HttpClient *http,
-                                                                                   QStringList *problemsOut) {
+                                                                                   QStringList *problemsOut,
+                                                                                   SherpaRuntime *sherpa) {
     const VoiceConfig &voice = config.voice;
     const QString backend = voice.ttsBackend;
     std::vector<std::unique_ptr<ISpeechSynthesizer>> chain;
     if (backend == u"off"_s) return chain;
     const bool automatic = backend != u"cloud"_s && backend != u"piper"_s;
     QStringList problems;
+
+    // The owner's own voice first, whatever the mode: the modes below say what speaks when it cannot.
+    if (voice.ownVoice) {
+        if (Result<std::unique_ptr<ISpeechSynthesizer>> own = createOwnVoice(voice, sherpa)) {
+            chain.push_back(std::move(own).value());
+        } else {
+            problems.append(own.error().message);
+        }
+    }
 
     if (automatic || backend == u"cloud"_s) {
         if (const ProviderConfig *provider = speechProvider(config)) {

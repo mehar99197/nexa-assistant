@@ -90,7 +90,7 @@ add_executable(nexa_tests
     SettingsDialogProvidersTest.cc SettingsDialogThemesTest.cc
         ../app/SettingsDialog.cc ../app/BrowserSettingsPage.cc ../app/RemoteAccess.cc
         ../app/MemorySettingsPage.cc ../app/MissionSettingsPage.cc ../app/SkillsSettingsPage.cc ../app/PhoneLink.cc
-        ../app/GlobalShortcuts.cc ../app/VoiceEnrolmentDialog.cc
+        ../app/GlobalShortcuts.cc ../app/VoiceEnrolmentDialog.cc ../app/VoiceSampleDialog.cc
     SkillCatalogTest.cc
     SkillParserTest.cc
     PortalInputBackendTest.cc
@@ -118,6 +118,9 @@ add_executable(nexa_tests
     TtsFileRendererTest.cc
     TurnLedgerTest.cc
     VoiceBackendsTest.cc
+    VoiceSampleTest.cc
+    PhonemizerTest.cc
+    ClonedVoiceSynthesizerTest.cc
     VoicePipelineTest.cc
     VoicePromptTest.cc
     VoicePureTest.cc

@@ -110,6 +110,8 @@ private:
     void showTestResult(const QString &text, bool ok);
     void storeVoice();
     void refreshMyVoice();
+    void refreshOwnVoice();         // "Speak in my voice": the sample, and whether ZipVoice and the phonemizer are there
+    void hearOwnVoice();            // a sentence in the owner's voice, from the sample
     void refreshVoiceProviders();       // the provider lists, from the providers as they are now
     void showCloudProvider(bool recognition);
     void keepCloudModels();             // the shown provider's model (and voice) back into its settings
@@ -167,6 +169,11 @@ private:
     QLabel *myVoiceStatus_{nullptr};
     QPushButton *enrolButton_{nullptr};
     QPushButton *forgetVoiceButton_{nullptr};
+    QCheckBox *ownVoiceCheck_{nullptr};
+    QLabel *ownVoiceStatus_{nullptr};
+    QPushButton *recordSampleButton_{nullptr};
+    QPushButton *hearSampleButton_{nullptr};
+    QPushButton *forgetSampleButton_{nullptr};
     // Settings → Voice: the cloud voice, chosen from the providers there are.
     QComboBox *sttProviderCombo_{nullptr};
     QComboBox *sttModelCombo_{nullptr};

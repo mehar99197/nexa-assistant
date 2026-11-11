@@ -9,6 +9,7 @@
 #include "app/ProviderSignInBlock.h"
 #include "app/SkillsSettingsPage.h"
 #include "app/VoiceEnrolmentDialog.h"
+#include "app/VoiceSampleDialog.h"
 
 #include "core/ai/IAiProvider.h"
 #include "app/GlobalShortcuts.h"
@@ -25,6 +26,9 @@
 #include "ui/NexaChrome.h"
 #include "ui/NexaThemes.h"
 #include "voice/VoiceBackends.h"
+#include "voice/tts/VoiceSample.h"
+#include "voice/tts/SynthesizedSpeech.h"
+#include "voice/tts/Phonemizer.h"
 #include "voice/listen/SpeakerGate.h"
 #include "voice/listen/VoiceProfile.h"
 #include "voice/tts/CloudVoices.h"
@@ -674,6 +678,57 @@ QWidget *SettingsDialog::buildVoiceTab() {
     waking->addRow(tr("My voice:"), myVoiceRow);
     refreshMyVoice();
 
+    // Speak in my voice: a sample the owner records, and ZipVoice speaking from it — first in the chain when on.
+    ownVoiceCheck_ = new QCheckBox(tr("Speak in my voice — Nexa's replies in the voice of the sample below"), page);
+    ownVoiceCheck_->setObjectName(u"ownVoice"_s);
+    ownVoiceCheck_->setChecked(voice.ownVoice);
+    ownVoiceStatus_ = new QLabel(page);
+    ownVoiceStatus_->setObjectName(u"ownVoiceStatus"_s);
+    ownVoiceStatus_->setWordWrap(true);
+    recordSampleButton_ = new QPushButton(tr("Record my voice…"), page);
+    recordSampleButton_->setObjectName(u"recordSample"_s);
+    recordSampleButton_->setAutoDefault(false);
+    hearSampleButton_ = new QPushButton(tr("Hear it"), page);
+    hearSampleButton_->setObjectName(u"hearSample"_s);
+    hearSampleButton_->setAutoDefault(false);
+    forgetSampleButton_ = new QPushButton(tr("Forget the sample"), page);
+    forgetSampleButton_->setObjectName(u"forgetSample"_s);
+    forgetSampleButton_->setAutoDefault(false);
+    connect(recordSampleButton_, &QPushButton::clicked, this, [this] {
+        if (!status_.voice) return;
+        VoiceSampleDialog dialog(status_.voice, this);
+        if (dialog.exec() != QDialog::Accepted || !dialog.sample()) return;
+        if (const Result<void> saved = dialog.sample()->save(); !saved) {
+            QMessageBox::warning(this, tr("My voice"), saved.error().message);
+            return;
+        }
+        ownVoiceCheck_->setChecked(true);
+        refreshOwnVoice();
+    });
+    connect(hearSampleButton_, &QPushButton::clicked, this, &SettingsDialog::hearOwnVoice);
+    connect(forgetSampleButton_, &QPushButton::clicked, this, [this] {
+        if (QMessageBox::question(this, tr("Forget the sample"),
+                                  tr("Remove the recording of your voice? Nexa then speaks with its other voices."),
+                                  QMessageBox::Yes | QMessageBox::No, QMessageBox::No)
+            != QMessageBox::Yes) {
+            return;
+        }
+        if (const Result<void> forgotten = VoiceSample::forget(); !forgotten) {
+            QMessageBox::warning(this, tr("My voice"), forgotten.error().message);
+            return;
+        }
+        ownVoiceCheck_->setChecked(false);
+        refreshOwnVoice();
+    });
+    auto *ownVoiceRow = new QHBoxLayout;
+    ownVoiceRow->addWidget(ownVoiceStatus_, 1);
+    ownVoiceRow->addWidget(recordSampleButton_);
+    ownVoiceRow->addWidget(hearSampleButton_);
+    ownVoiceRow->addWidget(forgetSampleButton_);
+    waking->addRow(QString(), ownVoiceCheck_);
+    waking->addRow(tr("Speak as me:"), ownVoiceRow);
+    refreshOwnVoice();
+
     auto *note = new QLabel(tr("Talk: click the Talk button (the request ends when you pause), hold it to talk, or "
                                "press Ctrl+M. Esc stops the speech. The cloud voice can be any provider with an "
                                "OpenAI-style audio API and its key."),
@@ -840,6 +895,46 @@ void SettingsDialog::refreshMyVoice() {
     }
 }
 
+void SettingsDialog::refreshOwnVoice() {
+    const Result<VoiceSample> sample = VoiceSample::load();
+    SherpaRuntime *sherpa = status_.sherpa;
+    const bool engine = sherpa && sherpa->load() && sherpa->canCloneVoice();
+    const Phonemizer phonemizer(VoiceBackends::piperDir());
+    recordSampleButton_->setEnabled(status_.voice != nullptr);
+    recordSampleButton_->setText(sample ? tr("Record again…") : tr("Record my voice…"));
+    hearSampleButton_->setEnabled(sample.isOk() && engine && phonemizer.available());
+    forgetSampleButton_->setEnabled(sample.isOk());
+    QStringList notes;
+    if (sample) {
+        notes.append(tr("Recorded %1, %2 s.")
+                         .arg(QLocale().toString(sample.value().recorded.toLocalTime().date(), QLocale::ShortFormat))
+                         .arg(sample.value().durationMs() / 1000.0, 0, 'f', 1));
+    } else {
+        notes.append(tr("No sample yet: record the passage once, and Nexa can speak in your voice."));
+    }
+    if (!engine) notes.append(tr("ZipVoice is not installed — run scripts/download-sherpa.sh, then reopen Settings."));
+    if (!phonemizer.available()) notes.append(phonemizer.problem());
+    ownVoiceStatus_->setText(notes.join(u' '));
+}
+
+void SettingsDialog::hearOwnVoice() {
+    if (testSpeech_) testSpeech_->stop();
+    Result<std::unique_ptr<ISpeechSynthesizer>> own = VoiceBackends::createOwnVoice(config_.voice, status_.sherpa);
+    if (!own) {
+        ownVoiceStatus_->setText(own.error().message);
+        return;
+    }
+    std::vector<std::unique_ptr<ISpeechSynthesizer>> chain;
+    chain.push_back(std::move(own).value());
+    testSpeech_ = std::make_unique<SynthesizedSpeech>(std::move(chain));
+    connect(testSpeech_.get(), &ITextToSpeech::failed, this, [this](const Error &error) {
+        ownVoiceStatus_->setText(error.message);
+    });
+    connect(testSpeech_.get(), &ITextToSpeech::finished, this, [this] { refreshOwnVoice(); });
+    ownVoiceStatus_->setText(tr("Making the sentence in your voice (a few seconds the first time)…"));
+    testSpeech_->speak(tr("Hello! This is Nexa, speaking in your voice."));
+}
+
 void SettingsDialog::storeVoice() {
     VoiceConfig &voice = config_.voice;
     keepCloudModels();
@@ -860,6 +955,7 @@ void SettingsDialog::storeVoice() {
     voice.announceTasks = announceCombo_->currentData().toString();
     voice.listenTo = listenToCombo_->currentData().toString();
     voice.ownerStrictness = strictnessCombo_->currentData().toString();
+    voice.ownVoice = ownVoiceCheck_->isChecked();
     voice.wakeName = wakeNameEdit_->text().trimmed().isEmpty() ? VoiceConfig{}.wakeName : wakeNameEdit_->text().trimmed();
     voice.wakeSensitivity = sensitivityCombo_->currentData().toString();
     voice.endPause = endPauseCombo_->currentData().toString();
@@ -874,7 +970,7 @@ void SettingsDialog::testVoice() {
     // As the dialog stands now, the first choice included.
     Config trial = config_;
     trial.activeProvider = activeCombo_->currentData().toString();
-    Result<std::unique_ptr<ITextToSpeech>> speech = VoiceBackends::createTextToSpeech(trial, http_);
+    Result<std::unique_ptr<ITextToSpeech>> speech = VoiceBackends::createTextToSpeech(trial, http_, status_.sherpa);
     if (!speech || !speech.value()) {
         voiceTestResult_->setText(speech ? tr("Speech output is off.") : speech.error().message);
         return;

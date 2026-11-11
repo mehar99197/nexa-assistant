@@ -112,6 +112,7 @@ QJsonObject VoiceConfig::toJson() const {
         {u"noiseReduction"_s, noiseReduction},
         {u"sttProvider"_s, sttProvider},
         {u"ttsProvider"_s, ttsProvider},
+        {u"ownVoice"_s, ownVoice},
     };
 }
 
@@ -150,6 +151,7 @@ VoiceConfig VoiceConfig::fromJson(const QJsonObject &json) {
     config.noiseReduction = json.value(u"noiseReduction"_s).toBool(defaults.noiseReduction);
     config.sttProvider = json.value(u"sttProvider"_s).toString();
     config.ttsProvider = json.value(u"ttsProvider"_s).toString();
+    config.ownVoice = json.value(u"ownVoice"_s).toBool(false);
     return config;
 }
 
