@@ -614,16 +614,19 @@ int main(int argc, char *argv[]) {
             QCoreApplication::quit();
         });
     };
-    std::function<void()> runNext = [&controller, &voice, &steps, takeScreenshot, recording] {
+    std::function<void()> runNext;
+    const std::function<void()> later = [&runNext] { QTimer::singleShot(250, runNext); };
+    runNext = [&controller, &voice, &steps, takeScreenshot, recording, &later] {
         if (controller.isBusy() || voice.state() != VoiceState::Idle) return;
         if (recording && recording->playing()) return;
         if (!steps.isEmpty()) {
             steps.takeFirst()();
+            // A request answered on the spot ("share my screen") is never busy, so nothing else would call again.
+            later();
         } else {
             takeScreenshot();
         }
     };
-    const auto later = [&runNext] { QTimer::singleShot(250, runNext); };
     QObject::connect(&controller, &AppController::busyChanged, &controller, [later](bool busy) {
         if (!busy) later();
     });

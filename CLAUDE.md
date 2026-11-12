@@ -77,6 +77,15 @@ every provider with a speech model (agy, opencode and Codex have none). Local re
 whole wake → request → reply → follow-up path runs as if the room had said it; with
 `QT_LOGGING_RULES="nexa.voice.debug=true"` the log says what the spotter heard and why it was taken or ignored.
 
+The screen as text (M27, nothing to install): `screen_snapshot` reads the window in front over the desktop's
+accessibility bus (`busctl --user call org.a11y.Bus /org/a11y/bus org.a11y.Bus GetAddress` says where it is; `busctl
+--address=<it> list` who is on it). GTK apps are on it always; Chrome, Electron and Qt apps (Nexa itself) only with
+GNOME's switch on — Settings → General → "Let apps expose their contents", the same as `gsettings set
+org.gnome.desktop.interface toolkit-accessibility true` — from their next start. A `--new-instance` copy reads the same
+bus, so `--ask "share my screen" --ask "use screen_snapshot and name the window in front"` exercises it live, and
+`tests/AtspiScreenReaderTest.cc` reads it in the suite (skipped where there is none). Without a phone,
+`tests/fake-adb/adb` answers `uiautomator dump` with `tests/fake-ui-dump.xml`, so `android_snapshot` has a screen to read.
+
 Root helper (needs sudo — **the user runs it**, as `! sudo ./packaging/install-helper.sh`): installs
 `nexa-helper` so Nexa can run commands as root and type/click on Wayland. The script self-checks with
 `pkaction` and `busctl`, and `uninstall-helper.sh` removes every file it added. Without it, `run_root_command`
@@ -171,7 +180,16 @@ text-only model refuses images with a 400; the `Agent` then resends without them
   SKILL.md, `SkillCatalog` = Nexa's own skills from the `:/nexa/skills` resource of `nexa_core` plus the user's in
   `~/.local/share/nexa/skills/<name>/`, the user's replacing Nexa's; `SkillTools` = `use_skill`, `save_skill`
   (privileged)); `intent/MemoryIntents` is memory's fast path, right after the stops.
-- `system/` — touches the PC: `commands/` (LocalCommandRunner, process groups), `apps/` (DesktopEntry,
+- `system/` — touches the PC: `a11y/` (**the screen as text**, M27: `AtspiBus` = the desktop's accessibility bus — AT-SPI2,
+  what a screen reader uses — connected on first use through `org.a11y.Bus.GetAddress`, and GNOME's `org.a11y.Status
+  IsEnabled` switch read and, from Settings → General, set; `AtspiNode` (pure: a node of an app's `org.a11y.atspi.Cache`,
+  both bridge forms decoded — GTK/Chromium count the children, Qt lists them — with the role and state tables);
+  `ScreenOutline` (pure: the windows as a Playwright-like outline with refs `s1…` — the active one first, bare containers
+  lifted out, a text element's excerpt, a terminal's tail, never a password's text, Nexa's own and the shell's windows
+  left out); `IScreenReader` → `AtspiScreenReader` (the blocking D-Bus calls on a worker thread; one `GetItems` per app,
+  a capped `GetChildren` walk for a bridge without a cache); `ScreenTools` = `screen_snapshot`, `screen_read`,
+  `screen_click` (the element's own action, else focus + Enter, Space on a check box), `screen_type` (`EditableText`,
+  else focus + the input backend), `screen_wait_for`), `commands/` (LocalCommandRunner, process groups), `apps/` (DesktopEntry,
   DesktopEntryIndex = IAppCatalog, AppLauncher), `audio/` (wpctl), `media/` (MPRIS), `screen/` (portal
   screenshots), `files/` (FileAccess, confined to home and /tmp; `AttachmentLoader` reads the files attached to a
   request off the GUI thread — a picture as an image, words as they are, cut at 200 KB, a PDF through pdftotext, an
@@ -294,8 +312,11 @@ text-only model refuses images with a 400; the `Agent` then resends without them
   `AdbDiscovery` (connected phones and mDNS wireless-debugging offers; reconnects the remembered one),
   `MdnsBrowser` + `MdnsPacket` (Nexa's own DNS-SD browser — Debian's adb is built without mDNS, so
   `adb mdns services` never finds anything on this machine; the packet code is pure and tested),
-  `AndroidDevice` (which phone, plus every operation), `AndroidTools` (the 18 `android_*` tools), `PhoneMirror` (the
-  phone's screen one picture after another for the window's Phone panel, while someone watches), and three pure,
+  `AndroidDevice` (which phone, plus every operation), `AndroidTools` (the 20 `android_*` tools), `PhoneMirror` (the
+  phone's screen one picture after another for the window's Phone panel, while someone watches), `UiHierarchy` (pure:
+  `uiautomator dump` → the phone's screen as the same kind of outline the desktop and the browser get — refs `p1…`, the
+  tap point of each — behind `android_snapshot`, `android_tap` and `android_type` by `ref`, and `android_wait_for`;
+  `tests/fake-adb/adb` answers the dump with `tests/fake-ui-dump.xml`), and three pure,
   tested files — `AdbParsers` (adb and shell output), `AdbShell` (command lines; everything from a person or a
   model is single-quoted for the phone's `sh`), `PhoneLookup` (spoken name → app or contact). The phone is
   remembered by hardware serial (`config.android.serial`); `core/intent/PhoneIntents` is its fast path and
@@ -390,11 +411,18 @@ text-only model refuses images with a 400; the `Agent` then resends without them
   destructive, not background, US-keyboard characters only) and shown in the chat as "Into <app>: `cmd`".
   Documents for LibreOffice are made as files with `create_document`, never typed in; a converted file is made
   in a scratch folder and renamed into place, so nothing of the user's is ever written over.
-- The model sees the PC screen **only while Share screen is on**: `AppController` withholds `take_screenshot`
-  (`ToolRegistry::withhold`) otherwise, so it is in no request and a call to it is refused with the reason; the
-  switch is off at every start. The user's own "what's on my screen?" is the one exception (they asked for that
-  picture). Never attach a screenshot to a request on Nexa's own initiative. `browser_take_screenshot` is withheld
-  with it.
+- The model sees the PC screen **only while Share screen is on**: `AppController` withholds `take_screenshot` and the
+  five `screen_*` tools — a window's contents as text are as private as its picture — (`ToolRegistry::withhold`)
+  otherwise, so they are in no request and a call to one is refused with the reason; the switch is off at every start.
+  The user's own "what's on my screen?" is the one exception (they asked for that look). Never attach a screenshot to a
+  request on Nexa's own initiative. `browser_take_screenshot` is withheld with them. **The screen as text** (M27):
+  `screen_snapshot` reads the window in front over the desktop's accessibility bus (`system/a11y/`) with a ref per
+  element for `screen_click`, `screen_type` and `screen_read`, and the prompt says to prefer it — it works whether or not
+  the model sees images; a model that takes none gets the text twin on the fast path (`IntentMatch::textToolName`,
+  chosen in `TaskRunner`: `screen_snapshot` for `take_screenshot`, `android_snapshot` for `android_screenshot`). A
+  password field's text is never read; nothing of a snapshot is kept but its refs, in memory, until the next; GNOME's
+  accessibility switch (`org.a11y.Status IsEnabled`, kept as `toolkit-accessibility`) is set only from Settings →
+  General, never by Nexa on its own; the root helper takes no part in it.
 - **Browser work: Playwright first, the screen second.** Anything on the web goes through the `browser_*` tools
   (text snapshots, so models that cannot see manage too), in the user's own Chrome through Playwright's extension —
   Chrome 136+ refuses remote debugging on the default profile, so never try `--remote-debugging-port` on it — and

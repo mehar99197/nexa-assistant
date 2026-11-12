@@ -16,6 +16,7 @@
 #include "remote/PairingManager.h"
 #include "remote/QrCode.h"
 #include "remote/RemoteServer.h"
+#include "system/a11y/AtspiBus.h"
 #include "system/android/AdbDiscovery.h"
 #include "system/android/AndroidDevice.h"
 #include "app/PhoneLink.h"
@@ -303,6 +304,14 @@ void SettingsDialog::accept() {
     }
     storeVoice();
     config_.android.autoReconnect = phoneReconnect_->isChecked();
+    // GNOME's switch, not Nexa's config: changed only here, only when the box was moved.
+    if (status_.a11y && exposeContentsCheck_->isEnabled() && exposeContentsCheck_->isChecked() != exposeContentsWas_) {
+        if (const Result<void> set = status_.a11y->setAppsExposeContents(exposeContentsCheck_->isChecked()); !set) {
+            QMessageBox::warning(this, tr("Screen as text"), set.error().message);
+        } else {
+            exposeContentsWas_ = exposeContentsCheck_->isChecked();
+        }
+    }
     config_.remote.enabled = remoteEnabled_->isChecked();
     config_.remote.port = remotePort_->value();
     config_.remote.announceMessages = remoteAnnounce_->isChecked();
@@ -1728,6 +1737,30 @@ QWidget *SettingsDialog::buildGeneralTab() {
     } else {
         hotkeys = tr("not available — the desktop did not grant global hotkeys");
     }
+    // The screen as text (M27): read over the desktop's accessibility bus while Share screen is on. GTK apps are on
+    // it always; Chrome, Electron and Qt apps only with GNOME's own switch, which this box sets (from their next start).
+    auto *screenGroup = new QGroupBox(tr("Screen as text"), page);
+    auto *screenLayout = new QVBoxLayout(screenGroup);
+    const bool haveBus = status_.a11y && status_.a11y->isAvailable();
+    auto *screenNote = new QLabel(haveBus ? tr("While Share screen is on, Nexa reads the window in front as text through the "
+                                               "desktop's accessibility bus — so a model that cannot see images still works "
+                                               "with it. A picture is taken only when the text is not enough.")
+                                          : tr("The accessibility bus is not running on this desktop, so windows cannot be read "
+                                               "as text; the screen is a picture only."),
+                                  screenGroup);
+    screenNote->setWordWrap(true);
+    exposeContentsCheck_ = new QCheckBox(tr("Let apps expose their contents to Nexa (GNOME's accessibility switch; Chrome, "
+                                            "Electron and Qt apps need it, from their next start — GTK apps always do)"),
+                                         screenGroup);
+    exposeContentsCheck_->setObjectName(u"exposeContents"_s);
+    exposeContentsCheck_->setEnabled(haveBus);
+    if (haveBus) {
+        if (const Result<bool> on = status_.a11y->appsExposeContents()) exposeContentsWas_ = on.value();
+    }
+    exposeContentsCheck_->setChecked(exposeContentsWas_);
+    screenLayout->addWidget(screenNote);
+    screenLayout->addWidget(exposeContentsCheck_);
+
     auto *hotkeyLabel = new QLabel(
         tr("Hotkeys that work from any window: %1.\nChange them in GNOME Settings → Keyboard → Keyboard Shortcuts "
            "→ Nexa Assistant. Inside Nexa: Ctrl+M talks, Esc stops the reply, Ctrl+Alt+Esc stops everything.")
@@ -1815,6 +1848,7 @@ QWidget *SettingsDialog::buildGeneralTab() {
     layout->addWidget(systemPromptEdit_, 1);
     layout->addWidget(restore, 0, Qt::AlignRight);
     layout->addSpacing(8);
+    layout->addWidget(screenGroup);
     layout->addWidget(hotkeyLabel);
     return page;
 }

@@ -12,6 +12,7 @@
 #include "QtStringMakers.h"
 
 #include <QAbstractButton>
+#include <QCheckBox>
 #include <QListWidget>
 #include <QPushButton>
 #include <QTabWidget>
@@ -139,4 +140,14 @@ TEST_CASE("The HUD chip shows the packs from the owner's pictures, each tile nam
         QTest::qWait(300);
         rig.dialog->grab().save(directory + u"/theme-gallery-hud.png"_s);
     }
+}
+
+TEST_CASE("Settings → General has the screen-as-text group, its switch disabled without an accessibility bus") {
+    ThemeRig rig;
+    rig.open(u"nexa-dark"_s);
+    auto *box = rig.dialog->findChild<QCheckBox *>(u"exposeContents"_s);
+    REQUIRE(box != nullptr);
+    CHECK_FALSE(box->isEnabled());          // the test's SystemStatus names no bus
+    CHECK_FALSE(box->isChecked());
+    CHECK(box->text().contains(u"GNOME's accessibility switch"_s));
 }

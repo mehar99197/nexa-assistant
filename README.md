@@ -22,11 +22,15 @@ Not to be confused with Nexa Download Manager: this is a separate program, named
   about solar energy" becomes an Impress file with real slides, "a budget spreadsheet" a Calc sheet with
   working formulas, "a letter to…" a Writer document — created as files and opened, not typed. The status
   bar shows which app Nexa thinks you are in; opening another, closing it, or half an hour of silence moves on.
-- **Looks only when you share** — the Share screen button beside the input box (Ctrl+Shift+S, or say
-  "share my screen") is off at every start; until you switch it on, the model is not even offered the
-  screenshot tool and works through commands and tools alone. Asking "what's on my screen?" yourself
-  takes one picture either way. A model that cannot see images gets the words without the picture and
-  Nexa says so, instead of every later request failing.
+- **Looks only when you share — and reads before it looks** — the Share screen button beside the input box
+  (Ctrl+Shift+S, or say "share my screen") is off at every start; until you switch it on, the model is offered
+  neither the screenshot tool nor the screen-as-text tools and works through commands and tools alone. Switched
+  on, Nexa first reads the window in front as **text** through the desktop's accessibility bus — every button,
+  field and line of a terminal with a ref, the way Playwright reads a page — so even a model that cannot see
+  images clicks and types in it; a picture is taken only when the text is not enough. The phone the same:
+  `android_snapshot` reads its screen as text and taps go to an element by name. Asking "what's on my screen?"
+  yourself takes one look either way (the text, for a model without eyes). Chrome, Electron and Qt apps expose
+  their contents only with GNOME's accessibility switch on: Settings → General → "Let apps expose their contents".
 - **Give it files** — the paper clip beside the input box (Ctrl+O), a drop on the window or a paste (files copied
   in the file manager, or a picture) attach up to ten files to the request, like to any agent: a picture is shown
   to the model, a text file read as it is (the first 200 KB in the request, the rest a `read_file` away), a PDF or
@@ -231,7 +235,8 @@ reach Nexa only over adb, so the build refuses to go on without it.
 **Browser.** Anything on the web — "open github.com/trending and tell me the top repository", "search for
 flights to Lahore", "fill in this form" — goes to Playwright first: it reads pages as text, so it works even
 with models that cannot see the screen, in your own Chrome (signed in as you) once its extension is in the
-profile you chose. Screen sharing is the second approach, only for what Playwright cannot reach. The status
+profile you chose. The screen — read as text first, a picture second — is the second approach, only for what
+Playwright cannot reach. The status
 bar says where it works (`Browser: Chrome · Ahmad`, `Browser: Nexa profile`). Firefox cannot be driven this
 way. In confirm-risky mode Nexa asks before it clicks or types on a page.
 

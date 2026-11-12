@@ -205,6 +205,8 @@ private:
     QLabel *phoneState_{nullptr};
     QLabel *phoneRemembered_{nullptr};
     QPushButton *phoneRememberButton_{nullptr};
+    QCheckBox *exposeContentsCheck_{nullptr};   // General → Screen as text: GNOME's accessibility switch
+    bool exposeContentsWas_{false};
     QCheckBox *phoneReconnect_{nullptr};
     QListWidget *phoneList_{nullptr};
     QLineEdit *pairAddress_{nullptr};
