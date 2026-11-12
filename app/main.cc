@@ -53,6 +53,9 @@
 #include "system/files/FileAccess.h"
 #include "system/info/SystemInfo.h"
 #include "system/media/MprisController.h"
+#include "system/a11y/AtspiBus.h"
+#include "system/a11y/AtspiScreenReader.h"
+#include "system/a11y/ScreenTools.h"
 #include "system/screen/ScreenAwake.h"
 #include "system/screen/ScreenCapture.h"
 #include "core/mcp/McpConnectors.h"
@@ -355,6 +358,15 @@ int main(int argc, char *argv[]) {
                                               .appClosed = [&appContext](const OpenedApp &app) { appContext.noteClosed(app); }});
     // Documents, presentations and spreadsheets as files for LibreOffice.
     registerOfficeTools(tools, OfficeServices{.files = &files, .commands = &commands, .appOpened = appOpened});
+    // The screen as text (M27): the desktop's accessibility bus — what a screen reader uses — read while Share screen
+    // is on, so a model that cannot see images still works the window in front. The controller, built later, says
+    // whether the screen is shared.
+    AtspiBus a11y;
+    AtspiScreenReader screenReader(&a11y);
+    AppController *screenGate = nullptr;
+    registerScreenTools(tools, ScreenServices{.reader = &screenReader,
+                                              .input = [&input] { return input.current(); },
+                                              .allowed = [&screenGate] { return screenGate && screenGate->isScreenShared(); }});
 
     // Voice: microphone → recognition → requests; replies → speech (backends built by AppController).
     // With --hear, recordings stand in for the microphone.
@@ -433,6 +445,7 @@ int main(int argc, char *argv[]) {
                     .browserTarget = [&browser] { return browser.targetPhrase(); },
                     .inputLock = &inputLock},
         std::move(config), SystemInfo::summary());
+    screenGate = &controller;
     QObject::connect(&browser, &BrowserService::notice, &controller, &AppController::notify);
 
     // The web remote: a phone's browser talks to Nexa. Off until Settings → Remote switches it on;
@@ -542,6 +555,7 @@ int main(int argc, char *argv[]) {
                                    .browser = &browser,
                                    .memory = &memory,
                                    .skills = &skills,
+                                   .a11y = &a11y,
                                    .sherpa = &sherpa,
                                    .voice = &voice,
                                    .speakerGate = &speakerGate,

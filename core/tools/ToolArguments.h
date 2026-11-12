@@ -16,6 +16,8 @@ std::optional<int> intArg(const QJsonObject &arguments, const QString &key);
 std::optional<bool> boolArg(const QJsonObject &arguments, const QString &key);
 // Trimmed; an empty or missing value is an InvalidArgument naming the key.
 Result<QString> requiredString(const QJsonObject &arguments, const QString &key);
+// Text to type, as written: only a text that is blank is missing — a trailing newline (Enter) stays.
+Result<QString> requiredText(const QJsonObject &arguments, const QString &key);
 
 // A text-only tool result.
 ToolResult text(const QString &value);

@@ -9,6 +9,7 @@ namespace nexa {
 
 class AdbDiscovery;
 class AndroidDevice;
+class AtspiBus;
 class BrowserService;
 class GlobalShortcuts;
 class HelperClient;
@@ -42,6 +43,7 @@ struct SystemStatus {
     BrowserService *browser{nullptr};       // Playwright: installed? which browser? (status bar, Settings → Browser)
     MemoryStore *memory{nullptr};           // Settings → Memory
     SkillCatalog *skills{nullptr};          // Settings → Skills
+    AtspiBus *a11y{nullptr};                // the accessibility bus: the screen as text (Settings → General)
     SherpaRuntime *sherpa{nullptr};         // instant spotting installed? (Settings → Voice)
     VoicePipeline *voice{nullptr};          // records the owner's voice for enrolment
     SpeakerGate *speakerGate{nullptr};      // and turns it into their profile

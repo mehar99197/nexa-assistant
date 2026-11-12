@@ -4,6 +4,7 @@
 
 #include <QHash>
 #include <QList>
+#include <QSet>
 #include <QString>
 
 #include <functional>
@@ -24,6 +25,7 @@ struct ScreenOutline {
     QHash<QString, atspi::NodeRef> refs;    // "s12" → the element
     QHash<QString, uint> roles;             // "s12" → its role (screen_click presses Space on a check box)
     QHash<QString, QString> names;          // "s12" → the name shown, for the tools' sentences
+    QSet<QString> editable;                 // the refs whose text screen_type can set (EditableText, editable)
     int windows{0};                         // windows written out in full
     bool truncated{false};
 };

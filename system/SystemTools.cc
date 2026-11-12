@@ -440,7 +440,7 @@ void addInputTools(ToolRegistry &registry, const InputProvider &input, ScreenCap
                                                                              ITool::Done done) {
         IInputBackend *backend = backendOr(done);
         if (!backend) return;
-        const Result<QString> value = requiredString(arguments, u"text"_s);
+        const Result<QString> value = requiredText(arguments, u"text"_s);
         if (!value) {
             done(value.error());
             return;

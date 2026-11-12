@@ -143,6 +143,7 @@ public:
         outline_.refs.insert(id, node.ref);
         outline_.roles.insert(id, node.role);
         outline_.names.insert(id, shownName);
+        if (node.has(State::Editable) && node.implements("EditableText"_L1)) outline_.editable.insert(id);
         return id;
     }
 

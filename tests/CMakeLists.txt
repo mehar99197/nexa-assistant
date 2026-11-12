@@ -7,7 +7,10 @@ add_executable(nexa_tests
     AdbParsersTest.cc
     AdbShellTest.cc
     AtspiCacheTest.cc
+    AtspiScreenReaderTest.cc
     ScreenOutlineTest.cc
+    FakeScreenReader.h
+    ScreenToolsTest.cc
     FakeHttpServer.h
     QtStringMakers.h
     ScriptedProvider.h
@@ -26,6 +29,7 @@ add_executable(nexa_tests
     OpenCodeSignInTest.cc
     PresetFilterTest.cc
     ProgramLookupTest.cc
+    ToolArgumentsTest.cc
     ToolExecutorTest.cc
     ActivityFeedTest.cc
     AgentRoleTest.cc
