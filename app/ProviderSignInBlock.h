@@ -43,7 +43,7 @@ class ProviderSignInBlock : public QWidget {
     Q_PROPERTY(QColor badColor READ badColor WRITE setBadColor)
     Q_PROPERTY(QColor mutedColor READ mutedColor WRITE setMutedColor)
 public:
-    // `kind` is kKindAgy, kKindOpenCode or kKindCodex. `replyRunning` may be empty (never blocked).
+    // `kind` is kKindAgy, kKindOpenCode, kKindCodex or kKindClaudeCode. `replyRunning` may be empty (never blocked).
     ProviderSignInBlock(const QString &kind, std::unique_ptr<ISignIn> signIn, std::function<bool()> replyRunning,
                         QWidget *parent = nullptr);
     ~ProviderSignInBlock() override;

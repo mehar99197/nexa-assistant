@@ -1882,16 +1882,20 @@ void SettingsDialog::showRowsFor(const QString &kind) {
     const bool http = ProviderRegistry::isHttpKind(kind) || kind.isEmpty();
     const bool agy = kind == kKindAgy;
     const bool codex = kind == kKindCodex;
+    const bool claude = kind == kKindClaudeCode;
+    const bool program = agy || codex || claude;
     QFormLayout *form = providerFormLayout_;
     if (auto *label = qobject_cast<QLabel *>(form->labelForField(baseUrlEdit_))) {
-        label->setText(http ? tr("Base URL:") : (agy || codex) ? tr("Program:") : tr("Server:"));
+        label->setText(http ? tr("Base URL:") : program ? tr("Program:") : tr("Server:"));
     }
-    baseUrlEdit_->setPlaceholderText(http   ? u"https://api.example.com/v1"_s
-                                     : agy   ? tr("agy on PATH or in ~/.local/bin")
-                                     : codex ? tr("codex on PATH or in ~/.npm-global/bin")
-                                             : tr("Nexa starts its own"));
-    // agy and Codex sign in by themselves (Sign-in below); a server of opencode's that the user runs has a password.
-    form->setRowVisible(keyRow_, !agy && !codex);
+    baseUrlEdit_->setPlaceholderText(http    ? u"https://api.example.com/v1"_s
+                                     : agy    ? tr("agy on PATH or in ~/.local/bin")
+                                     : codex  ? tr("codex on PATH or in ~/.npm-global/bin")
+                                     : claude ? tr("claude on PATH or in ~/.local/bin")
+                                              : tr("Nexa starts its own"));
+    // agy, Codex and Claude Code sign in by themselves (Sign-in below); a server of opencode's that the user runs has a
+    // password.
+    form->setRowVisible(keyRow_, !program);
     if (auto *label = qobject_cast<QLabel *>(form->labelForField(keyRow_))) {
         label->setText(http ? tr("API key:") : tr("Server password:"));
     }

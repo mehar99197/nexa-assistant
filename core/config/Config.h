@@ -16,6 +16,7 @@ inline constexpr QLatin1StringView kKindGemini{"gemini"};
 inline constexpr QLatin1StringView kKindAgy{"agy"};
 inline constexpr QLatin1StringView kKindOpenCode{"opencode"};
 inline constexpr QLatin1StringView kKindCodex{"codex"};
+inline constexpr QLatin1StringView kKindClaudeCode{"claude-code"};
 
 // One configured AI endpoint; `kind` selects the IAiProvider implementation.
 struct ProviderConfig {

@@ -57,7 +57,7 @@ public:
     // `fallback`, in list order. One that cannot be created is left out; none at all is an error.
     Result<std::unique_ptr<IAiProvider>> createChain(const Config &config) const;
 
-    // The programs first (opencode, agy, Codex), then the hand-tuned entries, then every catalogue entry whose id is
+    // The programs first (opencode, agy, Codex, Claude Code), then the hand-tuned entries, then every catalogue entry whose id is
     // not already there; the hand-tuned one wins on a clash and takes the catalogue's category, website, hint and
     // free-tier mark. Built once.
     static const QList<ProviderPreset> &presets();
@@ -72,7 +72,7 @@ public:
     static void upgrade(Config &config, const std::function<bool(const QString &program)> &installed);
     // Kinds that talk to a URL, as opposed to a program Nexa runs.
     static bool isHttpKind(const QString &kind);
-    // The programs Nexa runs on the user's own sign-in: agy, opencode and Codex.
+    // The programs Nexa runs on the user's own sign-in: agy, opencode, Codex and Claude Code.
     static bool isProgramKind(const QString &kind);
     // Whether a program said, on a reply or a model list, that nobody is signed in — what Settings → Providers →
     // Sign in mends. Not any Unauthorized: a model opencode refuses (no plan, no licence) and a server that refused
@@ -84,7 +84,7 @@ public:
     // Whether a request needs a model named: an API does; the programs answer with their own default.
     static bool needsModel(const ProviderConfig &config);
 
-    // The sign-in of a program provider (agy, opencode, Codex); nullptr for an API. The program is found as its
+    // The sign-in of a program provider (agy, opencode, Codex, Claude Code); nullptr for an API. The program is found as its
     // provider finds it, and opencode's shares the server the provider uses.
     std::unique_ptr<ISignIn> createSignIn(const ProviderConfig &config) const;
 

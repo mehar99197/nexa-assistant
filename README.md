@@ -2,8 +2,8 @@
 
 A Linux desktop AI assistant written in C++20 with a Qt 6 Widgets interface. It talks to any AI
 provider — your own opencode and agy (Google's Antigravity CLI) on their own sign-ins by default, Codex on your
-ChatGPT account, a catalogue of 179 key-based and local providers, or OpenAI-compatible APIs, Anthropic and Google
-Gemini natively —
+ChatGPT account, Claude Code on your Claude subscription, a catalogue of 179 key-based and local providers, or
+OpenAI-compatible APIs, Anthropic and Google Gemini natively —
 acts on the PC through tools, listens and talks back, and works with your Android phone in both
 directions. See [ARCHITECTURE.md](ARCHITECTURE.md) for the design and the milestone status.
 
@@ -38,7 +38,7 @@ Not to be confused with Nexa Download Manager: this is a separate program, named
 - **Mission Control: many tasks at once** — every request is a task with an agent of its own, and several run
   at the same time (3 by default, up to 8 in Settings → Mission; the rest wait in a queue). Add a list at once
   with **+ Add tasks** (Ctrl+T, one per line). Each task gets a kind of agent from its words — web, code, screen,
-  phone or general — and the model that kind is given: Auto sends code to Codex, opencode or agy and the screen
+  phone or general — and the model that kind is given: Auto sends code to Claude Code, Codex, opencode or agy and the screen
   and the phone to a provider that can see, or choose one per kind, or for a batch. A lead agent can hand part of
   its task to another kind (`delegate_task`), which works on that kind's model and answers back. The control room
   shows the agents at work, the board (pause, resume, stop, clear; the queue), the live activity by lane, and a
@@ -98,10 +98,13 @@ Not to be confused with Nexa Download Manager: this is a separate program, named
 - **Stays out of the way** — one copy per user (starting it again brings the window forward), an icon
   in the top bar, and closing the window keeps the hotkeys and web remote running.
 
-Providers: **opencode**, **agy** (Google's Antigravity CLI) and **Codex** (OpenAI's coding agent, on your ChatGPT
-plan; add it under Settings → Providers → Add → Programs) — the models you already have there, on their own sign-ins
-and quotas, with no key in Nexa: Nexa runs its own `opencode serve`, a warm `agy` process and a warm `codex app-server`,
-and every action still goes through Nexa's own tools (theirs stay switched off).
+Providers: **opencode**, **agy** (Google's Antigravity CLI), **Codex** (OpenAI's coding agent, on your ChatGPT
+plan) and **Claude Code** (Anthropic's coding agent, on your Claude subscription; add the last two under Settings →
+Providers → Add → Programs) — the models you already have there, on their own sign-ins and quotas, with no key in
+Nexa: Nexa runs its own `opencode serve`, a warm `agy` process, a warm `codex app-server` and a warm `claude -p`, and
+every action still goes through Nexa's own tools (theirs stay switched off). Claude Code is run exactly as Anthropic
+publishes it, on the sign-in you made in your own terminal (or from Settings, through Claude Code's own login): Nexa
+never touches its credentials.
 
 **Sign in from inside Nexa.** Settings → Providers → pick the program → **Sign in…** opens that program's own login in
 your browser (the link is shown too, to copy) and reads its status; the program keeps the token, Nexa never sees it.
@@ -220,8 +223,8 @@ reach Nexa only over adb, so the build refuses to go on without it.
   only as a hash. It speaks HTTPS on the network (plain HTTP only on loopback, for adb), refuses other
   sites' pages, rate-limits everything, and a revoked phone is disconnected at once.
 - API keys live in `~/.config/nexa/config.json` (readable only by you) and are never logged or shown. Signing in to
-  opencode, agy or Codex is each program's own OAuth: Nexa starts it and reads its status, and the token stays with the
-  program — Nexa never reads, stores or shows one.
+  opencode, agy, Codex or Claude Code is each program's own OAuth: Nexa starts it and reads its status, and the token
+  stays with the program — Nexa never reads, stores or shows one.
 
 ## The browser, memory and skills
 

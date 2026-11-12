@@ -21,14 +21,16 @@ struct ProviderFacts {
 };
 
 // Which provider and model an agent of each role runs on (Strategy table, pure). Settings → Mission wins while its
-// provider is still configured; otherwise: code goes to a coding program (Codex, opencode, agy, in that order), the
+// provider is still configured; otherwise: code goes to a coding program (Claude Code, Codex, opencode, agy, in that
+// order), the
 // screen and the phone to a provider that can see the pictures they work from, and the web and everything else stay
 // Auto — the first choice with its fallbacks.
 class ModelFit {
 public:
     static ModelChoice resolve(AgentRole role, const MissionConfig &mission, const QList<ProviderFacts> &providers);
     static ModelChoice defaultFor(AgentRole role, const QList<ProviderFacts> &providers);
-    // A program (agy, opencode, Codex) answers one conversation at a time per instance: a task on one needs its own.
+    // A program (agy, opencode, Codex, Claude Code) answers one conversation at a time per instance: a task on one
+    // needs its own.
     static bool needsOwnInstance(const QString &kind);
 };
 

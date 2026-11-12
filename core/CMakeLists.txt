@@ -16,6 +16,10 @@ add_library(nexa_core STATIC
     ai/CodexProvider.h ai/CodexProvider.cc
     ai/CodexSession.h ai/CodexSession.cc
     ai/CodexSignIn.h ai/CodexSignIn.cc
+    ai/ClaudeCodeEvents.h ai/ClaudeCodeEvents.cc
+    ai/ClaudeCodeProvider.h ai/ClaudeCodeProvider.cc
+    ai/ClaudeCodeSession.h ai/ClaudeCodeSession.cc
+    ai/ClaudeCodeSignIn.h ai/ClaudeCodeSignIn.cc
     ai/OpenCodeSignIn.h ai/OpenCodeSignIn.cc
     ai/PresetFilter.h ai/PresetFilter.cc
     ai/ProviderCatalog.h ai/ProviderCatalog.cc

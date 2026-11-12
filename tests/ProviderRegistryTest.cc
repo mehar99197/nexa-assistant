@@ -210,6 +210,7 @@ TEST_CASE("isProgramKind is agy, opencode and codex") {
     CHECK(ProviderRegistry::isProgramKind(kKindAgy));
     CHECK(ProviderRegistry::isProgramKind(kKindOpenCode));
     CHECK(ProviderRegistry::isProgramKind(kKindCodex));
+    CHECK(ProviderRegistry::isProgramKind(kKindClaudeCode));
     CHECK_FALSE(ProviderRegistry::isProgramKind(kKindOpenAiCompatible));
     CHECK_FALSE(ProviderRegistry::isProgramKind(kKindAnthropic));
     CHECK_FALSE(ProviderRegistry::isProgramKind(kKindGemini));
@@ -222,20 +223,21 @@ TEST_CASE("The presets list the programs first, then the hand-tuned entries, the
     CHECK(all.at(0).id == u"opencode"_s);
     CHECK(all.at(1).id == u"agy"_s);
     CHECK(all.at(2).id == u"codex"_s);
-    for (int i = 0; i < 3; ++i) CHECK(all.at(i).category == u"Programs"_s);
-    for (qsizetype i = 3; i < all.size(); ++i) {
+    CHECK(all.at(3).id == u"claude-code"_s);
+    for (int i = 0; i < 4; ++i) CHECK(all.at(i).category == u"Programs"_s);
+    for (qsizetype i = 4; i < all.size(); ++i) {
         CHECK(all.at(i).category != u"Programs"_s);
         CHECK_FALSE(ProviderRegistry::isProgramKind(all.at(i).kind));
     }
     QStringList handTuned;
-    for (qsizetype i = 3; i < 3 + 15; ++i) handTuned.append(all.at(i).id);
+    for (qsizetype i = 4; i < 4 + 15; ++i) handTuned.append(all.at(i).id);
     CHECK(handTuned == QStringList{u"opencode-console"_s, u"opencode-console-claude"_s, u"opencode-go"_s,
                                    u"opencode-go-claude"_s, u"openai"_s, u"ollama"_s, u"lmstudio"_s, u"groq"_s,
                                    u"openrouter"_s, u"deepseek"_s, u"mistral"_s, u"xai"_s, u"together"_s,
                                    u"custom"_s, u"anthropic"_s});
-    CHECK(all.at(3 + 15).id == u"gemini"_s);
+    CHECK(all.at(4 + 15).id == u"gemini"_s);
     // Everything after is the catalogue's.
-    for (qsizetype i = 3 + 16; i < all.size(); ++i) CHECK(ProviderCatalog::find(all.at(i).id) != nullptr);
+    for (qsizetype i = 4 + 16; i < all.size(); ++i) CHECK(ProviderCatalog::find(all.at(i).id) != nullptr);
 }
 
 TEST_CASE("No preset id appears twice") {

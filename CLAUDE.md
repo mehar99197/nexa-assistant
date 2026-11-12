@@ -38,7 +38,7 @@ requests are done and Nexa is idle, it saves a picture of the window and quits �
 shows the light scheme with a fast-path reply without touching the screen (`--theme <palette>` and `--design <design>`
 are for that run only and never reach the settings; `--design console` shows the terminal design in its own palette);
 `--screenshot-settings <dir>` saves every Settings tab the same way, then the Providers tab of each program (agy,
-opencode, Codex: its sign-in status read) and the provider gallery (`provider-gallery.png`, and searched for "free");
+opencode, Codex, Claude Code: its sign-in status read) and the provider gallery (`provider-gallery.png`, and searched for "free");
 the pictures of a sign-in under way (the method menu, the login link) need **`NEXA_SNAPSHOT_SIGN_IN=1` and a private
 config naming the fake programs** — `XDG_CONFIG_HOME=/tmp/x/config` with providers of kind `agy` and `codex` whose
 `baseUrl` is `tests/fake-agy/agy` / `tests/fake-codex/codex`, and `tests/fake-opencode` first on the `PATH` (opencode is
@@ -101,13 +101,23 @@ home folder of Nexa's own (`~/.cache/nexa/agy/home`, whose `settings.json` denie
 otherwise read files unasked) and an empty workspace (`~/.cache/nexa/agy/work`); `agy models` takes about 16 s. A third
 program, **Codex** (OpenAI's coding agent, on the owner's ChatGPT account), is added from Settings → Providers → Add →
 Programs, never a default: one warm `codex app-server` per conversation (`~/.cache/nexa/codex`, run in its empty `work`
-folder; found on the PATH, in `~/.local/bin` or `~/.npm-global/bin`), started with its own tools disabled. All three take
-Nexa's tools as text (`<tool_call>`), and an empty model is their own default (Codex: the first it lists). **They are
-signed in inside Nexa**, by the program's own flow: Settings → Providers → the program → Sign in… opens its login in the
-browser and shows the link. The sign-in is the program's own and shared with the terminal one — agy's lives in the
-system keyring, opencode's in `auth.json`, Codex's in `CODEX_HOME` — so `opencode auth login`, running `agy` once and
-`codex login` still work, and signing out in Nexa signs the terminal out too (so a test copy, whose private XDG
-folders do not isolate the keyring or Codex's own folder, must never sign out). For a sign-in that misbehaves,
+folder; found on the PATH, in `~/.local/bin` or `~/.npm-global/bin`), started with its own tools disabled. A fourth,
+**Claude Code** (Anthropic's coding agent, `~/.local/bin/claude`, on the owner's Claude subscription; M25), is added the
+same way: one warm `claude -p --input-format stream-json --output-format stream-json` process per conversation
+(`~/.cache/nexa/claude/work`), its own tools, settings, hooks, MCP servers and session files all switched off at the
+command line (`--tools "" --strict-mcp-config --setting-sources "" --permission-mode dontAsk --permission-prompts
+none --no-session-persistence`), Nexa's system prompt as `--system-prompt` (a changed prompt or model is a new
+process), `CLAUDECODE` and `CLAUDE_CODE_ENTRYPOINT` removed from its environment (a nested run is refused otherwise);
+its models see pictures; the toolbar offers its aliases (`fable`, `opus`, `sonnet`, `haiku`) since it has no list
+command. All four take Nexa's tools as text (`<tool_call>`), and an empty model is their own default (Codex: the
+first it lists). **They are signed in inside Nexa**, by the program's own flow: Settings → Providers → the program →
+Sign in… opens its login in the browser and shows the link (Claude Code's `claude auth login` may also ask for a code
+the page shows: the code field takes it). The sign-in is the program's own and shared with the terminal one — agy's
+lives in the system keyring, opencode's in `auth.json`, Codex's in `CODEX_HOME`, Claude Code's in its own `~/.claude`,
+which Nexa never points elsewhere (no `CLAUDE_CONFIG_DIR` of its own, no `--bare`) and never reads — so `opencode auth
+login`, running `agy` once, `codex login` and `claude auth login` still work, and signing out in Nexa signs the terminal
+out too (so a test copy, whose private XDG folders do not isolate the keyring or the programs' own folders, must never
+sign out). For a sign-in that misbehaves,
 `QT_LOGGING_RULES="nexa.ai.debug=true"` logs the steps (never a link, a code or an account). OpenCode's hosted API (Console, Go) is a preset with a key, and
 Settings → Providers → Add has the catalogue of 179 (a key each, or none for a local server): the menu by category,
 **Browse all…** for the searchable gallery. A test copy on private `XDG_CONFIG_HOME` /
@@ -124,12 +134,15 @@ text-only model refuses images with a 400; the `Agent` then resends without them
   the hand-tuned entries, then the catalogue (187); the programs: `AgyProvider` + `AgySession` + `AgyEvents` (agy's
   stream-json), `OpenCodeProvider` + `OpenCodeServer` + `OpenCodeWire` (opencode's server API), `CodexProvider` +
   `CodexSession` (it also holds `CodexConnection`, one `codex app-server` and its JSON-RPC) + `CodexEvents` +
-  `CodexProtocol` (the wire, pure), with `TurnLedger` deciding what a warm session still needs and `TranscriptWriter`
+  `CodexProtocol` (the wire, pure), `ClaudeCodeProvider` + `ClaudeCodeSession` + `ClaudeCodeEvents` (Claude Code's
+  stream-json, pure: events, the user turn with image blocks, `claude auth status --json` read for its plan alone,
+  what its failures mean), with `TurnLedger` deciding what a warm session still needs and `TranscriptWriter`
   the text of a turn; `ProgramLookup` (PATH, then ~/.local/bin, ~/.npm-global/bin, npm's prefix, nvm, Volta, Bun —
   a desktop session's PATH lacks them; `environmentFor` puts the program's folder first on its PATH, for an npm
   program's `env node`); **sign-in**: `SignIn.h` (`ISignIn`, `SignInStatus` — a plan, never an email —
   and `SignInMethod`), `AgySignIn` + `AgyAcp` (`agy acp`), `OpenCodeSignIn` (opencode's `/provider/auth` and OAuth
-  routes; an allow-list of the sign-ins a clean opencode offers), `CodexSignIn` (`account/login/*`), and
+  routes; an allow-list of the sign-ins a clean opencode offers), `CodexSignIn` (`account/login/*`), `ClaudeCodeSignIn`
+  (`claude auth status | login --claudeai | logout`, the link from the login's output, a pasted code typed to it), and
   `SignInPresenter` (pure: what Settings shows of a sign-in); **the catalogue**: `ProviderCatalog` over the generated
   `ProviderCatalogData.cc` (179 key-based and local providers from OmniRoute 3.8.51, MIT, in
   `THIRD_PARTY_NOTICES.md`; never edit it by hand — `python3 -I scripts/generate-provider-catalog.py`, `--check` to see
@@ -230,8 +243,9 @@ text-only model refuses images with a 400; the `Agent` then resends without them
   (the web remote's view of the app); `main.cc` is the composition root and applies the theme first.
 - `tests/` — Catch2 v3 (custom `TestMain.cc` with a QCoreApplication), one `<Class>Test.cc` per tested
   class; `FakeHttpServer.h` for provider tests; `AgentTest.cc` uses a scripted fake model; the programs have stand-ins,
-  `tests/fake-agy/agy` (print mode and `agy acp`), `tests/fake-opencode/opencode` (`serve`, with the sign-in routes) and
-  `tests/fake-codex/codex` (`app-server`) — no test starts the real ones.
+  `tests/fake-agy/agy` (print mode and `agy acp`), `tests/fake-opencode/opencode` (`serve`, with the sign-in routes),
+  `tests/fake-codex/codex` (`app-server`) and `tests/fake-claude/claude` (`-p` stream-json and `auth`) — no test starts
+  the real ones.
 - `voice/` — microphone to speech and back: `capture/` (AudioCapture, AudioConverter → 16 kHz mono Int16,
   EnergyVad, MicrophoneCheck = clipped or drowned sound and the steps of "Lower it", RecordedAudioInput for
   `--hear`), `listen/` (what hears speech and the name: `ListeningFront` = the Facade that runs a noise filter, a
@@ -359,9 +373,15 @@ text-only model refuses images with a 400; the `Agent` then resends without them
   never an email; no link, code or account is logged or shown, except the login link itself as one selectable line in
   `ProviderSignInBlock`; `Error::message` of a sign-in is not shown as it is (`SignInPresenter` has a sentence per
   code). An unknown reply is `failed(Parse)`, never "signed out". **No test starts a real vendor program in a way that
-  signs in or out** — the fakes in `tests/` stand in, and a probe of a real program only reads. Claude's subscription
-  login is not offered (Anthropic's terms forbid a third-party app offering it:
-  https://code.claude.com/docs/en/legal-and-compliance): Claude is the Anthropic API-key preset.
+  signs in or out** — the fakes in `tests/` stand in, and a probe of a real program only reads. **Claude Code** is run
+  as the unmodified binary Anthropic publishes, on the owner's own Claude Code sign-in: Anthropic's terms
+  (https://code.claude.com/docs/en/legal-and-compliance, read 2026-11-12) forbid a third-party app offering Claude.ai
+  login, routing requests through a user's subscription on their behalf, or collecting, storing or intermediating
+  Claude.ai credentials, and allow an end user to sign in to the unmodified Claude Code with their own subscription,
+  through Anthropic's own flow — so Nexa only starts `claude auth login` and shows its link, never sets a
+  `CLAUDE_CONFIG_DIR` of its own, never passes `--bare`, and reads of `claude auth status` only `loggedIn`,
+  `authMethod` and `subscriptionType` (the JSON also carries the email and the organisation: never shown, never
+  logged). The Anthropic API-key preset stays for API use.
 - Every action goes through `ToolExecutor::execute` (fast path and agent alike) — never call a tool directly.
 - The app the user is in is **what Nexa opened last** (`AppContext`), never read from the desktop: GNOME's
   `org.gnome.Shell.Introspect` is denied to anything but the portals, and the helper is write-only. A command typed

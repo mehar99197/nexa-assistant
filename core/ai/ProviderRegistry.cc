@@ -4,6 +4,8 @@
 #include "core/ai/AgyProvider.h"
 #include "core/ai/AgySignIn.h"
 #include "core/ai/AnthropicProvider.h"
+#include "core/ai/ClaudeCodeProvider.h"
+#include "core/ai/ClaudeCodeSignIn.h"
 #include "core/ai/CodexProvider.h"
 #include "core/ai/CodexSignIn.h"
 #include "core/ai/GeminiProvider.h"
@@ -41,6 +43,9 @@ ProviderRegistry::ProviderRegistry(HttpClient *http) : http_(http) {
     });
     registerKind(kKindCodex, [](const ProviderConfig &config, HttpClient *) {
         return std::make_unique<CodexProvider>(config);
+    });
+    registerKind(kKindClaudeCode, [](const ProviderConfig &config, HttpClient *) {
+        return std::make_unique<ClaudeCodeProvider>(config);
     });
 }
 
@@ -124,6 +129,7 @@ QList<ProviderPreset> buildPresets() {
         {u"opencode"_s, kKindOpenCode, u"opencode"_s, {}, false, {}, {}, {}, {}, {}, kPrograms},
         {u"agy"_s, kKindAgy, u"agy"_s, {}, false, {}, {}, {}, {}, {}, kPrograms},
         {u"codex"_s, kKindCodex, u"Codex (ChatGPT)"_s, {}, false, {}, {}, {}, {}, {}, kPrograms},
+        {u"claude-code"_s, kKindClaudeCode, u"Claude Code (Claude subscription)"_s, {}, false, {}, {}, {}, {}, {}, kPrograms},
         // OpenCode's hosted API with a key from its console. The model lists live beside the
         // endpoints, not under them; GPT models there speak only the Responses API, which Nexa does
         // not, and Claude models are served in Anthropic's format.
@@ -217,7 +223,7 @@ bool ProviderRegistry::isHttpKind(const QString &kind) {
 }
 
 bool ProviderRegistry::isProgramKind(const QString &kind) {
-    return kind == kKindAgy || kind == kKindOpenCode || kind == kKindCodex;
+    return kind == kKindAgy || kind == kKindOpenCode || kind == kKindCodex || kind == kKindClaudeCode;
 }
 
 bool ProviderRegistry::meansNotSignedIn(const Error &error) {
@@ -252,6 +258,9 @@ std::unique_ptr<ISignIn> ProviderRegistry::createSignIn(const ProviderConfig &co
     if (config.kind == kKindOpenCode) return std::make_unique<OpenCodeSignIn>(openCodeServer(config));
     if (config.kind == kKindCodex) {
         return std::make_unique<CodexSignIn>(CodexProvider::locate(config.baseUrl.trimmed()));
+    }
+    if (config.kind == kKindClaudeCode) {
+        return std::make_unique<ClaudeCodeSignIn>(ClaudeCodeProvider::locate(config.baseUrl.trimmed()));
     }
     return nullptr;
 }

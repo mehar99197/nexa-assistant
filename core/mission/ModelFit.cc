@@ -33,7 +33,7 @@ ModelChoice ModelFit::resolve(AgentRole role, const MissionConfig &mission, cons
 ModelChoice ModelFit::defaultFor(AgentRole role, const QList<ProviderFacts> &providers) {
     switch (role) {
     case AgentRole::Code:
-        for (const QString &kind : {u"codex"_s, u"opencode"_s, u"agy"_s}) {
+        for (const QString &kind : {u"claude-code"_s, u"codex"_s, u"opencode"_s, u"agy"_s}) {
             for (const ProviderFacts &provider : providers) {
                 if (provider.kind == kind) return ModelChoice{provider.id, provider.defaultModel};
             }
@@ -57,7 +57,7 @@ ModelChoice ModelFit::defaultFor(AgentRole role, const QList<ProviderFacts> &pro
 }
 
 bool ModelFit::needsOwnInstance(const QString &kind) {
-    return kind == u"agy"_s || kind == u"opencode"_s || kind == u"codex"_s;
+    return kind == u"agy"_s || kind == u"opencode"_s || kind == u"codex"_s || kind == u"claude-code"_s;
 }
 
 } // namespace nexa

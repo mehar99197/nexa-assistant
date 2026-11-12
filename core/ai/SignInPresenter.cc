@@ -64,6 +64,10 @@ QString SignInPresenter::signOutWarning(const QString &kind, const QString &deta
         return u"Signing out here also signs you out of Codex in your terminal: they share Codex's sign-in "
                "folder. Sign out?"_s;
     }
+    if (kind == kKindClaudeCode) {
+        return u"Signing out here also signs you out of Claude Code in your terminal: they share Claude Code's own "
+               "sign-in. Sign out?"_s;
+    }
     QString text = u"Signing out removes the stored sign-in of every connected provider, any API key you added "
                    "to opencode included, and signs you out of opencode in your terminal too."_s;
     if (!detail.isEmpty()) text += u" Connected: "_s + detail + u"."_s;

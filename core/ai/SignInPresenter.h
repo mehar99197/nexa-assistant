@@ -36,7 +36,8 @@ struct SignInView {
 // a refusal and changes nothing, so it can never end a running sign-in.
 class SignInPresenter {
 public:
-    // `kind` is kKindAgy, kKindOpenCode or kKindCodex: it decides the keyring wording and what sign-out says.
+    // `kind` is kKindAgy, kKindOpenCode, kKindCodex or kKindClaudeCode: it decides the keyring wording and what sign-out
+    // says.
     explicit SignInPresenter(QString kind);
 
     const QString &kind() const { return kind_; }

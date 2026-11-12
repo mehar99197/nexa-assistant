@@ -18,6 +18,9 @@ add_executable(nexa_tests
     CodexProtocolTest.cc
     CodexProviderTest.cc
     CodexSignInTest.cc
+    ClaudeCodeEventsTest.cc
+    ClaudeCodeProviderTest.cc
+    ClaudeCodeSignInTest.cc
     OpenCodeSignInTest.cc
     PresetFilterTest.cc
     ProgramLookupTest.cc
