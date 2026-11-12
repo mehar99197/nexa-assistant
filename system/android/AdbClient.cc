@@ -59,8 +59,12 @@ void AdbClient::runOn(const QString &serial, const QStringList &arguments, int t
     run(QStringList{u"-s"_s, serial} + arguments, timeoutMs, std::move(done));
 }
 
+QString AdbClient::program() const {
+    return program_.isEmpty() ? adbProgram() : program_;
+}
+
 void AdbClient::run(const QStringList &arguments, int timeoutMs, Done done) {
-    if (!isInstalled()) {
+    if (program().isEmpty()) {
         done(Error{ErrorCode::NotSupported, u"adb is not installed. Install it with: sudo apt install adb"_s});
         return;
     }
@@ -93,7 +97,7 @@ void AdbClient::run(const QStringList &arguments, int timeoutMs, Done done) {
     if (logged.size() >= 3 && logged.first() == u"pair") logged.last() = u"******"_s;
     qCDebug(lcApp) << "adb" << logged;
     job->timer->start(timeoutMs);
-    process->start(adbProgram(), arguments);
+    process->start(program(), arguments);
 }
 
 void AdbClient::cancelAll() {

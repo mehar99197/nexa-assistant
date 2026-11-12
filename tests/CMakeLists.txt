@@ -6,6 +6,7 @@ add_executable(nexa_tests
     AdbDiscoveryTest.cc
     AdbParsersTest.cc
     AdbShellTest.cc
+    AndroidToolsTest.cc
     AtspiCacheTest.cc
     AtspiScreenReaderTest.cc
     ScreenOutlineTest.cc
@@ -111,6 +112,7 @@ add_executable(nexa_tests
     RemoteRoutesTest.cc
     TunnelLogTest.cc
     TunnelProcessTest.cc
+    UiHierarchyTest.cc
     RemoteServerTest.cc
     RemoteServerIntegrationTest.cc
     # The helper's own authorisation record. Pure enough to test here without any root privilege,

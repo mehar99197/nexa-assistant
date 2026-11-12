@@ -110,6 +110,10 @@ QString phoneNumber(const QString &text) {
     return digits >= 3 ? number : QString();
 }
 
+QString uiDumpCommand() {
+    return u"uiautomator dump /sdcard/nexa-ui.xml 2>&1 >/dev/null; cat /sdcard/nexa-ui.xml 2>/dev/null; rm -f /sdcard/nexa-ui.xml"_s;
+}
+
 QString callCommand(const QString &number) {
     return u"am start -a android.intent.action.CALL -d "_s + quote(u"tel:"_s + number);
 }

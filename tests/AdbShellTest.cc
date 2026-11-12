@@ -69,3 +69,8 @@ TEST_CASE("Calls and messages are intents with the number and text quoted") {
           == u"am start -a android.intent.action.SENDTO -d 'sms:0300' --es sms_body 'I'\\''m late; sorry' "
              "--ez exit_on_sent true"_s);
 }
+
+TEST_CASE("The screen dump is one shell line: dump, print the file, remove it — uiautomator's own words kept") {
+    CHECK(adbshell::uiDumpCommand()
+          == u"uiautomator dump /sdcard/nexa-ui.xml 2>&1 >/dev/null; cat /sdcard/nexa-ui.xml 2>/dev/null; rm -f /sdcard/nexa-ui.xml"_s);
+}

@@ -33,6 +33,10 @@ std::optional<QString> mediaKey(const QString &action);
 // "mom" is not mistaken for a number.
 QString phoneNumber(const QString &text);
 
+// The phone's screen as uiautomator's XML, in one shell line: the dump to a file (its own words — "could not get idle
+// state" while the screen still moves — kept on stdout), the file, then its removal.
+QString uiDumpCommand();
+
 QString callCommand(const QString &number);
 // Opens the messaging app on a new message with the text filled in. It does not send it.
 QString composeSmsCommand(const QString &number, const QString &body);

@@ -16,6 +16,7 @@ add_library(nexa_system STATIC
     android/MdnsPacket.h android/MdnsPacket.cc
     android/PhoneLookup.h android/PhoneLookup.cc
     android/PhoneMirror.h android/PhoneMirror.cc
+    android/UiHierarchy.h android/UiHierarchy.cc
     apps/AppLauncher.h apps/AppLauncher.cc
     apps/DesktopEntry.h apps/DesktopEntry.cc
     apps/DesktopEntryIndex.h apps/DesktopEntryIndex.cc
