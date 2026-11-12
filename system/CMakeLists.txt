@@ -1,5 +1,6 @@
 add_library(nexa_system STATIC
     SystemTools.h SystemTools.cc
+    a11y/AtspiNode.h a11y/AtspiNode.cc
     android/AdbClient.h android/AdbClient.cc
     android/AdbDiscovery.h android/AdbDiscovery.cc
     android/AdbParsers.h android/AdbParsers.cc
