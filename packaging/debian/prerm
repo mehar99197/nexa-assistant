@@ -1,0 +1,12 @@
+#!/bin/sh
+# nexa-assistant: before the files go. A running helper is stopped so its unit's ExecStopPost gives back any
+# input devices hardcore mode left locked.
+set -e
+
+if [ "$1" = "remove" ] || [ "$1" = "upgrade" ]; then
+    if command -v systemctl >/dev/null 2>&1; then
+        systemctl stop nexa-helper.service >/dev/null 2>&1 || true
+    fi
+fi
+
+exit 0

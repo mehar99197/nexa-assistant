@@ -46,6 +46,9 @@ add_library(nexa_voice STATIC
     wake/WordPieces.h wake/WordPieces.cc
 )
 
+# Where a packaged build keeps the speech engines (empty for a source build: the user's folder only).
+target_compile_definitions(nexa_voice PRIVATE NEXA_ENGINE_DIR="${NEXA_ENGINE_DIR}")
+
 target_link_libraries(nexa_voice
     PUBLIC
         nexa_core

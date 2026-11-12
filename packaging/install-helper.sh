@@ -36,12 +36,18 @@ fi
 
 echo "Installing the helper from $BINARY"
 install -D -m 0755 "$BINARY" "$LIBEXEC/nexa-helper"
-install -D -m 0644 "$ROOT/packaging/org.nexa.Helper.service" \
+# The service and unit are templates (the .deb writes its own path into them); here the helper lives in /usr/local.
+GENERATED="$(mktemp -d)"
+trap 'rm -rf "$GENERATED"' EXIT
+for template in org.nexa.Helper.service nexa-helper.service; do
+    sed "s|@NEXA_HELPER_PATH@|$LIBEXEC/nexa-helper|g" "$ROOT/packaging/$template.in" > "$GENERATED/$template"
+done
+install -D -m 0644 "$GENERATED/org.nexa.Helper.service" \
     /usr/share/dbus-1/system-services/org.nexa.Helper.service
 install -D -m 0644 "$ROOT/packaging/org.nexa.Helper.conf" /etc/dbus-1/system.d/org.nexa.Helper.conf
 install -D -m 0644 "$ROOT/packaging/org.nexa.helper.policy" \
     /usr/share/polkit-1/actions/org.nexa.helper.policy
-install -D -m 0644 "$ROOT/packaging/nexa-helper.service" /etc/systemd/system/nexa-helper.service
+install -D -m 0644 "$GENERATED/nexa-helper.service" /etc/systemd/system/nexa-helper.service
 
 systemctl daemon-reload
 # The bus rereads /etc/dbus-1/system.d on a reload; without this the first call is refused.

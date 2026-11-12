@@ -1,0 +1,19 @@
+#!/bin/sh
+# nexa-assistant: after the files are in place. The root helper is started by the system bus on demand, so
+# nothing is started here; the bus and systemd just learn about it.
+set -e
+
+if [ "$1" = "configure" ]; then
+    if command -v systemctl >/dev/null 2>&1; then
+        systemctl daemon-reload >/dev/null 2>&1 || true
+        systemctl reload dbus >/dev/null 2>&1 || kill -HUP "$(pgrep -o dbus-daemon 2>/dev/null)" 2>/dev/null || true
+    fi
+    if command -v update-desktop-database >/dev/null 2>&1; then
+        update-desktop-database -q /usr/share/applications || true
+    fi
+    if command -v gtk-update-icon-cache >/dev/null 2>&1; then
+        gtk-update-icon-cache -q -t -f /usr/share/icons/hicolor || true
+    fi
+fi
+
+exit 0

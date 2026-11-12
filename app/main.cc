@@ -73,6 +73,9 @@
 
 #include <QApplication>
 #include <QCommandLineParser>
+
+#include <cstdio>
+#include <string_view>
 #include <QFile>
 #include <QFileInfo>
 #include <QMessageBox>
@@ -179,6 +182,11 @@ bool programExists(const QString &program) {
 // Composition root: every object is created here and wired by constructor injection.
 // Declaration order matters: users are declared after (and so destroyed before) what they use.
 int main(int argc, char *argv[]) {
+    // Before any window system is asked for: a package's smoke test and a shell ask this with no display.
+    if (argc == 2 && (std::string_view(argv[1]) == "--version" || std::string_view(argv[1]) == "-v")) {
+        std::puts("nexa-assistant " NEXA_VERSION);
+        return 0;
+    }
     QApplication app(argc, argv);
     QApplication::setApplicationName(u"nexa"_s);
     QApplication::setApplicationVersion(QString::fromLatin1(NEXA_VERSION));

@@ -1,0 +1,10 @@
+Format: https://www.debian.org/doc/packaging-manuals/copyright-format/1.0/
+Upstream-Name: nexa-assistant
+Source: https://github.com/mehar99197/nexa-assistant
+
+Files: *
+Copyright: 2026 AHMAD NAWAZ (mehar99197)
+License: MIT
+ See /usr/share/doc/nexa-assistant/LICENSE for the full text, and
+ /usr/share/doc/nexa-assistant/THIRD_PARTY_NOTICES.md for the bundled
+ libraries, engines and the provider catalogue and their licences.

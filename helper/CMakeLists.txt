@@ -25,6 +25,8 @@ target_sources(nexa_helper PRIVATE ${nexa_helper_adaptor})
 # The generated adaptor header lands here.
 target_include_directories(nexa_helper PRIVATE "${CMAKE_CURRENT_BINARY_DIR}")
 
+install(TARGETS nexa_helper RUNTIME DESTINATION "${CMAKE_INSTALL_LIBEXECDIR}/nexa-assistant")
+
 target_link_libraries(nexa_helper PRIVATE
     nexa_proto
     nexa_options

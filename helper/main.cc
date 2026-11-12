@@ -17,6 +17,8 @@
 #include <QTimer>
 
 #include <unistd.h>
+#include <cstdio>
+#include <string_view>
 
 using namespace Qt::StringLiterals;
 using namespace nexa;
@@ -41,6 +43,10 @@ int main(int argc, char *argv[]) {
     QCoreApplication::setApplicationName(u"nexa-helper"_s);
     QCoreApplication::setApplicationVersion(QString::fromLatin1(NEXA_VERSION));
 
+    if (argc == 2 && std::string_view(argv[1]) == "--version") {      // the package's smoke test, as any user
+        std::puts("nexa-helper " NEXA_VERSION);
+        return 0;
+    }
     if (::geteuid() != 0) {
         qCCritical(lcApp) << "nexa-helper must run as root; it is started by D-Bus activation, not by hand.";
         return 1;

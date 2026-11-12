@@ -1,7 +1,7 @@
 cmake_minimum_required(VERSION 3.16)
 
 project(Nexa
-    VERSION 0.1.0
+    VERSION 1.0.0
     DESCRIPTION "Linux AI assistant (C++20, Qt 6 Widgets)"
     LANGUAGES CXX)
 
@@ -19,6 +19,21 @@ option(NEXA_BUILD_WHISPER "Build local speech recognition with whisper.cpp (down
 option(NEXA_WERROR "Treat compiler warnings as errors" OFF)
 option(NEXA_BUILD_PHONE "Build the phone app for the desktop too (android/), so it can be tested here" ON)
 option(NEXA_SANITIZE "Build with AddressSanitizer + UndefinedBehaviorSanitizer" OFF)
+# A packaged build (the .deb, scripts/build-deb.sh): Qt's plugins are found through the qt.conf built into the
+# binary, and the speech engines in NEXA_ENGINE_DIR when the user has no copy of their own.
+option(NEXA_PACKAGED "Build for the self-contained package: embedded qt.conf, engines under NEXA_ENGINE_DIR" OFF)
+
+include(GNUInstallDirs)
+set(CMAKE_INSTALL_DOCDIR "${CMAKE_INSTALL_DATAROOTDIR}/doc/nexa-assistant")
+if(NEXA_PACKAGED)
+    set(NEXA_ENGINE_DIR_DEFAULT "${CMAKE_INSTALL_FULL_LIBDIR}/nexa-assistant")
+else()
+    set(NEXA_ENGINE_DIR_DEFAULT "")
+endif()
+set(NEXA_ENGINE_DIR "${NEXA_ENGINE_DIR_DEFAULT}" CACHE STRING
+    "Where the package keeps the speech engines (sherpa-onnx, Piper); empty: the user's data folder only")
+# The root helper's installed path, written into its D-Bus service and systemd unit.
+set(NEXA_HELPER_PATH "${CMAKE_INSTALL_FULL_LIBEXECDIR}/nexa-assistant/nexa-helper")
 
 find_package(Qt6 6.6 REQUIRED COMPONENTS Core Gui Widgets Network DBus Multimedia TextToSpeech HttpServer WebSockets)
 qt_standard_project_setup(REQUIRES 6.6)
@@ -58,3 +73,18 @@ if(NEXA_BUILD_TESTS)
     enable_testing()
     add_subdirectory(tests)
 endif()
+
+# ---------------------------------------------------------------------------------------------
+# The install layout (the .deb's; a source install uses packaging/install-helper.sh and
+# scripts/install-desktop-entry.sh instead). The helper's service and unit carry its installed path.
+# ---------------------------------------------------------------------------------------------
+configure_file(packaging/org.nexa.Helper.service.in "${CMAKE_BINARY_DIR}/packaging/org.nexa.Helper.service" @ONLY)
+configure_file(packaging/nexa-helper.service.in "${CMAKE_BINARY_DIR}/packaging/nexa-helper.service" @ONLY)
+install(FILES "${CMAKE_BINARY_DIR}/packaging/org.nexa.Helper.service"
+    DESTINATION "${CMAKE_INSTALL_DATADIR}/dbus-1/system-services")
+install(FILES packaging/org.nexa.Helper.conf DESTINATION /etc/dbus-1/system.d)
+install(FILES packaging/org.nexa.helper.policy DESTINATION "${CMAKE_INSTALL_DATADIR}/polkit-1/actions")
+install(FILES "${CMAKE_BINARY_DIR}/packaging/nexa-helper.service" DESTINATION "${CMAKE_INSTALL_LIBDIR}/systemd/system")
+install(FILES packaging/org.nexa.Assistant.desktop DESTINATION "${CMAKE_INSTALL_DATADIR}/applications")
+install(FILES packaging/org.nexa.Assistant.svg DESTINATION "${CMAKE_INSTALL_DATADIR}/icons/hicolor/scalable/apps")
+install(FILES README.md THIRD_PARTY_NOTICES.md LICENSE DESTINATION "${CMAKE_INSTALL_DOCDIR}")

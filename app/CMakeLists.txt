@@ -46,6 +46,19 @@ qt_add_resources(nexa_assistant "nexa_icons"
     FILES "${PROJECT_SOURCE_DIR}/packaging/org.nexa.Assistant.svg"
 )
 
+# A packaged build finds Qt's plugins through this qt.conf, built in as :/qt/etc/qt.conf — the binary sits in
+# /usr/bin and the plugins in /usr/lib/nexa-assistant/plugins. A source build must not carry it: the folder it
+# names does not exist beside build/app.
+if(NEXA_PACKAGED)
+    set_source_files_properties("${PROJECT_SOURCE_DIR}/packaging/qt.conf" PROPERTIES QT_RESOURCE_ALIAS qt.conf)
+    qt_add_resources(nexa_assistant "nexa_qtconf"
+        PREFIX "/qt/etc"
+        FILES "${PROJECT_SOURCE_DIR}/packaging/qt.conf"
+    )
+endif()
+
+install(TARGETS nexa_assistant RUNTIME DESTINATION "${CMAKE_INSTALL_BINDIR}")
+
 target_link_libraries(nexa_assistant PRIVATE
     nexa_core
     nexa_system
