@@ -52,8 +52,8 @@ AgentRole RoleClassifier::classify(const QString &text) {
 AgentRole RoleClassifier::forTool(QStringView toolName) {
     if (toolName.startsWith(u"android_"_s)) return AgentRole::Phone;
     if (toolName.startsWith(u"browser_"_s)) return AgentRole::Web;
-    if (toolName == u"take_screenshot"_s || toolName.startsWith(u"mouse_"_s) || toolName == u"type_text"_s
-        || toolName == u"press_keys"_s) {
+    if (toolName == u"take_screenshot"_s || toolName.startsWith(u"screen_"_s) || toolName.startsWith(u"mouse_"_s)
+        || toolName == u"type_text"_s || toolName == u"press_keys"_s) {
         return AgentRole::Screen;
     }
     return AgentRole::General;

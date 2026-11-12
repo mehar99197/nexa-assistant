@@ -121,11 +121,12 @@ std::optional<IntentMatch> ScreenIntent::match(const IntentInput &input) const {
     if (shareOn.match(text).hasMatch()) return IntentMatch{.shareScreen = true};
     if (shareOff.match(text).hasMatch()) return IntentMatch{.shareScreen = false};
     if (question.match(text).hasMatch()) {
-        return IntentMatch{.toolName = u"take_screenshot"_s, .forwardToAgent = true, .agentPrompt = input.text};
+        return IntentMatch{.toolName = u"take_screenshot"_s, .forwardToAgent = true, .agentPrompt = input.text,
+                           .textToolName = u"screen_snapshot"_s};
     }
     if (describe.match(text).hasMatch()) {
         return IntentMatch{.toolName = u"take_screenshot"_s, .forwardToAgent = true,
-                           .agentPrompt = u"Describe what is on my screen."_s};
+                           .agentPrompt = u"Describe what is on my screen."_s, .textToolName = u"screen_snapshot"_s};
     }
     return std::nullopt;
 }

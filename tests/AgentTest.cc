@@ -579,3 +579,27 @@ TEST_CASE("Cancelling an agent with a task stops only that task's tool") {
     REQUIRE(other.has_value());
     CHECK(other->isOk());
 }
+
+TEST_CASE("A provider that cannot see is told the screen can still be read as text, when that tool is offered") {
+    Fixture f;
+    f.provider.vision = false;
+    f.provider.script = {{u"I cannot look at it."_s, {}, {}}};
+    QStringList notices;
+    QObject::connect(&f.agent, &Agent::notice, [&notices](const QString &message) { notices.append(message); });
+    SECTION("without screen_snapshot the notice is as before") {
+        f.conversation.addUser(u"what is on this screenshot?"_s, {ImageAttachment{"JPEG", u"image/jpeg"_s}});
+        f.agent.run(&f.provider, &f.conversation, u"m"_s, u"gui"_s);
+        REQUIRE(f.waitDone());
+        REQUIRE(notices.size() == 1);
+        CHECK(notices.first().endsWith(u"needed to look at the screen."_s));
+    }
+    SECTION("with it, the way out is named") {
+        f.registry.add(FunctionTool::sync(ToolSpec{u"screen_snapshot"_s, u"The screen as text"_s, {}, false},
+                                          [](const QJsonObject &) -> Result<ToolResult> { return ToolResult{u"outline"_s, std::nullopt}; }));
+        f.conversation.addUser(u"what is on this screenshot?"_s, {ImageAttachment{"JPEG", u"image/jpeg"_s}});
+        f.agent.run(&f.provider, &f.conversation, u"m"_s, u"gui"_s);
+        REQUIRE(f.waitDone());
+        REQUIRE(notices.size() == 1);
+        CHECK(notices.first().endsWith(u"The screen can still be read as text with screen_snapshot."_s));
+    }
+}

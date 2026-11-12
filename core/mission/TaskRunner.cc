@@ -3,6 +3,7 @@
 #include "core/Logging.h"
 #include "core/ai/IAiProvider.h"
 #include "core/tools/ToolExecutor.h"
+#include "core/tools/ToolRegistry.h"
 
 #include <QPointer>
 
@@ -20,7 +21,7 @@ constexpr qint64 kMetricsEveryMs = 250;
 } // namespace
 
 TaskRunner::TaskRunner(TaskId id, QString source, ToolExecutor *executor, ToolRegistry *registry, QObject *parent)
-    : QObject(parent), id_(id), source_(std::move(source)), executor_(executor), agent_(executor, registry) {
+    : QObject(parent), id_(id), source_(std::move(source)), executor_(executor), registry_(registry), agent_(executor, registry) {
     agent_.setTask(id_);
     connect(&agent_, &Agent::stepStarted, this, [this](int step) {
         stepClock_.start();
@@ -91,10 +92,16 @@ void TaskRunner::startFastPath(const QString &systemPrompt, const QString &text,
     const quint64 generation = ++generation_;
     QElapsedTimer timer;
     timer.start();
-    qCDebug(lcApp) << "fast path:" << match.toolName << match.arguments;
+    // A picture for a model that takes none is wasted: the match may name a tool that says the same in words
+    // (screen_snapshot for take_screenshot), taken when the provider says this model cannot see.
+    const bool blind = provider_ && !provider_->takesImages(model_).value_or(provider_->capabilities().vision);
+    const QString toolName = blind && !match.textToolName.isEmpty() && registry_ && registry_->contains(match.textToolName)
+                                 ? match.textToolName
+                                 : match.toolName;
+    qCDebug(lcApp) << "fast path:" << toolName << match.arguments;
     const QPointer<TaskRunner> self(this);
-    executor_->execute(match.toolName, match.arguments, ToolContext{source_, id_},
-                       [self, generation, timer, systemPrompt, text, match](Result<ToolResult> result) {
+    executor_->execute(toolName, match.arguments, ToolContext{source_, id_},
+                       [self, generation, timer, systemPrompt, text, match, toolName](Result<ToolResult> result) {
         if (!self || generation != self->generation_) return;     // paused or stopped meanwhile
         TaskRunner *runner = self.data();
         const qint64 elapsed = timer.elapsed();
@@ -112,7 +119,7 @@ void TaskRunner::startFastPath(const QString &systemPrompt, const QString &text,
 
         const QString summary = result ? summarize(result.value().text) : result.error().message;
         runner->hasContent_ = true;
-        emit runner->toolFinished(match.toolName, result.isOk(), summary, elapsed);
+        emit runner->toolFinished(toolName, result.isOk(), summary, elapsed);
         if (!result) {
             runner->running_ = false;
             emit runner->failed(result.error());

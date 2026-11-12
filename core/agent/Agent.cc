@@ -58,6 +58,14 @@ void Agent::cancel(const QString &note) {
     }
 }
 
+// When the screen can be read as text, a blind model is not stuck: the notice says so.
+QString Agent::textScreenHint() const {
+    for (const ToolSpec &spec : offeredTools()) {
+        if (spec.name == u"screen_snapshot"_s) return u" The screen can still be read as text with screen_snapshot."_s;
+    }
+    return {};
+}
+
 QList<ToolSpec> Agent::offeredTools() const {
     QList<ToolSpec> tools = registry_->specs();
     if (!hidden_.isEmpty()) {
@@ -95,7 +103,7 @@ void Agent::sendStep() {
         if (sightless && !sightlessNoticed_.contains(provider_->displayName())) {
             sightlessNoticed_.insert(provider_->displayName());
             emit notice(u"%1 cannot see images, so the picture was left out of the request. A vision-capable "
-                        "provider is needed to look at the screen."_s.arg(provider_->displayName()));
+                        "provider is needed to look at the screen.%2"_s.arg(provider_->displayName(), textScreenHint()));
         }
         stripImages(request);
         stepHadImages_ = false;
@@ -128,7 +136,7 @@ void Agent::sendStep() {
             pendingBlind_ = model_;
             qCInfo(lcAi) << model_ << "cannot see images:" << error.message;
             emit notice(u"%1 cannot see images, so the screenshot was left out of the request. A vision-capable "
-                        "model is needed to look at the screen."_s.arg(model_));
+                        "model is needed to look at the screen.%2"_s.arg(model_, textScreenHint()));
             stream_.reset();
             stepHadImages_ = false;
             sendStep();

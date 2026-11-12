@@ -24,8 +24,10 @@ IntentMatch tool(const QString &name, const QJsonObject &arguments) {
     return IntentMatch{.toolName = name, .arguments = arguments};
 }
 
+// A picture of the phone for the model to answer about — or its screen as text, for a model without eyes.
 IntentMatch askAfter(const QString &name, const QString &prompt) {
-    return IntentMatch{.toolName = name, .forwardToAgent = true, .agentPrompt = prompt};
+    return IntentMatch{.toolName = name, .forwardToAgent = true, .agentPrompt = prompt,
+                       .textToolName = name == u"android_screenshot"_s ? u"android_snapshot"_s : QString()};
 }
 
 std::optional<IntentMatch> screen(const IntentInput &input) {

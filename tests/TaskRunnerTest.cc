@@ -96,3 +96,50 @@ TEST_CASE("A runner gives its provider up only while idle") {
     CHECK(rig.runner.releaseProvider() != nullptr);
     CHECK_FALSE(rig.runner.hasProvider());
 }
+
+TEST_CASE("A model that takes no images gets the text twin of a picture tool on the fast path") {
+    Rig rig;
+    rig.registry.add(FunctionTool::sync(ToolSpec{u"picture"_s, u"A picture"_s, {}, false}, [](const QJsonObject &) -> Result<ToolResult> {
+        return ToolResult{u"a picture"_s, ImageAttachment{"JPEG", u"image/jpeg"_s}};
+    }));
+    rig.registry.add(FunctionTool::sync(ToolSpec{u"words"_s, u"The words"_s, {}, false}, [](const QJsonObject &) -> Result<ToolResult> {
+        return ToolResult{u"the window in words"_s, std::nullopt};
+    }));
+    rig.provider->script = {Reply{u"Described."_s, {}, {}}};
+    IntentMatch match{.toolName = u"picture"_s, .forwardToAgent = true, .agentPrompt = u"what is on my screen?"_s,
+                      .textToolName = u"words"_s};
+    QStringList ran;
+    QObject::connect(&rig.runner, &TaskRunner::toolFinished, [&ran](const QString &tool, bool, const QString &, qint64) { ran.append(tool); });
+    SECTION("a model without eyes reads the words") {
+        rig.provider->images = false;
+        rig.runner.startFastPath(u"system"_s, u"what is on my screen?"_s, match);
+        REQUIRE(rig.waitDone());
+        CHECK(ran == QStringList{u"words"_s});
+        REQUIRE(rig.provider->requests.size() == 1);
+        const ChatMessage &asked = rig.provider->requests.first().messages.last();
+        CHECK(asked.text.contains(u"the window in words"_s));
+        CHECK(asked.images.isEmpty());
+    }
+    SECTION("a model that sees gets the picture") {
+        rig.provider->images = true;
+        rig.runner.startFastPath(u"system"_s, u"what is on my screen?"_s, match);
+        REQUIRE(rig.waitDone());
+        CHECK(ran == QStringList{u"picture"_s});
+        REQUIRE(rig.provider->requests.size() == 1);
+        CHECK(rig.provider->requests.first().messages.last().images.size() == 1);
+    }
+    SECTION("the provider's own word on vision when it does not know the model") {
+        rig.provider->images = std::nullopt;
+        rig.provider->vision = false;
+        rig.runner.startFastPath(u"system"_s, u"what is on my screen?"_s, match);
+        REQUIRE(rig.waitDone());
+        CHECK(ran == QStringList{u"words"_s});
+    }
+    SECTION("no text twin registered: the picture, as before") {
+        rig.provider->images = false;
+        rig.registry.remove(u"words"_s);
+        rig.runner.startFastPath(u"system"_s, u"what is on my screen?"_s, match);
+        REQUIRE(rig.waitDone());
+        CHECK(ran == QStringList{u"picture"_s});
+    }
+}

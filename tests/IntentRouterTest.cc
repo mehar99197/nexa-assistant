@@ -151,11 +151,13 @@ TEST_CASE("IntentRouter sends screen questions to the model with a screenshot") 
     CHECK(question->toolName == u"take_screenshot"_s);
     CHECK(question->forwardToAgent);
     CHECK(question->agentPrompt == u"What's on my screen?"_s);
+    CHECK(question->textToolName == u"screen_snapshot"_s);     // the words instead, for a model without eyes
 
     const auto describe = f.router.route(u"take a screenshot"_s);
     REQUIRE(describe.has_value());
     CHECK(describe->forwardToAgent);
     CHECK(describe->agentPrompt == u"Describe what is on my screen."_s);
+    CHECK(describe->textToolName == u"screen_snapshot"_s);
     CHECK(toolOf(f.router, u"see this"_s) == u"take_screenshot"_s);
     CHECK(toolOf(f.router, u"I want to see this movie"_s) == u"<none>"_s);
 }

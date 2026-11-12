@@ -44,6 +44,7 @@ struct IntentMatch {
     QString agentPrompt;        // what the model is asked when forwarding
     bool verbatimPayload{false};// the payload is user text (a command, text to type): skip the compound check
     std::optional<bool> shareScreen;    // "share my screen" / "stop sharing": switch screen sharing, no tool
+    QString textToolName;       // the tool instead when the model cannot see images: screen_snapshot for take_screenshot
 };
 
 // One link of the IntentRouter chain: recognises a phrase family without any network call.

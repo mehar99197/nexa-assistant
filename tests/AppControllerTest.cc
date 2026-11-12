@@ -536,3 +536,23 @@ TEST_CASE("Messages from the phone are not announced when Settings → Remote sa
     CHECK(announced.isEmpty());
     rig.controller->panic();
 }
+
+TEST_CASE("The screen-as-text tools are withheld with the screenshot until the screen is shared") {
+    ControllerRig rig;
+    const QStringList gated{u"take_screenshot"_s, u"screen_snapshot"_s, u"screen_read"_s, u"screen_click"_s, u"screen_type"_s,
+                            u"screen_wait_for"_s};
+    for (const QString &name : gated) {
+        rig.tools.add(FunctionTool::sync(ToolSpec{name, name, {}}, [](const QJsonObject &) -> Result<ToolResult> { return ToolResult{u"ok"_s, {}}; }));
+    }
+    rig.scripts = {{}, {}};
+    rig.controller->start();
+    for (const QString &name : gated) {
+        CHECK_FALSE(rig.tools.isOffered(name));
+        CHECK(rig.tools.withheldReason(name).contains(u"Share screen"_s));
+    }
+    CHECK(rig.tools.isOffered(u"run_command"_s));
+    REQUIRE(rig.controller->submit(u"share my screen"_s) != 0);
+    for (const QString &name : gated) CHECK(rig.tools.isOffered(name));
+    REQUIRE(rig.controller->submit(u"stop sharing my screen"_s) != 0);
+    for (const QString &name : gated) CHECK_FALSE(rig.tools.isOffered(name));
+}

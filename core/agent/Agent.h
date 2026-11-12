@@ -77,6 +77,7 @@ private:
     void closeOpenCalls(const QString &text);
     void stop(std::optional<Error> error, FinishReason reason);
     QList<ToolSpec> offeredTools() const;       // the registry's, without the hidden ones
+    QString textScreenHint() const;             // "…read as text with screen_snapshot" when that tool is offered
 
     ToolExecutor *executor_;
     ToolRegistry *registry_;

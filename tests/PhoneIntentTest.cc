@@ -67,6 +67,7 @@ TEST_CASE("Looking at the phone takes a screenshot and asks the model") {
         REQUIRE(match);
         CHECK(match->toolName == u"android_screenshot"_s);
         CHECK(match->forwardToAgent);
+        CHECK(match->textToolName == u"android_snapshot"_s);    // the screen as text, for a model without eyes
     }
     // A question is passed on as asked.
     const auto question = f.route(u"What's on my phone?"_s);

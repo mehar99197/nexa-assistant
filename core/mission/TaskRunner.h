@@ -80,6 +80,7 @@ private:
     TaskId id_;
     QString source_;
     ToolExecutor *executor_;
+    ToolRegistry *registry_;
     Agent agent_;
     Conversation conversation_;
     std::shared_ptr<IAiProvider> provider_;

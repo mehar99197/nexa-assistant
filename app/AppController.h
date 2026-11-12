@@ -230,7 +230,8 @@ private:
     void applyScreenSharing();
     AppContext::Situation situation(const QString &source = QString()) const;
     void refreshAppContext();           // tells the window when the app in front changed
-    void askAboutPicture(const QString &tool, const QString &question, const QString &fallback);
+    // `textTool` stands in for a model that cannot see images (android_snapshot for android_screenshot).
+    void askAboutPicture(const QString &tool, const QString &textTool, const QString &question, const QString &fallback);
     bool canUseModel(bool report);
     void applyVoiceConfig();
     void rebuildProvider();

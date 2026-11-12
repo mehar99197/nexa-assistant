@@ -50,5 +50,7 @@ TEST_CASE("A tool says whose work it is") {
     CHECK(RoleClassifier::forTool(u"browser_click"_s) == AgentRole::Web);
     CHECK(RoleClassifier::forTool(u"take_screenshot"_s) == AgentRole::Screen);
     CHECK(RoleClassifier::forTool(u"mouse_click"_s) == AgentRole::Screen);
+    CHECK(RoleClassifier::forTool(u"screen_snapshot"_s) == AgentRole::Screen);
+    CHECK(RoleClassifier::forTool(u"screen_click"_s) == AgentRole::Screen);
     CHECK(RoleClassifier::forTool(u"open_app"_s) == AgentRole::General);
 }
