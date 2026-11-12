@@ -49,6 +49,7 @@ Node toNode(const CountedItem &item) {
     node.ref = toRef(item.ref);
     node.parent = toRef(item.parent);
     node.childCount = std::max(0, item.count);
+    node.indexInParent = item.index;
     node.interfaces = item.interfaces;
     node.name = item.name;
     node.description = item.description;

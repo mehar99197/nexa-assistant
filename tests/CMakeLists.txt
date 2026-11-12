@@ -7,6 +7,7 @@ add_executable(nexa_tests
     AdbParsersTest.cc
     AdbShellTest.cc
     AtspiCacheTest.cc
+    ScreenOutlineTest.cc
     FakeHttpServer.h
     QtStringMakers.h
     ScriptedProvider.h

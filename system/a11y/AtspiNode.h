@@ -111,6 +111,7 @@ struct Node {
     NodeRef parent;
     QList<NodeRef> children;    // listed by Qt's bridge; empty when the bridge only counts them
     int childCount{0};
+    int indexInParent{-1};      // the counting bridges say; -1 when unknown
     QStringList interfaces;     // "org.a11y.atspi.Text", "org.a11y.atspi.Action", …
     QString name;
     QString description;

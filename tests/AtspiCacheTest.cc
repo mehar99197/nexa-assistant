@@ -57,6 +57,7 @@ TEST_CASE("The GTK cache form decodes: parent, count, interfaces, name, role and
     CHECK(node.ref == NodeRef{u":1.13"_s, u"/org/a11y/atspi/accessible/75"_s});
     CHECK(node.parent.path == u"/org/a11y/atspi/accessible/root"_s);
     CHECK(node.childCount == 5);
+    CHECK(node.indexInParent == 0);
     CHECK(node.children.isEmpty());
     CHECK(node.name == u"◑ nexa-mission-control-dashboard"_s);
     CHECK(node.is(Role::Frame));
