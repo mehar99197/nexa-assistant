@@ -60,7 +60,7 @@ QString PairingManager::hashToken(const QString &token) {
 }
 
 QString PairingManager::startPairing() {
-    code_ = u"%1"_s.arg(QRandomGenerator::system()->bounded(1'000'000), 6, 10, u'0');
+    code_ = u"%1"_s.arg(QRandomGenerator::system()->bounded(1'000'000), 6, 10, QLatin1Char('0'));
     codeExpires_ = now().addSecs(kCodeLifetimeSeconds);
     attempts_ = 0;
     emit codeChanged(code_);

@@ -108,7 +108,6 @@ add_executable(nexa_tests
     SkillParserTest.cc
     PortalInputBackendTest.cc
     QrCodeTest.cc
-    PhoneWindowTest.cc
     RemoteClientTest.cc
     RemoteDesktopSessionTest.cc
     RemoteProtocolTest.cc
@@ -150,7 +149,7 @@ target_link_libraries(nexa_tests PRIVATE
     nexa_voice
     nexa_remote
     nexa_ui
-    nexa_phone_ui
+    $<$<BOOL:${NEXA_BUILD_PHONE}>:nexa_phone_ui>
     nexa_options
     Qt6::Test
     Catch2::Catch2
@@ -161,3 +160,8 @@ target_compile_definitions(nexa_tests PRIVATE NEXA_TESTS_DIR="${CMAKE_CURRENT_SO
 
 include(Catch)
 catch_discover_tests(nexa_tests)
+
+# The phone app's screens against the real server: only with the phone app built for the desktop (NEXA_BUILD_PHONE).
+if(NEXA_BUILD_PHONE)
+    target_sources(nexa_tests PRIVATE PhoneWindowTest.cc)
+endif()
