@@ -81,8 +81,8 @@ QString MissionPanel::elapsed(const Task &task) {
     const qint64 h = seconds / 3600;
     const qint64 m = (seconds % 3600) / 60;
     const qint64 s = seconds % 60;
-    return h > 0 ? u"%1:%2:%3"_s.arg(h).arg(m, 2, 10, u'0').arg(s, 2, 10, u'0')
-                 : u"%1:%2"_s.arg(m, 2, 10, u'0').arg(s, 2, 10, u'0');
+    return h > 0 ? u"%1:%2:%3"_s.arg(h).arg(m, 2, 10, QLatin1Char('0')).arg(s, 2, 10, QLatin1Char('0'))
+                 : u"%1:%2"_s.arg(m, 2, 10, QLatin1Char('0')).arg(s, 2, 10, QLatin1Char('0'));
 }
 
 } // namespace nexa

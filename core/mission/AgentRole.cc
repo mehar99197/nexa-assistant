@@ -38,7 +38,7 @@ QString agentPrefix(AgentRole role) {
 }
 
 QString agentIdFor(AgentRole role, int ordinal) {
-    return u"%1-%2"_s.arg(agentPrefix(role)).arg(ordinal, 2, 10, u'0');
+    return u"%1-%2"_s.arg(agentPrefix(role)).arg(ordinal, 2, 10, QLatin1Char('0'));
 }
 
 QString roleBrief(AgentRole role) {

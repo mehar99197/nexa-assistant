@@ -1754,7 +1754,7 @@ void SettingsDialog::showPairing() {
                                "%2 %3\n\nThe code works once, for %4:%5 more.")
                                 .arg(base, code.left(3), code.mid(3))
                                 .arg(left / 60)
-                                .arg(left % 60, 2, 10, u'0'));
+                                .arg(left % 60, 2, 10, QLatin1Char('0')));
 }
 
 void SettingsDialog::showPairedDevices() {

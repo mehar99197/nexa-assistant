@@ -42,6 +42,12 @@ SpeechdTtsBackend::SpeechdTtsBackend(const QString &voice, double rate, QObject 
             });
 }
 
+// The engine reports an error from its own destructor when Speech Dispatcher is not there (a container, a
+// server): its signals are cut first, or they would reach a half-destroyed backend.
+SpeechdTtsBackend::~SpeechdTtsBackend() {
+    tts_.disconnect(this);
+}
+
 QString SpeechdTtsBackend::name() const {
     return u"Speech Dispatcher"_s;
 }
