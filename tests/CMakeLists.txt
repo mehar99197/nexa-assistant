@@ -9,6 +9,9 @@ add_executable(nexa_tests
     AndroidToolsTest.cc
     AtspiCacheTest.cc
     AtspiScreenReaderTest.cc
+    AssetDownloaderTest.cc
+    EngineAssetsTest.cc
+    EngineLocatorTest.cc
     ScreenOutlineTest.cc
     FakeScreenReader.h
     ScreenToolsTest.cc

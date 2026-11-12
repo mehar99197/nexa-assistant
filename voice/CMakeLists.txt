@@ -1,4 +1,5 @@
 add_library(nexa_voice STATIC
+    EngineLocator.h EngineLocator.cc
     VoiceBackends.h VoiceBackends.cc
     VoiceTools.h VoiceTools.cc
     Wav.h Wav.cc

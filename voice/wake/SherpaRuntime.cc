@@ -15,7 +15,8 @@ const QString kInstall = u"run scripts/download-sherpa.sh"_s;
 
 } // namespace
 
-SherpaRuntime::SherpaRuntime(QString dir) : dir_(std::move(dir)) {}
+SherpaRuntime::SherpaRuntime(QString modelsDir, QString libraryDir)
+    : dir_(std::move(modelsDir)), libraryDir_(libraryDir.isEmpty() ? dir_ : std::move(libraryDir)) {}
 
 QString SherpaRuntime::defaultDir() {
     return QStandardPaths::writableLocation(QStandardPaths::GenericDataLocation) + u"/nexa/sherpa"_s;
@@ -45,7 +46,7 @@ bool SherpaRuntime::load() {
     if (attempted_) return loaded_;
     attempted_ = true;
 
-    const QString path = dir_ + u"/lib/libsherpa-onnx-c-api.so"_s;
+    const QString path = libraryDir_ + u"/lib/libsherpa-onnx-c-api.so"_s;
     const QStringList models{kwsDir() + u"/encoder-epoch-12-avg-2-chunk-16-left-64.int8.onnx"_s,
                              kwsDir() + u"/decoder-epoch-12-avg-2-chunk-16-left-64.int8.onnx"_s,
                              kwsDir() + u"/joiner-epoch-12-avg-2-chunk-16-left-64.int8.onnx"_s,

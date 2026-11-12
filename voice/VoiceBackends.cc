@@ -1,5 +1,7 @@
 #include "voice/VoiceBackends.h"
 
+#include "voice/EngineLocator.h"
+
 #include "voice/listen/EnergyVoiceDetector.h"
 #include "voice/listen/NoiseReducer.h"
 #include "voice/listen/SileroVoiceDetector.h"
@@ -95,7 +97,7 @@ QString VoiceBackends::whisperModelPath(const QString &model) {
 }
 
 QString VoiceBackends::piperDir() {
-    return VoiceBackends::dataDir() + u"/piper"_s;
+    return EngineLocator().piperDir();
 }
 
 QString VoiceBackends::piperBinary() {
@@ -104,11 +106,23 @@ QString VoiceBackends::piperBinary() {
 
 QStringList VoiceBackends::piperVoices() {
     QStringList voices;
-    const QDir dir(piperDir() + u"/voices"_s);
-    for (const QFileInfo &file : dir.entryInfoList({u"*.onnx"_s}, QDir::Files, QDir::Name)) {
-        if (QFileInfo::exists(file.filePath() + u".json"_s)) voices.append(file.completeBaseName());
+    for (const QString &folder : EngineLocator().piperVoiceSearchDirs()) {
+        const QDir dir(folder);
+        for (const QFileInfo &file : dir.entryInfoList({u"*.onnx"_s}, QDir::Files, QDir::Name)) {
+            if (QFileInfo::exists(file.filePath() + u".json"_s) && !voices.contains(file.completeBaseName())) {
+                voices.append(file.completeBaseName());
+            }
+        }
     }
     return voices;
+}
+
+QString VoiceBackends::piperVoicePath(const QString &name) {
+    for (const QString &folder : EngineLocator().piperVoiceSearchDirs()) {
+        const QString path = folder + u"/%1.onnx"_s.arg(name);
+        if (QFileInfo::exists(path) && QFileInfo::exists(path + u".json"_s)) return path;
+    }
+    return {};
 }
 
 bool VoiceBackends::whisperBuilt() {
@@ -260,8 +274,7 @@ std::vector<std::unique_ptr<ISpeechSynthesizer>> VoiceBackends::createSynthesize
         const QStringList voices = piperVoices();
         const QString name = voices.contains(voice.piperVoice) ? voice.piperVoice : voices.value(0);
         if (QFileInfo(piperBinary()).isExecutable() && !name.isEmpty()) {
-            chain.push_back(std::make_unique<PiperSynthesizer>(
-                piperBinary(), piperDir() + u"/voices/%1.onnx"_s.arg(name), voice.ttsRate));
+            chain.push_back(std::make_unique<PiperSynthesizer>(piperBinary(), piperVoicePath(name), voice.ttsRate));
         } else {
             problems.append(u"Piper is not installed (run scripts/download-piper.sh)"_s);
         }

@@ -17,6 +17,9 @@
 #include "remote/QrCode.h"
 #include "remote/RemoteServer.h"
 #include "system/a11y/AtspiBus.h"
+#include "voice/EngineLocator.h"
+#include "system/setup/EngineAssets.h"
+#include "system/setup/AssetDownloader.h"
 #include "system/android/AdbDiscovery.h"
 #include "system/android/AndroidDevice.h"
 #include "app/PhoneLink.h"
@@ -64,6 +67,7 @@
 #include <QElapsedTimer>
 #include <QThread>
 #include <QFileInfo>
+#include <QProgressBar>
 #include <QPushButton>
 #include <QSignalBlocker>
 #include <QScreen>
@@ -562,9 +566,11 @@ QWidget *SettingsDialog::buildVoiceTab() {
     spotterStatus_->setWordWrap(true);
     spotterStatus_->setTextInteractionFlags(Qt::TextSelectableByMouse);
     if (status_.sherpa && status_.sherpa->load()) {
-        spotterStatus_->setText(tr("Instant spotting: installed"));
+        spotterStatus_->setText(status_.sherpa->libraryDir() == SherpaRuntime::defaultDir()
+                                    ? tr("Instant spotting: installed (your copy)")
+                                    : tr("Instant spotting: installed (from the package)"));
     } else {
-        spotterStatus_->setText(tr("Instant spotting: not installed — run scripts/download-sherpa.sh"));
+        spotterStatus_->setText(tr("Instant spotting: not installed — download the speech models above"));
         if (status_.sherpa) spotterStatus_->setToolTip(status_.sherpa->problem());
     }
     micStatus_ = new QLabel(page);
@@ -744,7 +750,52 @@ QWidget *SettingsDialog::buildVoiceTab() {
                             page);
     note->setWordWrap(true);
 
+    // Speech models (M28): the engines ship with the package or the scripts; the models are the user's and come
+    // from here, one download with resume and a checksum on each file.
+    auto *modelsGroup = new QGroupBox(tr("Speech models"), page);
+    auto *modelsLayout = new QVBoxLayout(modelsGroup);
+    modelsStatus_ = new QLabel(modelsGroup);
+    modelsStatus_->setObjectName(u"modelsStatus"_s);
+    modelsStatus_->setWordWrap(true);
+    modelsStatus_->setTextInteractionFlags(Qt::TextSelectableByMouse);
+    modelsProgress_ = new QProgressBar(modelsGroup);
+    modelsProgress_->setObjectName(u"modelsProgress"_s);
+    modelsProgress_->setTextVisible(true);
+    modelsProgress_->hide();
+    modelsButton_ = new QPushButton(modelsGroup);
+    modelsButton_->setObjectName(u"modelsDownload"_s);
+    connect(modelsButton_, &QPushButton::clicked, this, [this] {
+        if (!status_.assets) return;
+        if (status_.assets->isRunning()) {
+            status_.assets->cancel();
+        } else {
+            status_.assets->start(engineassets::missing(status_.assets->dataDir()));
+        }
+        refreshModels();
+    });
+    if (status_.assets) {
+        connect(status_.assets, &AssetDownloader::progress, this, [this](const QString &id, qint64 received, qint64 total) {
+            modelsProgress_->show();
+            modelsProgress_->setRange(0, int(std::max<qint64>(1, total / 1024)));
+            modelsProgress_->setValue(int(received / 1024));
+            modelsProgress_->setFormat(tr("%1 — %p%").arg(id));
+        });
+        connect(status_.assets, &AssetDownloader::assetInstalled, this, &SettingsDialog::refreshModels);
+        connect(status_.assets, &AssetDownloader::finished, this, &SettingsDialog::refreshModels);
+        connect(status_.assets, &AssetDownloader::failed, this, [this](const QString &id, const Error &error) {
+            refreshModels();
+            modelsStatus_->setText(modelsStatus_->text() + u"\n"_s + tr("%1: %2").arg(id, error.message));
+        });
+    }
+    auto *modelsRow = new QHBoxLayout;
+    modelsRow->addWidget(modelsButton_);
+    modelsRow->addWidget(modelsProgress_, 1);
+    modelsLayout->addWidget(modelsStatus_);
+    modelsLayout->addLayout(modelsRow);
+    refreshModels();
+
     auto *layout = new QVBoxLayout(page);
+    layout->addWidget(modelsGroup);
     layout->addLayout(waking);
     layout->addSpacing(8);
     layout->addLayout(listening);
@@ -879,8 +930,39 @@ void SettingsDialog::updateVoiceStatus() {
     if (QFileInfo::exists(VoiceBackends::whisperModelPath(model))) {
         whisperStatus_->setText(tr("Installed."));
     } else {
-        whisperStatus_->setText(tr("Not installed — run: scripts/download-whisper-model.sh %1").arg(model));
+        whisperStatus_->setText(model == u"base.en"_s
+                                    ? tr("Not installed — download the speech models above.")
+                                    : tr("Not installed — run: scripts/download-whisper-model.sh %1").arg(model));
     }
+}
+
+void SettingsDialog::refreshModels() {
+    const QString dataDir = status_.assets ? status_.assets->dataDir() : EngineLocator::defaultUserDataDir();
+    const QList<engineassets::Asset> missing = engineassets::missing(dataDir);
+    QStringList lines;
+    for (const QString &group : engineassets::groups()) {
+        qint64 bytes = 0;
+        for (const engineassets::Asset &asset : missing) {
+            if (asset.group == group) bytes += asset.bytes;
+        }
+        lines.append(bytes == 0 ? tr("%1: installed").arg(engineassets::groupTitle(group))
+                                : tr("%1: missing, %2").arg(engineassets::groupTitle(group), engineassets::sizeText(bytes)));
+    }
+    const bool running = status_.assets && status_.assets->isRunning();
+    if (running) {
+        lines.append(tr("Downloading into %1 — the rest of Nexa keeps working meanwhile.").arg(dataDir));
+    } else if (missing.isEmpty()) {
+        lines.append(tr("Everything is in %1.").arg(dataDir));
+        modelsProgress_->hide();
+    } else {
+        lines.append(tr("They download into %1; a download that stops picks up where it was.").arg(dataDir));
+        modelsProgress_->hide();
+    }
+    modelsStatus_->setText(lines.join(u'\n'));
+    modelsButton_->setEnabled(status_.assets && (running || !missing.isEmpty()));
+    modelsButton_->setText(running ? tr("Cancel")
+                           : missing.isEmpty() ? tr("Everything installed")
+                                               : tr("Download (%1)").arg(engineassets::sizeText(engineassets::totalBytes(missing))));
 }
 
 void SettingsDialog::refreshMyVoice() {
@@ -892,8 +974,8 @@ void SettingsDialog::refreshMyVoice() {
     enrolButton_->setText(enrolled ? tr("Enrol again…") : tr("Enrol my voice…"));
     forgetVoiceButton_->setEnabled(profile.isOk());
     if (!canTell) {
-        myVoiceStatus_->setText(tr("Telling your voice from others needs the speaker model — run "
-                                   "scripts/download-sherpa.sh, then reopen Settings."));
+        myVoiceStatus_->setText(tr("Telling your voice from others needs the speaker model — download the speech "
+                                   "models above, then reopen Settings."));
     } else if (!enrolled) {
         myVoiceStatus_->setText(tr("Not enrolled: hands-free, Nexa answers anyone."));
     } else {

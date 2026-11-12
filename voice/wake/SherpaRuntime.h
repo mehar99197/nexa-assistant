@@ -7,15 +7,18 @@
 
 namespace nexa {
 
-// sherpa-onnx's C API (v2.0.1), loaded at run time from <dir>/lib (Facade): nothing is linked, so Nexa builds
-// and runs without it, and scripts/download-sherpa.sh puts the library and its models in place. The functions
-// are resolved by name against the vendored header (voice/wake/sherpa/c-api.h, Apache-2.0); one missing means
-// another version — not used. Made once in main.cc; the parts it serves may run on other threads.
+// sherpa-onnx's C API (v2.0.1), loaded at run time from <libraryDir>/lib (Facade): nothing is linked, so Nexa builds
+// and runs without it, and scripts/download-sherpa.sh (or the .deb, under /usr/lib/nexa-assistant — EngineLocator
+// says which) puts the library in place; the models are the user's, under <modelsDir>. The functions are resolved
+// by name against the vendored header (voice/wake/sherpa/c-api.h, Apache-2.0); one missing means another version —
+// not used. Made once in main.cc; the parts it serves may run on other threads.
 class SherpaRuntime {
 public:
-    explicit SherpaRuntime(QString dir = defaultDir());
+    // `libraryDir` empty: the library lives beside the models, as the script installs it.
+    explicit SherpaRuntime(QString modelsDir = defaultDir(), QString libraryDir = QString());
 
     static QString defaultDir();    // ~/.local/share/nexa/sherpa
+    QString libraryDir() const { return libraryDir_; }
 
     // Loads the library and checks the models are there; once — later calls give the same answer.
     bool load();
@@ -78,6 +81,7 @@ public:
 
 private:
     QString dir_;
+    QString libraryDir_;
     QLibrary library_;
     bool attempted_{false};
     bool loaded_{false};

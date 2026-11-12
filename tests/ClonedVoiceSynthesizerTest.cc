@@ -70,7 +70,7 @@ TEST_CASE("Installed ZipVoice: a sentence in the sample's voice, and whisper hea
     if (voices.isEmpty()) SKIP("Piper has no voice installed to make a sample with");
 
     // The sample: Piper reading the passage stands in for the owner.
-    PiperSynthesizer piper(VoiceBackends::piperBinary(), VoiceBackends::piperDir() + u"/voices/%1.onnx"_s.arg(voices.first()), 0.0);
+    PiperSynthesizer piper(VoiceBackends::piperBinary(), VoiceBackends::piperVoicePath(voices.first()), 0.0);
     const std::optional<Result<PcmAudio>> read = waitFor<PcmAudio>(
         [&piper](std::function<void(Result<PcmAudio>)> done) { piper.synthesize(VoiceSample::passage(), std::move(done)); },
         60'000);

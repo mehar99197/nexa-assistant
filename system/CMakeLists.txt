@@ -47,6 +47,8 @@ add_library(nexa_system STATIC
     net/TunnelProcess.h net/TunnelProcess.cc
     screen/ScreenAwake.h screen/ScreenAwake.cc
     screen/ScreenCapture.h screen/ScreenCapture.cc
+    setup/AssetDownloader.h setup/AssetDownloader.cc
+    setup/EngineAssets.h setup/EngineAssets.cc
 )
 
 # X11/XTEST is the fallback input backend, used on X11 sessions and for XWayland windows.

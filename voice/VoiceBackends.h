@@ -36,9 +36,10 @@ class VoiceBackends {
 public:
     static QString dataDir();
     static QString whisperModelPath(const QString &model);     // …/models/ggml-<model>.bin
-    static QString piperDir();                                  // ~/.local/share/nexa/piper
+    static QString piperDir();                                  // the engine: the user's copy, else the package's (EngineLocator)
     static QString piperBinary();
-    static QStringList piperVoices();                           // installed voice names
+    static QStringList piperVoices();                           // installed voice names, from every voices folder
+    static QString piperVoicePath(const QString &name);         // the .onnx of a voice, or empty
     static bool whisperBuilt();
 
     // Which providers recognise requests, in order (none for an explicit choice that cannot).

@@ -57,11 +57,13 @@
 #include "system/a11y/AtspiScreenReader.h"
 #include "system/a11y/ScreenTools.h"
 #include "system/screen/ScreenAwake.h"
+#include "system/setup/AssetDownloader.h"
 #include "system/screen/ScreenCapture.h"
 #include "core/mcp/McpConnectors.h"
 #include "ui/NexaDesigns.h"
 #include "ui/NexaTheme.h"
 #include "ui/NexaThemes.h"
+#include "voice/EngineLocator.h"
 #include "voice/VoiceTools.h"
 #include "voice/Wav.h"
 #include "voice/capture/AudioCapture.h"
@@ -307,7 +309,11 @@ int main(int argc, char *argv[]) {
     WpctlAudioController audio;
     WpctlAudioController microphoneVolume(WpctlAudioController::Target::Microphone);   // "Lower it" only
     // sherpa-onnx (scripts/download-sherpa.sh): the wake-name spotter, Silero and noise reduction, loaded when used.
-    SherpaRuntime sherpa;
+    // The speech engines: the user's own copies (scripts/download-*.sh) first, the package's second; the models
+    // are the user's and download from Settings → Voice.
+    EngineLocator engines;
+    SherpaRuntime sherpa(engines.sherpaModelsDir(), engines.sherpaLibraryDir());
+    AssetDownloader assets(engines.userDataDir());
     MprisController media;
     FileAccess files;
     ScreenCapture screen;
@@ -564,6 +570,7 @@ int main(int argc, char *argv[]) {
                                    .memory = &memory,
                                    .skills = &skills,
                                    .a11y = &a11y,
+                                   .assets = &assets,
                                    .sherpa = &sherpa,
                                    .voice = &voice,
                                    .speakerGate = &speakerGate,

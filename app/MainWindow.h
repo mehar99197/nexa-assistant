@@ -191,7 +191,9 @@ private:
     QLabel *browserLabel_{nullptr};
     QLabel *appLabel_{nullptr};     // "In: GNOME Terminal" while Nexa knows where the user is
     QString appHint_;
+    void showSpeechModels();
     QLabel *helperLabel_{nullptr};
+    QLabel *modelsLabel_{nullptr};          // "Speech models: 540 MB missing — Settings → Voice", hidden when complete
     QLabel *sttLabel_{nullptr};
     QLabel *ttsLabel_{nullptr};
     QLabel *phoneLabel_{nullptr};

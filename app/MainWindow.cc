@@ -1,4 +1,7 @@
 #include "app/MainWindow.h"
+#include "voice/EngineLocator.h"
+#include "system/setup/EngineAssets.h"
+#include "system/setup/AssetDownloader.h"
 
 #include "app/ActionLogDock.h"
 #include "app/ActivityStream.h"
@@ -638,6 +641,16 @@ void MainWindow::buildStatusBar() {
     statusBar()->addPermanentWidget(screenLabel_);
     showScreenSharing(controller_->isScreenShared());
 
+    modelsLabel_ = new QLabel(this);
+    modelsLabel_->setObjectName(u"modelsHint"_s);
+    statusBar()->addPermanentWidget(modelsLabel_);
+    showSpeechModels();
+    if (status_.assets) {
+        connect(status_.assets, &AssetDownloader::assetInstalled, this, &MainWindow::showSpeechModels);
+        connect(status_.assets, &AssetDownloader::finished, this, &MainWindow::showSpeechModels);
+        connect(status_.assets, &AssetDownloader::failed, this, &MainWindow::showSpeechModels);
+    }
+
     if (status_.browser) {
         // Where the browser tools work; installing Playwright or adding the extension changes it.
         browserLabel_ = new QLabel(this);
@@ -1228,6 +1241,22 @@ void MainWindow::showVoiceEngines() {
                                                             : tr("off")));
     ttsLabel_->setToolTip(tr("The voice replies are read with, in the order tried (Settings → Voice): %1")
                               .arg(voice->speechName()));
+}
+
+void MainWindow::showSpeechModels() {
+    const QString dataDir = status_.assets ? status_.assets->dataDir() : EngineLocator::defaultUserDataDir();
+    const QList<engineassets::Asset> missing = engineassets::missing(dataDir);
+    if (missing.isEmpty()) {
+        modelsLabel_->hide();
+        return;
+    }
+    modelsLabel_->show();
+    if (status_.assets && status_.assets->isRunning()) {
+        modelsLabel_->setText(tr("Speech models: downloading…"));
+    } else {
+        modelsLabel_->setText(tr("Speech models: %1 missing — Settings → Voice").arg(engineassets::sizeText(engineassets::totalBytes(missing))));
+    }
+    modelsLabel_->setToolTip(tr("Offline speech recognition, the wake name, your voice and Piper need models that download from Settings → Voice."));
 }
 
 void MainWindow::showHelper() {
