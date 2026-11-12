@@ -18,9 +18,10 @@
 
 #include <QGuiApplication>
 #include <QJsonArray>
-#include <QRegularExpression>
 #include <QJsonDocument>
 #include <QJsonObject>
+#include <QJsonValue>
+#include <QRegularExpression>
 #include <QScreen>
 
 #include <cmath>

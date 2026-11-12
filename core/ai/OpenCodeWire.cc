@@ -2,6 +2,7 @@
 
 #include <QJsonArray>
 #include <QJsonDocument>
+#include <QJsonValue>
 #include <QRegularExpression>
 
 #include <algorithm>

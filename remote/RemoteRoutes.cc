@@ -1,6 +1,7 @@
 #include "remote/RemoteRoutes.h"
 
 #include <QJsonObject>
+#include <QJsonValue>
 #include <QUrl>
 
 #include <algorithm>

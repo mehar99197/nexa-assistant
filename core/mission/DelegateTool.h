@@ -2,6 +2,8 @@
 
 #include "core/tools/ITool.h"
 
+#include <QJsonObject>
+
 namespace nexa {
 
 class MissionControl;

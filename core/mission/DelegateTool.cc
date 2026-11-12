@@ -4,6 +4,8 @@
 #include "core/mission/MissionControl.h"
 #include "core/tools/ToolArguments.h"
 
+#include <QJsonObject>
+
 using namespace Qt::StringLiterals;
 
 namespace nexa {

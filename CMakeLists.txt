@@ -22,6 +22,7 @@ option(NEXA_SANITIZE "Build with AddressSanitizer + UndefinedBehaviorSanitizer" 
 # A packaged build (the .deb, scripts/build-deb.sh): Qt's plugins are found through the qt.conf built into the
 # binary, and the speech engines in NEXA_ENGINE_DIR when the user has no copy of their own.
 option(NEXA_PACKAGED "Build for the self-contained package: embedded qt.conf, engines under NEXA_ENGINE_DIR" OFF)
+option(NEXA_BUILD_HELPER "Build the root helper (needs polkit-qt6); OFF for a build against another Qt without it" ON)
 
 include(GNUInstallDirs)
 set(CMAKE_INSTALL_DOCDIR "${CMAKE_INSTALL_DATAROOTDIR}/doc/nexa-assistant")
@@ -64,7 +65,9 @@ add_subdirectory(voice)
 add_subdirectory(remote)
 add_subdirectory(ui)
 add_subdirectory(app)
-add_subdirectory(helper)
+if(NEXA_BUILD_HELPER)
+    add_subdirectory(helper)
+endif()
 if(NEXA_BUILD_PHONE)
     add_subdirectory(android)
 endif()

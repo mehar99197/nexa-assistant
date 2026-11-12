@@ -9,6 +9,7 @@
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
+#include <QJsonValue>
 #include <QRandomGenerator>
 #include <QRegularExpression>
 #include <QSaveFile>

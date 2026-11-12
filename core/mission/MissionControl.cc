@@ -8,6 +8,8 @@
 
 #include <algorithm>
 
+#include <QJsonObject>
+
 using namespace Qt::StringLiterals;
 
 namespace nexa {

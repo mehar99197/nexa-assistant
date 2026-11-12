@@ -1,5 +1,6 @@
 #include "core/intent/MemoryIntents.h"
 
+#include <QJsonObject>
 #include <QRegularExpression>
 
 using namespace Qt::StringLiterals;

@@ -11,11 +11,13 @@
 #include <QDir>
 #include <QFileInfo>
 #include <QJsonArray>
+#include <QJsonObject>
+#include <QJsonValue>
 #include <QProcess>
-#include <QTemporaryDir>
-#include <QUrl>
 #include <QRegularExpression>
 #include <QStandardPaths>
+#include <QTemporaryDir>
+#include <QUrl>
 
 using namespace Qt::StringLiterals;
 

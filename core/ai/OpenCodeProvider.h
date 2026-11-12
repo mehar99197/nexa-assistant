@@ -6,6 +6,7 @@
 #include "core/config/Config.h"
 
 #include <QHash>
+#include <QJsonObject>
 #include <QPointer>
 #include <QTimer>
 

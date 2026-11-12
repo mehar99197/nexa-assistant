@@ -7,6 +7,7 @@
 #include "core/net/HttpClient.h"
 
 #include <QJsonDocument>
+#include <QJsonObject>
 #include <QRegularExpression>
 
 #include <algorithm>

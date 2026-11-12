@@ -5,6 +5,7 @@
 
 #include <QJsonArray>
 #include <QJsonDocument>
+#include <QJsonValue>
 #include <QNetworkReply>
 #include <QSet>
 

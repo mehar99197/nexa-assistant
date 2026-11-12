@@ -73,19 +73,20 @@
 #include "voice/pipeline/VoicePipeline.h"
 #include "voice/wake/SherpaRuntime.h"
 
+
 #include <QApplication>
 #include <QCommandLineParser>
-
-#include <cstdio>
-#include <string_view>
 #include <QFile>
 #include <QFileInfo>
-#include <QMessageBox>
-#include <QStandardPaths>
 #include <QIcon>
 #include <QJsonArray>
 #include <QJsonObject>
+#include <QJsonValue>
+#include <QMessageBox>
+#include <QStandardPaths>
 #include <QTimer>
+#include <cstdio>
+#include <string_view>
 
 #include <functional>
 

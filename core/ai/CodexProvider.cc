@@ -7,6 +7,7 @@
 #include "core/ai/TranscriptWriter.h"
 
 #include <QDir>
+#include <QJsonObject>
 #include <QStandardPaths>
 #include <QTimer>
 

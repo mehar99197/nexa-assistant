@@ -22,6 +22,7 @@
 #include "voice/tts/ITextToSpeech.h"
 
 #include <QElapsedTimer>
+#include <QJsonObject>
 #include <QScopeGuard>
 #include <QScopedValueRollback>
 

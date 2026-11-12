@@ -8,6 +8,7 @@
 #include "core/mission/Task.h"
 
 #include <QElapsedTimer>
+#include <QJsonObject>
 #include <QObject>
 #include <QSet>
 

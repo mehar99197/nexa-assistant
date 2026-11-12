@@ -4,6 +4,7 @@
 #include "core/mcp/McpConnectors.h"
 #include "system/browser/ChromeProfiles.h"
 
+#include <QJsonObject>
 #include <QObject>
 #include <QString>
 

@@ -6,6 +6,7 @@
 #include "core/tools/ToolRegistry.h"
 #include "core/tools/ToolSpec.h"
 
+#include <QJsonObject>
 #include <QPointer>
 #include <QRegularExpression>
 

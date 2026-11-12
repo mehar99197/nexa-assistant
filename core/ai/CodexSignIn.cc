@@ -3,6 +3,7 @@
 #include "core/Logging.h"
 #include "core/ai/CodexEvents.h"
 
+#include <QJsonObject>
 #include <QPointer>
 #include <QStandardPaths>
 

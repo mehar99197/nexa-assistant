@@ -7,6 +7,7 @@
 #include <QCoreApplication>
 #include <QDir>
 #include <QFile>
+#include <QJsonValue>
 #include <QPointer>
 
 #include <signal.h>

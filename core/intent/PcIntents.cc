@@ -1,6 +1,7 @@
 #include "core/intent/PcIntents.h"
 
 #include <QJsonArray>
+#include <QJsonObject>
 #include <QRegularExpression>
 
 using namespace Qt::StringLiterals;

@@ -7,6 +7,7 @@
 #include <QByteArray>
 #include <QHash>
 #include <QJsonObject>
+#include <QJsonValue>
 #include <QList>
 #include <QObject>
 #include <QProcess>

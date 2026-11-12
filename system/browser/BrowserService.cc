@@ -9,6 +9,8 @@
 #include <QHash>
 #include <QImage>
 #include <QJsonArray>
+#include <QJsonObject>
+#include <QJsonValue>
 #include <QPointer>
 #include <QStandardPaths>
 

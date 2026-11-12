@@ -1,6 +1,7 @@
 #include "core/config/Config.h"
 
 #include <QJsonArray>
+#include <QJsonValue>
 #include <QRegularExpression>
 #include <QStringList>
 

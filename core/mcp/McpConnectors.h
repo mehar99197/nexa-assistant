@@ -6,6 +6,7 @@
 #include "core/tools/ITool.h"
 #include "core/tools/ToolSpec.h"
 
+#include <QJsonObject>
 #include <QList>
 #include <QObject>
 #include <QString>

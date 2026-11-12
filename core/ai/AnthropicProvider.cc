@@ -5,6 +5,7 @@
 
 #include <QJsonArray>
 #include <QJsonDocument>
+#include <QJsonValue>
 #include <QNetworkReply>
 
 using namespace Qt::StringLiterals;

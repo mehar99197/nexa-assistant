@@ -1,5 +1,6 @@
 #include "core/intent/PhoneIntents.h"
 
+#include <QJsonObject>
 #include <QRegularExpression>
 
 using namespace Qt::StringLiterals;
