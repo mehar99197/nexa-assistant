@@ -1,0 +1,104 @@
+name: build
+
+# Builds Nexa Assistant on Ubuntu 24.04, runs the tests, packages the self-contained .deb
+# (scripts/build-deb.sh), installs it in a clean container (scripts/test-deb.sh), and — for a tag v* — attaches
+# it to a GitHub Release. Every third-party download is pinned and checked in the scripts it runs.
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: build-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  QT_VERSION: '6.8.3'
+  POLKIT_QT_VERSION: '0.201.1'
+  POLKIT_QT_SHA256: '95d8e2cae530c546d9437459deb8a1bea38d572f0f9772cc2860dc143637f256'
+
+jobs:
+  linux:
+    name: Build, test, package (Ubuntu 24.04)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install the toolchain and the libraries Qt's plugins need
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq --no-install-recommends \
+            cmake ninja-build pkg-config patchelf file dpkg-dev curl bzip2 xz-utils \
+            libxkbcommon-dev libxkbcommon-x11-dev libqrencode-dev \
+            libpolkit-gobject-1-dev libpolkit-agent-1-dev extra-cmake-modules libglib2.0-dev \
+            libgl-dev libegl-dev libfontconfig-dev libfreetype-dev libharfbuzz-dev \
+            libxcb-cursor0 libxcb-icccm4 libxcb-image0 libxcb-keysyms1 libxcb-render-util0 \
+            libxcb-xinerama0 libxcb-xkb1 libxcb-shape0 libxcb-randr0 libxcb-util1 \
+            libasound2-dev libpulse-dev libspeechd-dev dbus dbus-x11 adb catch2
+
+      - name: Install Qt ${{ env.QT_VERSION }}
+        uses: jurplel/install-qt-action@v4
+        with:
+          version: ${{ env.QT_VERSION }}
+          modules: 'qthttpserver qtwebsockets qtmultimedia qtspeech'
+          cache: true
+
+      # Ubuntu 24.04 has no polkit-qt6 package: KDE's polkit-qt-1 is built from its release tarball against this Qt.
+      - name: Build polkit-qt-1 ${{ env.POLKIT_QT_VERSION }}
+        run: |
+          curl -fsSL -o polkit-qt-1.tar.xz "https://download.kde.org/stable/polkit-qt-1/polkit-qt-1-${POLKIT_QT_VERSION}.tar.xz"
+          echo "${POLKIT_QT_SHA256}  polkit-qt-1.tar.xz" | sha256sum -c -
+          tar -xJf polkit-qt-1.tar.xz
+          cmake -S "polkit-qt-1-${POLKIT_QT_VERSION}" -B polkit-build -G Ninja \
+            -DQT_MAJOR_VERSION=6 -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=/usr/local \
+            -DBUILD_TESTING=OFF -DBUILD_EXAMPLES=OFF
+          cmake --build polkit-build
+          sudo cmake --install polkit-build
+
+      - name: Configure and build (tests on, packaged)
+        run: |
+          cmake -S . -B build -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=/usr \
+            -DNEXA_PACKAGED=ON -DNEXA_BUILD_WHISPER=ON -DNEXA_BUILD_TESTS=ON -DNEXA_BUILD_PHONE=OFF \
+            -DGGML_NATIVE=OFF -DGGML_AVX=ON -DGGML_AVX2=ON -DGGML_FMA=ON -DGGML_F16C=ON
+          cmake --build build
+
+      - name: Test (offscreen, on a session bus of its own)
+        timeout-minutes: 25
+        run: |
+          export QT_QPA_PLATFORM=offscreen
+          dbus-run-session -- ctest --test-dir build --output-on-failure --timeout 300
+
+      - name: Package
+        run: scripts/build-deb.sh --build-dir build --out dist --skip-configure
+
+      - name: Install the package in a clean container and run it
+        timeout-minutes: 15
+        run: scripts/test-deb.sh dist/nexa-assistant_*.deb
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: nexa-assistant-deb
+          path: dist/*.deb
+          if-no-files-found: error
+
+  release:
+    name: GitHub Release
+    needs: linux
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: nexa-assistant-deb
+          path: dist
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: dist/*.deb
+          generate_release_notes: true
