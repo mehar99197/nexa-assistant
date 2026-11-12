@@ -94,8 +94,10 @@ export QMAKE="${QMAKE:-$(command -v qmake6 || command -v qmake || true)}"
 # Wayland window — the app id, the portals and the global shortcuts all prefer it.
 QT_PLUGINS="$("$QMAKE" -query QT_INSTALL_PLUGINS)"
 WAYLAND_PLUGINS="$(cd "$QT_PLUGINS/platforms" 2>/dev/null && ls libqwayland*.so 2>/dev/null | paste -sd ';' - || true)"
+# offscreen goes in too: --screenshot runs, the tests and the package's own container test use it.
+export EXTRA_PLATFORM_PLUGINS="libqoffscreen.so"
 if [[ -n "$WAYLAND_PLUGINS" ]]; then
-    export EXTRA_PLATFORM_PLUGINS="$WAYLAND_PLUGINS"
+    EXTRA_PLATFORM_PLUGINS="$EXTRA_PLATFORM_PLUGINS;$WAYLAND_PLUGINS"
     echo "== Wayland platform plugins: $WAYLAND_PLUGINS"
 else
     echo "== this Qt has no Wayland platform plugin; xcb (XWayland) only"

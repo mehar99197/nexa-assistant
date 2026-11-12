@@ -23,7 +23,7 @@ docker run --rm -v "$DIR:/pkg:ro" "$IMAGE" bash -euxc "
     test -f /usr/lib/nexa-assistant/sherpa/lib/libsherpa-onnx-c-api.so
     test -x /usr/lib/nexa-assistant/piper/piper
     mkdir -p /tmp/xdg && chmod 0700 /tmp/xdg
-    export XDG_RUNTIME_DIR=/tmp/xdg QT_QPA_PLATFORM=offscreen HOME=/root
+    export XDG_RUNTIME_DIR=/tmp/xdg QT_QPA_PLATFORM=offscreen HOME=/root LANG=C.UTF-8
     timeout 120 nexa-assistant --new-instance --ask 'run uname -sr' --screenshot /tmp/shot.png
     test -s /tmp/shot.png
     echo 'package OK'
