@@ -77,6 +77,23 @@ every provider with a speech model (agy, opencode and Codex have none). Local re
 whole wake → request → reply → follow-up path runs as if the room had said it; with
 `QT_LOGGING_RULES="nexa.voice.debug=true"` the log says what the spotter heard and why it was taken or ignored.
 
+The package (M28): `scripts/build-deb.sh [--build-dir build-deb] [--out dist]` configures a packaged build
+(`-DNEXA_PACKAGED=ON`: Qt's plugins through the `packaging/qt.conf` built in as `:/qt/etc/qt.conf`, the speech engines
+looked for under `NEXA_ENGINE_DIR` = `/usr/lib/nexa-assistant` after the user's own `~/.local/share/nexa` —
+`voice/EngineLocator`; whisper.cpp with `GGML_NATIVE=OFF` and AVX2, so the binary runs on any CPU since 2013),
+installs it into a staging tree (`cmake --install`: the layout in `CMakeLists.txt`'s install rules — the app in
+`/usr/bin`, the helper in `/usr/libexec/nexa-assistant`, its D-Bus service and systemd unit generated from
+`packaging/*.in` with that path), bundles the whole library closure of both binaries with linuxdeploy (pinned; glibc,
+libstdc++ and the GL stack stay the host's), adds the pinned sherpa-onnx and Piper archives, patches RPATHs, and runs
+`dpkg-deb` with `packaging/debian/`. `scripts/test-deb.sh dist/*.deb` installs it in a clean `ubuntu:24.04` container
+(Docker) and runs `--version`, a fast-path `--ask` with a screenshot and the helper's `--version` — what the CI
+(`.github/workflows/build.yml`: Ubuntu 24.04, Qt 6.8 from aqtinstall, polkit-qt-1 built from source, the tests on a
+`dbus-run-session`, then the package and the container test; a tag `v*` publishes a GitHub Release) does on every push.
+The models are not in the package: `system/setup/EngineAssets` is the pinned manifest (the same URLs and hashes as the
+scripts — a test reads them), `AssetDownloader` fetches them with resume and verification into the user's folder, and
+Settings → Voice → **Speech models** drives it; `nexa-assistant --version` and `nexa-helper --version` answer with no
+display. A source build keeps `install-helper.sh` and the scripts as before.
+
 The screen as text (M27, nothing to install): `screen_snapshot` reads the window in front over the desktop's
 accessibility bus (`busctl --user call org.a11y.Bus /org/a11y/bus org.a11y.Bus GetAddress` says where it is; `busctl
 --address=<it> list` who is on it). GTK apps are on it always; Chrome, Electron and Qt apps (Nexa itself) only with

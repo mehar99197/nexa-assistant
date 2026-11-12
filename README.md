@@ -129,6 +129,24 @@ not running, not signed in, out of quota — the next one that allows it answers
 says `via agy`. For a model that cannot call tools (many small local ones), tick "This model cannot call tools" and
 Nexa describes the tools in the prompt instead.
 
+## Install (the package)
+
+The `.deb` from https://assistant.nexadownloadmanager.com (or the GitHub release) is self-contained: Qt, whisper.cpp,
+sherpa-onnx and Piper are inside it, and it installs on Ubuntu 24.04 or newer and Debian 13 or newer (x86-64, a CPU
+with AVX2 — anything since 2013).
+
+```bash
+sudo apt install ./nexa-assistant_1.0.0_amd64.deb      # the root helper comes with it: no install-helper.sh needed
+nexa-assistant
+```
+
+The speech models (about 420 MB — offline recognition, the wake name, your voice, the Piper voice and ZipVoice) are
+not in the package: Settings → Voice → **Speech models → Download** fetches them into `~/.local/share/nexa`, with
+resume and a checksum on every file, and the status bar says so until they are there. The cloud recogniser and voice
+of a provider work meanwhile. A machine that already runs the source build should `sudo ./packaging/uninstall-helper.sh`
+first, so one helper answers on the bus. `scripts/build-deb.sh` builds the package from a checkout and
+`scripts/test-deb.sh` installs it in a clean container; GitHub Actions does both on every push.
+
 ## Build
 
 ```bash
@@ -153,6 +171,9 @@ scripts/download-whisper-model.sh base.en    # offline speech recognition (148 M
 scripts/download-piper.sh                    # offline voice (26 MB + a 63 MB voice), optional
 scripts/download-sherpa.sh                   # wake-name spotter, voice detection, noise reduction, your voice (220 MB), optional
 ```
+
+The three model scripts and Settings → Voice → Speech models install the same files into the same folders, so
+either way works; the scripts also fetch the engines a source build lacks.
 
 On first start Nexa offers opencode and agy if they are installed, and installs Playwright — the browser automation that is
 part of it — into `~/.local/share/nexa/playwright` by itself (it needs Node.js 18 or newer and npm:

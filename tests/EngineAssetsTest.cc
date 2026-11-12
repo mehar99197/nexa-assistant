@@ -1,5 +1,6 @@
 // system/setup/EngineAssets: the pinned manifest of the speech models — the same pins as the download scripts.
 
+#include "system/setup/AssetDownloader.h"
 #include "system/setup/EngineAssets.h"
 
 #include "QtStringMakers.h"
@@ -9,8 +10,11 @@
 #include <QRegularExpression>
 #include <QSet>
 #include <QTemporaryDir>
+#include <QTest>
 
 #include <catch2/catch_test_macros.hpp>
+
+#include <optional>
 
 using namespace nexa;
 using namespace nexa::engineassets;
@@ -89,4 +93,26 @@ TEST_CASE("missing() sees what is installed, file by file") {
     CHECK_FALSE(ids.contains(u"kws"_s));
     CHECK(ids.size() == all().size() - 2);
     CHECK(groupTitle(u"own-voice"_s).contains(u"ZipVoice"_s));
+}
+
+// The smallest real file, from its real address: the pin is the file's. Skipped offline.
+TEST_CASE("The pinned silero model downloads from its address and matches its hash", "[live]") {
+    QTemporaryDir data;
+    QTemporaryDir cache;
+    engineassets::Asset silero;
+    for (const engineassets::Asset &asset : all()) {
+        if (asset.id == u"silero"_s) silero = asset;
+    }
+    REQUIRE(silero.bytes == 643'854);
+    AssetDownloader downloader(data.path());
+    downloader.setCacheDir(cache.path());
+    bool done = false;
+    std::optional<Error> failure;
+    QObject::connect(&downloader, &AssetDownloader::finished, [&done] { done = true; });
+    QObject::connect(&downloader, &AssetDownloader::failed, [&failure](const QString &, const Error &error) { failure = error; });
+    downloader.start({silero});
+    REQUIRE(QTest::qWaitFor([&] { return done || failure.has_value(); }, 60'000));
+    if (failure && failure->code == ErrorCode::Network) SKIP("offline: " + failure->message.toStdString());
+    REQUIRE_FALSE(failure.has_value());
+    CHECK(QFileInfo(data.path() + u"/sherpa/silero_vad.onnx"_s).size() == 643'854);
 }
