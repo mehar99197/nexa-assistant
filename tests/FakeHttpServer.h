@@ -53,12 +53,30 @@ private:
                 const QByteArray head = received->left(headerEnd);
                 const qsizetype bodyLength = contentLength(head);
                 if (received->size() < headerEnd + 4 + bodyLength) return;
-                requestHead_ = head;
+                requestHead_ = canonical(head);
                 requestBody_ = received->mid(headerEnd + 4, bodyLength);
-                requestHeads_.append(head);
+                requestHeads_.append(requestHead_);
                 send(socket);
             });
         }
+    }
+
+    // Header names as the tests write them ("Authorization", "Content-Length"): Qt 6.8 sends them in lower case,
+    // 6.11 as given, and HTTP reads them case-insensitively anyway.
+    static QByteArray canonical(const QByteArray &head) {
+        QList<QByteArray> lines = head.split('\n');
+        for (qsizetype i = 1; i < lines.size(); ++i) {
+            const qsizetype colon = lines[i].indexOf(':');
+            if (colon <= 0) continue;
+            QByteArray name = lines[i].left(colon).toLower();
+            bool upper = true;
+            for (char &c : name) {
+                if (upper && c >= 'a' && c <= 'z') c = char(c - 'a' + 'A');
+                upper = (c == '-');
+            }
+            lines[i] = name + lines[i].mid(colon);
+        }
+        return lines.join('\n');
     }
 
     static qsizetype contentLength(const QByteArray &head) {
