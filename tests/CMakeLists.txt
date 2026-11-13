@@ -161,8 +161,9 @@ target_compile_definitions(nexa_tests PRIVATE NEXA_TESTS_DIR="${CMAKE_CURRENT_SO
 include(Catch)
 catch_discover_tests(nexa_tests
     # A Catch2 run whose every case was skipped (no models, no bus, no LibreOffice on a runner) exits 4: that is a skip,
-    # not a failure, to ctest too.
-    SKIP_RETURN_CODE 4
+    # not a failure, to ctest too. As a test property, because Ubuntu 24.04's Catch2 (3.4) predates the
+    # SKIP_RETURN_CODE argument of catch_discover_tests and ignores it.
+    PROPERTIES SKIP_RETURN_CODE 4
 )
 
 # The phone app's screens against the real server: only with the phone app built for the desktop (NEXA_BUILD_PHONE).
