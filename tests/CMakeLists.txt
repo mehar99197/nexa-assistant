@@ -159,7 +159,11 @@ target_link_libraries(nexa_tests PRIVATE
 target_compile_definitions(nexa_tests PRIVATE NEXA_TESTS_DIR="${CMAKE_CURRENT_SOURCE_DIR}")
 
 include(Catch)
-catch_discover_tests(nexa_tests)
+catch_discover_tests(nexa_tests
+    # A Catch2 run whose every case was skipped (no models, no bus, no LibreOffice on a runner) exits 4: that is a skip,
+    # not a failure, to ctest too.
+    SKIP_RETURN_CODE 4
+)
 
 # The phone app's screens against the real server: only with the phone app built for the desktop (NEXA_BUILD_PHONE).
 if(NEXA_BUILD_PHONE)
