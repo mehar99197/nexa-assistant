@@ -59,6 +59,10 @@ jobs:
             -DBUILD_TESTING=OFF -DBUILD_EXAMPLES=OFF
           cmake --build polkit-build
           sudo cmake --install polkit-build
+          # The library lands in /usr/local/lib/x86_64-linux-gnu: the linker cache must know, or linuxdeploy cannot
+          # follow the helper's dependency on it when it bundles the closure.
+          sudo ldconfig
+          ls /usr/local/lib/x86_64-linux-gnu/libpolkit-qt6-core-1.so* /usr/local/lib/libpolkit-qt6-core-1.so* 2>/dev/null
 
       - name: Configure and build (tests on, packaged)
         run: |
@@ -75,6 +79,8 @@ jobs:
           dbus-run-session -- ctest --test-dir build --output-on-failure --timeout 300
 
       - name: Package
+        env:
+          LD_LIBRARY_PATH: /usr/local/lib/x86_64-linux-gnu:/usr/local/lib
         run: scripts/build-deb.sh --build-dir build --out dist --skip-configure
 
       - name: Install the package in a clean container and run it
