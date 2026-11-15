@@ -94,6 +94,18 @@ scripts — a test reads them), `AssetDownloader` fetches them with resume and v
 Settings → Voice → **Speech models** drives it; `nexa-assistant --version` and `nexa-helper --version` answer with no
 display. A source build keeps `install-helper.sh` and the scripts as before.
 
+The server (M30): the website and API live in the Nexa Download Manager repository (`~/Desktop/Work/nexadownloadmanager`,
+worktree `~/Desktop/Work/nexadownloadmanager-m30` on `website/two-products`; never touch the main checkout without
+checking `git status` first). One Node/MySQL backend (`ndm-website/backend`) serves both products through the `product`
+parameter (`'ndm'` default, `'assistant'` for this app) on `/api/releases/*`, `/api/subscription/*`, `/api/device/*`,
+`/api/license/*`, `/api/user/*` and `/api/admin/*`, and mounts the OpenAI-compatible Nexa AI relay at
+`/api/assistant/v1` (`GET /models`, `POST /chat/completions` with a 15-minute Ed25519 licence token carrying
+`prd: 'assistant'`, `acct` and `features.nexaAi`). The assistant's public site (`ndm-website/assistant`, served from
+`assistant.nexadownloadmanager.com` and proxying `/api/*` to the shared backend socket) is built and uploaded alongside
+`frontend`, `admin` and `backend` by `./deploy/build-and-upload.sh` (guarded by `deploy/deploy-guard.sh`, skippable with
+`SKIP_ASSISTANT=1`). Pushing, creating the Hostinger subdomain, editing the live `nexa-api/.env` (`ASSISTANT_AI_*`) and
+running `./deploy/build-and-upload.sh` are outward-facing and always need the owner's go.
+
 The screen as text (M27, nothing to install): `screen_snapshot` reads the window in front over the desktop's
 accessibility bus (`busctl --user call org.a11y.Bus /org/a11y/bus org.a11y.Bus GetAddress` says where it is; `busctl
 --address=<it> list` who is on it). GTK apps are on it always; Chrome, Electron and Qt apps (Nexa itself) only with
