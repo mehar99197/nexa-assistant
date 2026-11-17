@@ -64,7 +64,6 @@ if(WIN32)
         NEXA_VERSION_MAJOR=${PROJECT_VERSION_MAJOR}
         NEXA_VERSION_MINOR=${PROJECT_VERSION_MINOR}
         NEXA_VERSION_PATCH=${PROJECT_VERSION_PATCH}
-        NEXA_VERSION_STR="${PROJECT_VERSION}"
     )
     set_target_properties(nexa_assistant PROPERTIES WIN32_EXECUTABLE TRUE)
     target_link_libraries(nexa_assistant PRIVATE user32)

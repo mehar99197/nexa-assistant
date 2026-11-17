@@ -21,6 +21,7 @@ namespace nexa {
 
 namespace {
 
+#ifndef Q_OS_WIN
 QString readText(const QString &path, qint64 limit = 64 * 1024) {
     QFile file(path);
     if (!file.open(QIODevice::ReadOnly)) return {};
@@ -44,6 +45,7 @@ qint64 meminfoMiB(const QString &meminfo, const QString &key) {
     const QRegularExpressionMatch match = line.match(meminfo);
     return match.hasMatch() ? match.captured(1).toLongLong() / 1024 : 0;
 }
+#endif
 
 QJsonObject disk(const QString &path) {
     const QStorageInfo storage(path);
@@ -56,6 +58,7 @@ QJsonObject disk(const QString &path) {
     };
 }
 
+#ifndef Q_OS_WIN
 QJsonArray batteries() {
     QJsonArray result;
     const QDir supplies(u"/sys/class/power_supply"_s);
@@ -69,6 +72,7 @@ QJsonArray batteries() {
     }
     return result;
 }
+#endif
 
 } // namespace
 

@@ -1,13 +1,18 @@
 #include <winver.h>
 
+#define IDI_ICON1 101
 IDI_ICON1 ICON "nexa-assistant.ico"
+
+#define NEXA_RC_STR2(x) #x
+#define NEXA_RC_STR(x) NEXA_RC_STR2(x)
+#define NEXA_RC_VER3(a, b, c) a.b.c
 
 #ifdef NEXA_VERSION_MAJOR
 #define VER_FILEVERSION             NEXA_VERSION_MAJOR,NEXA_VERSION_MINOR,NEXA_VERSION_PATCH,0
-#define VER_FILEVERSION_STR         NEXA_VERSION_STR "\0"
+#define VER_FILEVERSION_STR         NEXA_RC_STR(NEXA_RC_VER3(NEXA_VERSION_MAJOR, NEXA_VERSION_MINOR, NEXA_VERSION_PATCH))
 #else
 #define VER_FILEVERSION             1,0,0,0
-#define VER_FILEVERSION_STR         "1.0.0\0"
+#define VER_FILEVERSION_STR         "1.0.0"
 #endif
 
 1 VERSIONINFO
