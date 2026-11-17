@@ -1,10 +1,9 @@
 // proto/KeyMap: characters and key names → Linux key codes (US layout).
 
 #include "proto/KeyMap.h"
+#include "proto/LinuxKeyCodes.h"
 
 #include "QtStringMakers.h"
-
-#include <linux/input-event-codes.h>
 
 #include <catch2/catch_test_macros.hpp>
 
