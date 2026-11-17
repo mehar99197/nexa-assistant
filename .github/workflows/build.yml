@@ -144,6 +144,7 @@ jobs:
             mingw-w64-x86_64-qt6-multimedia
             mingw-w64-x86_64-qt6-speech
             mingw-w64-x86_64-qt6-svg
+            mingw-w64-x86_64-qt6-tools
             mingw-w64-x86_64-openssl
             mingw-w64-x86_64-qrencode
             mingw-w64-x86_64-python
@@ -183,9 +184,20 @@ jobs:
           cp README.md THIRD_PARTY_NOTICES.md LICENSE dist-win/
           find build-win -name '*.dll' ! -path 'build-win/tests/*' -exec cp -n {} dist-win/ \;
 
-          WINDEPLOYQT="$(command -v windeployqt6 || command -v windeployqt-qt6 || command -v windeployqt)"
-          "$WINDEPLOYQT" --no-translations --no-system-d3d-compiler --no-opengl-sw dist-win/nexa-assistant.exe
+          WINDEPLOYQT="$(command -v windeployqt6 || command -v windeployqt-qt6 || command -v windeployqt || true)"
+          if [[ -n "$WINDEPLOYQT" ]]; then
+            "$WINDEPLOYQT" --no-translations --no-system-d3d-compiler --no-opengl-sw dist-win/nexa-assistant.exe || true
+          fi
+          QTPLUGINS="$(qmake6 -query QT_INSTALL_PLUGINS 2>/dev/null || echo "/mingw64/share/qt6/plugins")"
+          for pdir in platforms styles tls imageformats iconengines multimedia texttospeech networkinformation; do
+            if [[ -d "${QTPLUGINS}/${pdir}" ]]; then
+              mkdir -p "dist-win/${pdir}"
+              cp -n "${QTPLUGINS}/${pdir}"/*.dll "dist-win/${pdir}/" 2>/dev/null || true
+            fi
+          done
           cp /mingw64/bin/openssl.exe dist-win/
+          cp -n /mingw64/bin/libssl-*.dll dist-win/ 2>/dev/null || true
+          cp -n /mingw64/bin/libcrypto-*.dll dist-win/ 2>/dev/null || true
 
           # Bundle full MSYS2 MinGW64 DLL closure (Qt dependencies, OpenSSL, qrencode, libstdc++/gcc/winpthread).
           for pass in 1 2 3 4; do

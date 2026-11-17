@@ -2,6 +2,7 @@
 
 #include "core/Logging.h"
 
+#include <QDir>
 #include <QProcess>
 #include <QStandardPaths>
 #include <QTimer>
