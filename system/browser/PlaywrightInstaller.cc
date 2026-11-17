@@ -9,6 +9,7 @@
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QRegularExpression>
+#include "core/config/Portable.h"
 #include <QStandardPaths>
 
 using namespace Qt::StringLiterals;
@@ -19,18 +20,6 @@ namespace {
 
 constexpr int kNodeTimeoutMs = 15'000;
 constexpr int kInstallTimeoutMs = 10 * 60'000;
-
-QString shellQuoted(const QString &text) {
-    QString quoted = text;
-    quoted.replace(u'\'', u"'\\''"_s);
-    return u"'"_s + quoted + u"'"_s;
-}
-
-QString commandLine(const QStringList &argv) {
-    QStringList quoted;
-    for (const QString &argument : argv) quoted.append(shellQuoted(argument));
-    return quoted.join(u' ');
-}
 
 QString tail(const QString &output) {
     const QString trimmed = output.trimmed();
@@ -45,7 +34,7 @@ PlaywrightInstaller::PlaywrightInstaller(QString prefix, QObject *parent)
 PlaywrightInstaller::~PlaywrightInstaller() = default;
 
 QString PlaywrightInstaller::defaultPrefix() {
-    return QStandardPaths::writableLocation(QStandardPaths::GenericDataLocation) + u"/nexa/playwright"_s;
+    return portable::dataDir() + u"/playwright"_s;
 }
 
 QString PlaywrightInstaller::cliPath() const {
@@ -72,8 +61,18 @@ bool PlaywrightInstaller::hasChromium() const {
 
 QString PlaywrightInstaller::nodeProgram() {
     if (const QString found = QStandardPaths::findExecutable(u"node"_s); !found.isEmpty()) return found;
+#ifdef Q_OS_WIN
+    QStringList dirs;
+    for (const QString &base : {qEnvironmentVariable("ProgramFiles"), qEnvironmentVariable("ProgramFiles(x86)"),
+                                qEnvironmentVariable("LOCALAPPDATA") + u"/Programs"_s}) {
+        if (!base.isEmpty()) dirs.append({base + u"/nodejs"_s, base});
+    }
+    if (const QString nvm = qEnvironmentVariable("NVM_SYMLINK"); !nvm.isEmpty()) dirs.append(nvm);
+    return QStandardPaths::findExecutable(u"node"_s, dirs);
+#else
     return QStandardPaths::findExecutable(u"node"_s, {u"/usr/local/bin"_s, u"/usr/bin"_s,
                                                       QDir::homePath() + u"/.local/bin"_s});
+#endif
 }
 
 std::optional<int> PlaywrightInstaller::nodeMajor(const QString &versionOutput) {
@@ -98,13 +97,17 @@ void PlaywrightInstaller::install(bool withChromium) {
     if (running_) return;
     const QString node = nodeProgram();
     if (node.isEmpty()) {
+#ifdef Q_OS_WIN
+        emit failed(Error{ErrorCode::NotFound, tr("Node.js is not installed. Install Node.js 18 or newer from nodejs.org.")});
+#else
         emit failed(Error{ErrorCode::NotFound, tr("Node.js is not installed. Install it with: sudo apt install nodejs npm")});
+#endif
         return;
     }
     running_ = true;
     emit progress(tr("Checking Node.js…"));
-    runner_->run(commandLine({node, u"--version"_s}), QDir::homePath(), kNodeTimeoutMs,
-                 [this, node, withChromium](Result<CommandOutput> result) {
+    runner_->runProgram(node, {u"--version"_s}, QDir::homePath(), kNodeTimeoutMs, LocalCommandRunner::environment(),
+                        [this, node, withChromium](Result<CommandOutput> result) {
         const std::optional<int> major = result ? nodeMajor(result.value().output) : std::nullopt;
         if (!major) {
             fail(Error{ErrorCode::NotFound, tr("Cannot run %1.").arg(node)});
@@ -120,10 +123,15 @@ void PlaywrightInstaller::install(bool withChromium) {
 
 void PlaywrightInstaller::installPackage(const QString &node, bool withChromium) {
     // npm sits beside node; failing that, on the PATH.
-    QString npm = QFileInfo(node).dir().filePath(u"npm"_s);
-    if (!QFileInfo(npm).isExecutable()) npm = QStandardPaths::findExecutable(u"npm"_s);
+    const QString nodeDir = QFileInfo(node).dir().absolutePath();
+    QString npm = QStandardPaths::findExecutable(u"npm"_s, {nodeDir});
+    if (npm.isEmpty()) npm = QStandardPaths::findExecutable(u"npm"_s);
     if (npm.isEmpty()) {
+#ifdef Q_OS_WIN
+        fail(Error{ErrorCode::NotFound, tr("npm is not installed beside Node.js or on PATH.")});
+#else
         fail(Error{ErrorCode::NotFound, tr("npm is not installed. Install it with: sudo apt install npm")});
+#endif
         return;
     }
     if (!QDir().mkpath(prefix_)) {
@@ -132,9 +140,11 @@ void PlaywrightInstaller::installPackage(const QString &node, bool withChromium)
     }
     emit progress(tr("Installing Playwright %1…").arg(QString(kVersion)));
     qCInfo(lcBrowser).noquote() << "installing" << kPackage << kVersion << "into" << prefix_;
-    QStringList argv{npm};
-    argv += npmArguments(prefix_);
-    runner_->run(commandLine(argv), prefix_, kInstallTimeoutMs, [this, node, withChromium](Result<CommandOutput> result) {
+    QProcessEnvironment env = LocalCommandRunner::environment();
+    const QString path = env.value(u"PATH"_s);
+    env.insert(u"PATH"_s, path.isEmpty() ? nodeDir : nodeDir + QDir::listSeparator() + path);
+    runner_->runProgram(npm, npmArguments(prefix_), prefix_, kInstallTimeoutMs, env,
+                        [this, node, withChromium](Result<CommandOutput> result) {
         if (!result) {
             fail(result.error());
             return;
@@ -155,9 +165,10 @@ void PlaywrightInstaller::installPackage(const QString &node, bool withChromium)
 
 void PlaywrightInstaller::installChromium(const QString &node) {
     emit progress(tr("Downloading Playwright's Chromium (no Chrome on this PC)…"));
-    const QString command = u"PLAYWRIGHT_BROWSERS_PATH="_s + shellQuoted(browsersPath()) + u' '
-                            + commandLine({node, cliPath(), u"install-browser"_s, u"chromium"_s});
-    runner_->run(command, prefix_, kInstallTimeoutMs, [this](Result<CommandOutput> result) {
+    QProcessEnvironment env = LocalCommandRunner::environment();
+    env.insert(u"PLAYWRIGHT_BROWSERS_PATH"_s, browsersPath());
+    runner_->runProgram(node, {cliPath(), u"install-browser"_s, u"chromium"_s}, prefix_, kInstallTimeoutMs, env,
+                        [this](Result<CommandOutput> result) {
         if (!result || result.value().exitCode != 0 || !hasChromium()) {
             fail(Error{ErrorCode::Unknown, tr("Playwright's Chromium could not be installed: %1")
                                                .arg(result ? tail(result.value().output) : result.error().message)});

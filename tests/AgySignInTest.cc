@@ -3,6 +3,7 @@
 // or out, or touches a keyring: the fake's "keyring" is a file in the test's own folder.
 
 #include "core/ai/AgySignIn.h"
+#include "core/ProcessUtils.h"
 
 #include "QtStringMakers.h"
 
@@ -18,7 +19,9 @@
 
 #include <catch2/catch_test_macros.hpp>
 
+#ifdef Q_OS_UNIX
 #include <signal.h>
+#endif
 
 using namespace nexa;
 using namespace Qt::StringLiterals;
@@ -46,7 +49,13 @@ struct AcpRig {
         qunsetenv("FAKE_AGY_LOG");
     }
 
-    QString program() const { return QStringLiteral(NEXA_TESTS_DIR "/fake-agy/agy"); }
+    QString program() const {
+#ifdef Q_OS_WIN
+        return QStringLiteral(NEXA_TESTS_DIR "/fake-agy/agy.cmd");
+#else
+        return QStringLiteral(NEXA_TESTS_DIR "/fake-agy/agy");
+#endif
+    }
     QString workingDir() const { return dir.filePath(u"work"_s); }
     QString keyringPath() const { return dir.filePath(u"keyring"_s); }
 
@@ -111,7 +120,7 @@ struct Spies {
     QSignalSpy status, methods, link, signedIn, signedOut, failed;
 };
 
-bool alive(qint64 pid) { return ::kill(pid_t(pid), 0) == 0; }
+bool alive(qint64 pid) { return process::isAlive(pid); }
 bool gone(qint64 pid) { return QTest::qWaitFor([pid] { return !alive(pid); }, kWaitMs); }
 bool logged(const AcpRig &rig, const QString &method) {
     return QTest::qWaitFor([&] { return rig.requests().contains(method); }, kWaitMs);
@@ -197,7 +206,9 @@ TEST_CASE("agy runs as `acp` in Nexa's own home and workspace, and dies with Nex
     CHECK(start.value(u"argv"_s).toArray().first().toString() == u"acp"_s);
     CHECK(start.value(u"home"_s).toString() == rig.workingDir() + u"/home"_s);
     CHECK(start.value(u"cwd"_s).toString().startsWith(rig.workingDir() + u"/work"_s));
+#ifdef Q_OS_UNIX
     CHECK(start.value(u"pdeathsig"_s).toInt() == SIGKILL);
+#endif
     // the deny rules AgySession::prepare writes, so agy's own tools stay off
     const QJsonArray deny =
         start.value(u"settings"_s).toObject().value(u"permissions"_s).toObject().value(u"deny"_s).toArray();
@@ -661,8 +672,8 @@ namespace {
 struct KillOnExit {
     explicit KillOnExit(const AcpRig &rig) : rig(rig) {}
     ~KillOnExit() {
-        if (const qint64 child = rig.childPid(); child > 0) ::kill(pid_t(child), SIGKILL);
-        if (const qint64 agy = rig.pid(); agy > 0) ::kill(pid_t(agy), SIGKILL);
+        if (const qint64 child = rig.childPid(); child > 0) process::killTree(child, true, true);
+        if (const qint64 agy = rig.pid(); agy > 0) process::killTree(agy, true, true);
     }
     const AcpRig &rig;
 };
@@ -753,8 +764,14 @@ TEST_CASE("A program and a folder with spaces in their paths work", "[agy-signin
     REQUIRE(bin.isValid());
     const QString dir = bin.filePath(u"a folder/with spaces"_s);
     REQUIRE(QDir().mkpath(dir));
+#ifdef Q_OS_WIN
+    const QString program = dir + u"/agy.cmd"_s;
+    REQUIRE(QFile::copy(rig.program(), program));
+    REQUIRE(QFile::copy(QStringLiteral(NEXA_TESTS_DIR "/fake-agy/agy"), dir + u"/agy"_s));
+#else
     const QString program = dir + u"/agy"_s;
     REQUIRE(QFile::copy(rig.program(), program));
+#endif
     AgySignIn signIn(program, rig.dir.filePath(u"my work dir"_s));
     Spies spies(signIn);
     signIn.checkStatus();

@@ -3,15 +3,21 @@
 #include "core/Logging.h"
 
 #include <QBuffer>
+#include <QFile>
+#include <QGuiApplication>
+#include <QPixmap>
+#include <QPointer>
+#include <QRandomGenerator>
+#include <QScreen>
+#include <QUrl>
+
+#ifdef Q_OS_UNIX
 #include <QDBusConnection>
 #include <QDBusMessage>
 #include <QDBusObjectPath>
 #include <QDBusPendingCallWatcher>
 #include <QDBusPendingReply>
-#include <QFile>
-#include <QPointer>
-#include <QRandomGenerator>
-#include <QUrl>
+#endif
 
 using namespace Qt::StringLiterals;
 
@@ -62,6 +68,7 @@ void ScreenCapture::capture(Done done) {
         done(Error{ErrorCode::Unknown, u"A screenshot is already being taken"_s});
         return;
     }
+#ifdef Q_OS_UNIX
     QDBusConnection bus = QDBusConnection::sessionBus();
     if (!bus.isConnected()) {
         done(Error{ErrorCode::NotSupported, u"No D-Bus session bus"_s});
@@ -91,6 +98,27 @@ void ScreenCapture::capture(Done done) {
         if (handle.value().path() != requestPath_) subscribe(handle.value().path());
     });
     timeout_.start(kTimeoutMs);
+#else
+    QScreen *screen = QGuiApplication::primaryScreen();
+    if (!screen) {
+        done(Error{ErrorCode::NotSupported, u"No primary display is available."_s});
+        return;
+    }
+    const QPixmap pixmap = screen->grabWindow(0);
+    if (pixmap.isNull()) {
+        done(Error{ErrorCode::Io, u"The screen could not be captured."_s});
+        return;
+    }
+    pending_ = std::move(done);
+    const QImage image = pixmap.toImage();
+    const QPointer<ScreenCapture> self(this);
+    pool_.start([this, self, image] {
+        Result<Shot> shot(encode(image));
+        QMetaObject::invokeMethod(this, [self, shot = std::move(shot)]() mutable {
+            if (self) self->finish(std::move(shot));
+        }, Qt::QueuedConnection);
+    });
+#endif
 }
 
 void ScreenCapture::cancel() {
@@ -100,20 +128,27 @@ void ScreenCapture::cancel() {
 }
 
 void ScreenCapture::subscribe(const QString &path) {
+#ifdef Q_OS_UNIX
     unsubscribe();
     requestPath_ = path;
     QDBusConnection::sessionBus().connect(kPortal, path, kRequestInterface, u"Response"_s, this,
                                           SLOT(onResponse(uint, QVariantMap)));
+#else
+    Q_UNUSED(path);
+#endif
 }
 
 void ScreenCapture::unsubscribe() {
+#ifdef Q_OS_UNIX
     if (requestPath_.isEmpty()) return;
     QDBusConnection::sessionBus().disconnect(kPortal, requestPath_, kRequestInterface, u"Response"_s, this,
                                              SLOT(onResponse(uint, QVariantMap)));
     requestPath_.clear();
+#endif
 }
 
 void ScreenCapture::onResponse(uint response, const QVariantMap &results) {
+#ifdef Q_OS_UNIX
     unsubscribe();
     if (!pending_) return;
     if (response != 0) {
@@ -136,6 +171,10 @@ void ScreenCapture::onResponse(uint response, const QVariantMap &results) {
             if (self) self->finish(std::move(shot));
         }, Qt::QueuedConnection);
     });
+#else
+    Q_UNUSED(response);
+    Q_UNUSED(results);
+#endif
 }
 
 void ScreenCapture::finish(Result<Shot> result) {

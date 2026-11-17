@@ -17,16 +17,26 @@ namespace {
 
 void placeSherpa(const QString &root) {
     QDir().mkpath(root + u"/sherpa/lib"_s);
+#ifdef Q_OS_WIN
+    QFile lib(root + u"/sherpa/lib/sherpa-onnx-c-api.dll"_s);
+#else
     QFile lib(root + u"/sherpa/lib/libsherpa-onnx-c-api.so"_s);
+#endif
     REQUIRE(lib.open(QIODevice::WriteOnly));
     lib.write("not really a library");
 }
 
 void placePiper(const QString &root) {
     QDir().mkpath(root + u"/piper"_s);
+#ifdef Q_OS_WIN
+    QFile piper(root + u"/piper/piper.exe"_s);
+    REQUIRE(piper.open(QIODevice::WriteOnly));
+    piper.write("MZ");
+#else
     QFile piper(root + u"/piper/piper"_s);
     REQUIRE(piper.open(QIODevice::WriteOnly));
     piper.write("#!/bin/sh\n");
+#endif
     piper.close();
     piper.setPermissions(QFileDevice::ReadOwner | QFileDevice::WriteOwner | QFileDevice::ExeOwner);
 }

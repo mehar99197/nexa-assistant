@@ -3,7 +3,7 @@
 #include <QHash>
 #include <QStringList>
 
-#include <linux/input-event-codes.h>
+#include "proto/LinuxKeyCodes.h"
 
 #include <algorithm>
 

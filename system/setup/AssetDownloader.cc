@@ -9,7 +9,7 @@
 #include <QNetworkRequest>
 #include <QPointer>
 #include <QProcess>
-#include <QStandardPaths>
+#include "core/config/Portable.h"
 #include <QTemporaryDir>
 #include <QUrl>
 
@@ -57,7 +57,7 @@ AssetDownloader::~AssetDownloader() {
 }
 
 QString AssetDownloader::defaultCacheDir() {
-    return QStandardPaths::writableLocation(QStandardPaths::GenericCacheLocation) + u"/nexa/downloads"_s;
+    return portable::cacheDir() + u"/downloads"_s;
 }
 
 void AssetDownloader::start(const QList<engineassets::Asset> &assets) {

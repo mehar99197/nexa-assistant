@@ -129,12 +129,19 @@ TEST_CASE("The loader reads words and pictures, cuts long files, and copies a fi
 
     // A file somewhere the tools cannot read (not the home folder, not /tmp): a copy under the keep folder, 0600.
     Attachment elsewhere = files.first();
+#ifdef Q_OS_WIN
+    elsewhere.path = qEnvironmentVariable("WINDIR", u"C:/Windows"_s) + u"/System32/drivers/etc/hosts"_s;
+    elsewhere.name = u"hosts"_s;
+#else
     elsewhere.path = u"/dev/null"_s;        // exists and is readable
     elsewhere.name = u"null.txt"_s;
+#endif
     elsewhere.kind = Attachment::Kind::Other;
     const PreparedAttachment copied = AttachmentLoader::prepareOne(elsewhere, keep.path(), {}, {});
     REQUIRE_FALSE(copied.pathForTools.isEmpty());
     CHECK(copied.pathForTools.startsWith(keep.path()));
-    CHECK(copied.pathForTools.endsWith(u"-null.txt"_s));
+    CHECK(copied.pathForTools.endsWith(u"-"_s + elsewhere.name));
+#ifdef Q_OS_UNIX
     CHECK((QFile::permissions(copied.pathForTools) & (QFileDevice::ReadGroup | QFileDevice::ReadOther)) == 0);
+#endif
 }

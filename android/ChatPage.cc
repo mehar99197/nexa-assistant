@@ -1,10 +1,15 @@
 #include "ChatPage.h"
 
 #include "MessageDelegate.h"
+#include "remote/RemoteProtocol.h"
 #include "ui/ElidedLabel.h"
 #include "ui/NexaCoreWidget.h"
+#include "ui/NexaDesigns.h"
 #include "ui/NexaIcons.h"
 
+#include <QDir>
+#include <QFileDialog>
+#include <QFileInfo>
 #include <QFrame>
 #include <QHBoxLayout>
 #include <QLabel>
@@ -15,6 +20,7 @@
 #include <QScroller>
 #include <QStyle>
 #include <QToolButton>
+#include <QUrl>
 #include <QVBoxLayout>
 
 using namespace Qt::StringLiterals;
@@ -137,9 +143,24 @@ ChatPage::ChatPage(QWidget *parent) : QWidget(parent), tokens_(NexaTheme::tokens
     QScroller::grabGesture(messages_->viewport(), QScroller::TouchGesture);
     layout->addWidget(messages_, 1);
 
+    fileStrip_ = new QWidget(this);
+    fileStrip_->setObjectName(u"fileStrip"_s);
+    fileChips_ = new QHBoxLayout(fileStrip_);
+    fileChips_->setContentsMargins(16, 4, 16, 0);
+    fileChips_->setSpacing(6);
+    fileChips_->addStretch(1);
+    fileStrip_->hide();
+    layout->addWidget(fileStrip_);
+
     auto *bottom = new QHBoxLayout;
     bottom->setContentsMargins(16, 8, 16, 8);
     bottom->setSpacing(10);
+    attach_ = new QToolButton(this);
+    attach_->setObjectName(u"attach"_s);
+    attach_->setToolTip(tr("Attach files"));
+    attach_->setAccessibleName(tr("Attach files"));
+    attach_->setIconSize(QSize(22, 22));
+    bottom->addWidget(attach_);
     input_ = new QLineEdit(this);
     input_->setObjectName(u"phoneInput"_s);
     input_->setPlaceholderText(tr("Type a request"));
@@ -169,6 +190,7 @@ ChatPage::ChatPage(QWidget *parent) : QWidget(parent), tokens_(NexaTheme::tokens
     talkRow_->hide();      // until Nexa says it can hear
     layout->addWidget(talkRow_);
 
+    connect(attach_, &QToolButton::clicked, this, &ChatPage::chooseFiles);
     connect(send_, &QToolButton::clicked, this, &ChatPage::submit);
     connect(input_, &QLineEdit::returnPressed, this, &ChatPage::submit);
     connect(talk_, &NexaCoreButton::pressed, this, &ChatPage::talkPressed);
@@ -186,8 +208,74 @@ void ChatPage::setScheme(ThemeScheme scheme) {
     setCore(mode_, NoNode, hint_->text());
 }
 
+void ChatPage::applyRemoteTheme(const remote::ThemeStyle &style) {
+    const auto parseColor = [](const QString &hex, QColor &target) {
+        if (const QColor c = QColor::fromString(hex); c.isValid()) target = c;
+    };
+    parseColor(style.ground, tokens_.ground);
+    parseColor(style.panel, tokens_.panel);
+    parseColor(style.panelRaised, tokens_.panelRaised);
+    parseColor(style.line, tokens_.line);
+    parseColor(style.text, tokens_.text);
+    parseColor(style.muted, tokens_.muted);
+    parseColor(style.idle, tokens_.idle);
+    parseColor(style.wake, tokens_.wake);
+    parseColor(style.listen, tokens_.listen);
+    parseColor(style.stt, tokens_.stt);
+    parseColor(style.think, tokens_.think);
+    parseColor(style.act, tokens_.act);
+    parseColor(style.speak, tokens_.speak);
+    parseColor(style.fast, tokens_.fast);
+    parseColor(style.error, tokens_.error);
+    parseColor(style.onAccent, tokens_.onAccent);
+
+    const BubbleStyle bubbles = style.bubbleStyle == u"lines"_s ? BubbleStyle::Lines
+                              : style.bubbleStyle == u"cards"_s ? BubbleStyle::Cards
+                                                                : BubbleStyle::Bubbles;
+    const FontFace face = style.fontFace == u"mono"_s  ? FontFace::Mono
+                        : style.fontFace == u"serif"_s ? FontFace::Serif
+                                                       : FontFace::Sans;
+    delegate_->setTokens(tokens_);
+    delegate_->setDesign(bubbles, style.radius, face);
+
+    const int radius = std::clamp(style.radius, 0, 22);
+    setStyleSheet(
+        u"QWidget { background-color: %1; color: %2; font-family: \"%3\"; }"
+        "QListWidget#messages { background-color: %1; border: none; }"
+        "QLineEdit#phoneInput { background-color: %4; color: %2; border: 1px solid %5; border-radius: %6px; padding: 6px 10px; }"
+        "QToolButton#send { background-color: %7; color: %8; border-radius: %6px; border: none; }"
+        "QToolButton#attach, QToolButton#attachmentChip { background-color: %4; color: %2; border: 1px solid %5; border-radius: %6px; padding: 4px 8px; }"
+        "QLabel#stateHint, QLabel#talkHint { color: %9; }"_s
+            .arg(tokens_.ground.name(), tokens_.text.name(), NexaDesigns::fontFamily(face), tokens_.panel.name(),
+                 tokens_.line.name())
+            .arg(radius)
+            .arg(tokens_.idle.name(), tokens_.onAccent.name(), tokens_.muted.name()));
+
+    for (NexaCoreWidget *c : {brandCore_, core_, static_cast<NexaCoreWidget *>(talk_)}) {
+        if (!c) continue;
+        c->setGroundColor(tokens_.ground);
+        c->setPanelColor(tokens_.panel);
+        c->setLineColor(tokens_.line);
+        c->setTextColor(tokens_.text);
+        c->setMutedColor(tokens_.muted);
+        c->setIdleColor(tokens_.idle);
+        c->setWakeColor(tokens_.wake);
+        c->setListenColor(tokens_.listen);
+        c->setSttColor(tokens_.stt);
+        c->setThinkColor(tokens_.think);
+        c->setActColor(tokens_.act);
+        c->setSpeakColor(tokens_.speak);
+        c->setFastColor(tokens_.fast);
+        c->setErrorColor(tokens_.error);
+    }
+    refreshIcons();
+    setCore(mode_, NoNode, hint_->text());
+}
+
 void ChatPage::refreshIcons() {
-    send_->setIcon(NexaIcons::icon(NexaIcons::Kind::Send, tokens_.onAccent, 24));
+    if (attach_) attach_->setIcon(NexaIcons::icon(NexaIcons::Kind::Attach, tokens_.muted, 22));
+    send_->setIcon(NexaIcons::icon(busy_ ? NexaIcons::Kind::Stop : NexaIcons::Kind::Send,
+                                   busy_ ? tokens_.ground : tokens_.onAccent, 24));
     more_->setIcon(NexaIcons::icon(NexaIcons::Kind::More, tokens_.muted, 20));
 }
 
@@ -242,13 +330,59 @@ void ChatPage::layoutPresence() {
     repolish(presence_);
 }
 
-void ChatPage::addMessage(Kind kind, const QString &text) {
-    auto *item = new QListWidgetItem(text);
+void ChatPage::addMessage(Kind kind, const QString &text, const QString &attachments) {
+    const QString shown = attachments.isEmpty() ? text : (text + u"\n📎 "_s + attachments);
+    auto *item = new QListWidgetItem(shown);
     item->setData(MessageDelegate::KindRole, static_cast<int>(kind));
     messages_->addItem(item);
     messages_->scrollToBottom();
     if (kind == Kind::Nexa) reply_ = item;
     layoutPresence();
+}
+
+void ChatPage::chooseFiles() {
+    const QStringList picked = QFileDialog::getOpenFileNames(this, tr("Attach files"), QDir::homePath());
+    if (!picked.isEmpty()) addPendingFiles(picked);
+}
+
+void ChatPage::addPendingFiles(const QStringList &paths) {
+    for (const QString &path : paths) {
+        if (pendingFiles_.size() >= 8) break;
+        if (path.isEmpty() || pendingFiles_.contains(path)) continue;
+        pendingFiles_.append(path);
+    }
+    refreshFileStrip();
+}
+
+void ChatPage::clearPendingFiles() {
+    pendingFiles_.clear();
+    refreshFileStrip();
+}
+
+void ChatPage::refreshFileStrip() {
+    while (fileChips_->count() > 1) {
+        QLayoutItem *item = fileChips_->takeAt(0);
+        delete item->widget();
+        delete item;
+    }
+    for (int i = 0; i < pendingFiles_.size(); ++i) {
+        const QString &path = pendingFiles_.at(i);
+        QString name = QFileInfo(path).fileName();
+        if (name.isEmpty()) name = QUrl(path).fileName();
+        if (name.isEmpty()) name = path;
+        auto *chip = new QToolButton(fileStrip_);
+        chip->setObjectName(u"attachmentChip"_s);
+        chip->setText(u"📎 %1 ×"_s.arg(name));
+        chip->setToolTip(tr("Remove %1").arg(name));
+        connect(chip, &QToolButton::clicked, this, [this, i] {
+            if (i >= 0 && i < pendingFiles_.size()) {
+                pendingFiles_.removeAt(i);
+                refreshFileStrip();
+            }
+        });
+        fileChips_->insertWidget(fileChips_->count() - 1, chip);
+    }
+    fileStrip_->setVisible(!pendingFiles_.isEmpty());
 }
 
 void ChatPage::appendReply(const QString &text) {
@@ -294,7 +428,14 @@ void ChatPage::submit() {
         return;
     }
     const QString text = input_->text().trimmed();
-    if (text.isEmpty()) return;
+    if (text.isEmpty() && pendingFiles_.isEmpty()) return;
+    if (!pendingFiles_.isEmpty()) {
+        const QStringList files = std::exchange(pendingFiles_, {});
+        refreshFileStrip();
+        input_->clear();
+        emit askWithFilesRequested(text.isEmpty() ? tr("Look at what I attached.") : text, files);
+        return;
+    }
     input_->clear();
     emit askRequested(text);
 }

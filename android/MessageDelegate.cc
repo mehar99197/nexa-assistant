@@ -22,7 +22,6 @@ constexpr int kError = 6;
 constexpr int kMargin = 12;         // inset from the list's edges
 constexpr int kPadX = 13;           // inside a bubble
 constexpr int kPadY = 9;
-constexpr int kRadius = 14;
 constexpr int kGap = 3;             // above and below a line
 constexpr double kBubbleShare = 0.85;   // a bubble takes at most this much of the width
 
@@ -44,6 +43,16 @@ void MessageDelegate::setTokens(const ThemeTokens &tokens) {
     if (view_) view_->viewport()->update();
 }
 
+void MessageDelegate::setDesign(BubbleStyle bubbles, int radius, FontFace face) {
+    bubbles_ = bubbles;
+    radius_ = std::clamp(radius, 0, 22);
+    face_ = face;
+    if (view_) {
+        view_->doItemsLayout();
+        view_->viewport()->update();
+    }
+}
+
 MessageDelegate::Shape MessageDelegate::shape(const QStyleOptionViewItem &option, const QModelIndex &index) const {
     const int kind = index.data(KindRole).toInt();
     const QString text = index.data(Qt::DisplayRole).toString();
@@ -57,9 +66,26 @@ MessageDelegate::Shape MessageDelegate::shape(const QStyleOptionViewItem &option
     shape.font = option.font;
     if (isSmall(kind)) {
         shape.font = NexaTheme::scaled(option.font, 0.85, QFontDatabase::systemFont(QFontDatabase::FixedFont).family());
+    } else if (face_ != FontFace::Sans) {
+        shape.font.setFamily(NexaDesigns::fontFamily(face_));
     }
     const QFontMetrics metrics(shape.font);
-    if (hasBubble(kind)) {
+    const bool userMsg = hasBubble(kind);
+    const bool isNexa = kind == 2;
+    if (bubbles_ == BubbleStyle::Cards && (userMsg || isNexa)) {
+        const int maxText = std::max(20, usable - 2 * kPadX);
+        const QRect wrapped = metrics.boundingRect(QRect(0, 0, maxText, 100000), Qt::TextWordWrap, text);
+        const int boxHeight = wrapped.height() + 2 * kPadY;
+        shape.bubble = QRect(left, top, usable, boxHeight);
+        shape.text = shape.bubble.adjusted(kPadX, kPadY, -kPadX, -kPadY);
+        shape.height = boxHeight + 2 * kGap;
+    } else if (userMsg && bubbles_ == BubbleStyle::Lines) {
+        const int maxText = std::max(20, int(usable * kBubbleShare) - kPadX);
+        const QRect wrapped = metrics.boundingRect(QRect(0, 0, maxText, 100000), Qt::TextWordWrap, text);
+        const int textWidth = std::max(20, wrapped.width());
+        shape.text = QRect(left + usable - kPadX - textWidth, top + 2, textWidth, wrapped.height());
+        shape.height = wrapped.height() + 4 + 2 * kGap;
+    } else if (userMsg) {
         const int maxText = std::max(20, int(usable * kBubbleShare) - 2 * kPadX);
         const QRect wrapped = metrics.boundingRect(QRect(0, 0, maxText, 100000), Qt::TextWordWrap, text);
         const int boxWidth = wrapped.width() + 2 * kPadX;
@@ -83,7 +109,11 @@ void MessageDelegate::paint(QPainter *painter, const QStyleOptionViewItem &optio
     if (!s.bubble.isEmpty()) {
         painter->setPen(QPen(tokens_.line, 1));
         painter->setBrush(kind == kUser ? tokens_.panel : tokens_.panelRaised);
-        painter->drawRoundedRect(s.bubble, kRadius, kRadius);
+        painter->drawRoundedRect(s.bubble, radius_, radius_);
+    } else if (bubbles_ == BubbleStyle::Lines && hasBubble(kind)) {
+        painter->setPen(Qt::NoPen);
+        painter->setBrush(kind == kUser ? tokens_.idle : tokens_.line);
+        painter->drawRoundedRect(QRect(s.text.right() + 7, s.text.top(), 3, s.text.height()), 1.5, 1.5);
     }
     QColor colour = tokens_.text;
     if (kind == kStep || kind == kHeard) colour = tokens_.muted;

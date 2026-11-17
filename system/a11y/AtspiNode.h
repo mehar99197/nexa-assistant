@@ -2,8 +2,10 @@
 
 #include "core/Result.h"
 
+#ifdef Q_OS_UNIX
 #include <QDBusArgument>
 #include <QDBusObjectPath>
+#endif
 #include <QHashFunctions>
 #include <QList>
 #include <QString>
@@ -134,6 +136,7 @@ inline constexpr QLatin1StringView kListedSignature{"a((so)(so)(so)a(so)assusau)
 enum class CacheForm { Counted, Listed, Unknown };
 CacheForm cacheForm(QStringView signature);
 
+#ifdef Q_OS_UNIX
 // The wire structures of those two forms, for QtDBus marshalling and demarshalling.
 struct WireRef {
     QString bus;
@@ -178,5 +181,6 @@ Result<QList<Node>> decodeCacheItems(const QDBusArgument &items, const QString &
 
 // Registers the wire types with QtDBus; called by decodeCacheItems, harmless to call again.
 void registerCacheTypes();
+#endif
 
 } // namespace nexa::atspi

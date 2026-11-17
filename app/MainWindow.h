@@ -81,6 +81,9 @@ public:
     const ThemePack &theme() const { return pack_; }
     const DesignSpec &design() const { return design_; }
 
+signals:
+    void visualChanged();
+
 protected:
     bool eventFilter(QObject *watched, QEvent *event) override;
     void closeEvent(QCloseEvent *event) override;
@@ -116,6 +119,8 @@ private:
     void refreshTheme();
     void promptForApiKey(const QString &providerName);
     void showSignInRequired(const QString &providerName);
+    void showAccountRequired(const QString &message);
+    void showPlan();
     void confirm(const QString &question, std::function<void(bool)> answer);
     void showModels(const QStringList &models, const QString &current);
     void showStatus(const QString &message, bool isError);
@@ -187,6 +192,9 @@ private:
     QLabel *statusLabel_{nullptr};
     QToolButton *lowerMicButton_{nullptr};
     QToolButton *signInButton_{nullptr};    // in the status bar while a program provider needs its sign-in
+    QToolButton *accountButton_{nullptr};   // in the status bar when Nexa AI / Pro feature requires Account
+    QToolButton *planButton_{nullptr};      // plan badge (Free / PRO / TEAM + update indicator)
+    QString pendingUpdateVersion_;
     QLabel *screenLabel_{nullptr};
     QLabel *browserLabel_{nullptr};
     QLabel *appLabel_{nullptr};     // "In: GNOME Terminal" while Nexa knows where the user is

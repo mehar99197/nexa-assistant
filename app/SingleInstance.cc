@@ -20,9 +20,13 @@ constexpr qsizetype kMaxMessage = 64 * 1024;
 } // namespace
 
 SingleInstance::SingleInstance(const QString &name, QObject *parent) : QObject(parent) {
+#ifdef Q_OS_WIN
+    path_ = name;
+#else
     QString directory = QStandardPaths::writableLocation(QStandardPaths::RuntimeLocation);
     if (directory.isEmpty()) directory = QDir::tempPath();
     path_ = directory + u'/' + name + u".socket"_s;
+#endif
 }
 
 SingleInstance::~SingleInstance() {

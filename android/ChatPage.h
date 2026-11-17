@@ -4,10 +4,12 @@
 #include "ui/NexaTheme.h"
 
 #include <QString>
+#include <QStringList>
 #include <QWidget>
 
 class QBoxLayout;
 class QFrame;
+class QHBoxLayout;
 class QLabel;
 class QPushButton;
 class QVBoxLayout;
@@ -17,6 +19,10 @@ class QListWidgetItem;
 class QToolButton;
 
 namespace nexa {
+
+namespace remote {
+struct ThemeStyle;
+}
 
 class ElidedLabel;
 class MessageDelegate;
@@ -36,11 +42,15 @@ public:
     explicit ChatPage(QWidget *parent = nullptr);
 
     void setScheme(ThemeScheme scheme);
+    void applyRemoteTheme(const remote::ThemeStyle &style);
     void setStatus(const QString &text, Status status);
     // The core's state, the satellites lit, and the words under the state's name.
     void setCore(CoreMode mode, CoreNodes nodes, const QString &hint);
     void setLevel(double level);
-    void addMessage(Kind kind, const QString &text);
+    void addMessage(Kind kind, const QString &text, const QString &attachments = {});
+    void addPendingFiles(const QStringList &paths);
+    void clearPendingFiles();
+    const QStringList &pendingFiles() const { return pendingFiles_; }
     void appendReply(const QString &text);      // more of the reply being written
     void endReply();
     void setBusy(bool busy);
@@ -56,6 +66,7 @@ public:
 
 signals:
     void askRequested(const QString &text);
+    void askWithFilesRequested(const QString &text, const QStringList &filePaths);
     void cancelRequested();
     void talkPressed();
     void talkReleased();
@@ -68,6 +79,8 @@ protected:
 
 private:
     void submit();
+    void chooseFiles();
+    void refreshFileStrip();
     // Large and centred while there is room and no conversation; a row with a small core once there is a conversation,
     // or when the page is short (the keyboard is up), so the core never covers its own title.
     void layoutPresence();
@@ -89,7 +102,11 @@ private:
     QVBoxLayout *approvalsLayout_{nullptr};
     QListWidget *messages_{nullptr};
     MessageDelegate *delegate_{nullptr};
+    QWidget *fileStrip_{nullptr};
+    QHBoxLayout *fileChips_{nullptr};
+    QStringList pendingFiles_;
     QLineEdit *input_{nullptr};
+    QToolButton *attach_{nullptr};
     QToolButton *send_{nullptr};
     QToolButton *more_{nullptr};
     QWidget *talkRow_{nullptr};

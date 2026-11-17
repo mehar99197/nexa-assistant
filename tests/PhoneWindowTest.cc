@@ -23,6 +23,8 @@
 #include <QAbstractButton>
 #include <QApplication>
 #include <QFrame>
+#include <QFile>
+#include <QFileInfo>
 #include <QLabel>
 #include <QLineEdit>
 #include <QListWidget>
@@ -46,6 +48,11 @@ class FakeHost : public IRemoteHost {
 public:
     bool isBusy() const override { return false; }
     void submit(const QString &text, const QString &source) override { submitted.append(source + u": "_s + text); }
+    void submitWithAttachments(const QString &text, const QString &source, const QStringList &savedPaths) override {
+        submitted.append(source + u": "_s + text);
+        uploadedPaths.append(savedPaths);
+    }
+    QString attachmentDir() const override { return uploadDir; }
     void cancel() override { ++cancels; }
     void transcribe(const QByteArray &, std::function<void(Result<QString>)> done) override {
         done(u"open the calculator"_s);
@@ -59,6 +66,8 @@ public:
     void answer(quint64 id, bool allow) override { answers.append(u"%1:%2"_s.arg(id).arg(allow ? u"yes"_s : u"no"_s)); }
 
     QStringList submitted;
+    QString uploadDir;
+    QStringList uploadedPaths;
     int cancels{0};
     int unlocks{0};
     QStringList answers;
@@ -487,4 +496,56 @@ TEST_CASE("Connected over adb, the phone app keeps every way to the PC and its c
     // Away, through Tailscale: the pill says so.
     emit f.client.connectedVia(u"Tailscale"_s);
     CHECK(static_cast<ElidedLabel *>(f.status)->fullText() == u"Your PC · connected · via Tailscale"_s);
+}
+
+TEST_CASE("PhoneWindow syncs PC theme/design tokens and uploads file attachments") {
+    if (!haveOpenssl()) SKIP("openssl is needed to make the certificate");
+    Fixture f;
+    f.host.uploadDir = f.directory.filePath(u"phone-uploads"_s);
+    REQUIRE(f.wired());
+    REQUIRE(f.start());
+
+    remote::ThemeStyle theme;
+    theme.themeId = u"ember"_s;
+    theme.designId = u"cards"_s;
+    theme.ground = u"#120e0c"_s;
+    theme.panel = u"#1d1612"_s;
+    theme.line = u"#362822"_s;
+    theme.text = u"#f5e9e2"_s;
+    theme.idle = u"#ff7b54"_s;
+    theme.onAccent = u"#120e0c"_s;
+    theme.bubbleStyle = u"cards"_s;
+    theme.fontFace = u"mono"_s;
+    theme.radius = 8;
+    f.server.setTheme(theme);
+
+    f.window.show();
+    f.window.start();
+    f.address->setText(u"127.0.0.1:%1"_s.arg(f.port + 1));
+    f.pairing.startPairing();
+    f.code->setText(f.pairing.code());
+    f.clickPair();
+    REQUIRE(QTest::qWaitFor([&f] { return f.onChat(); }, 10'000));
+
+    // Welcome theme synced onto ChatPage stylesheet + delegate.
+    REQUIRE(QTest::qWaitFor([&f] { return f.chat->styleSheet().contains(u"#120e0c"_s); }, 5'000));
+
+    // Attach a sample file and submit.
+    const QString samplePath = f.directory.filePath(u"report.txt"_s);
+    QFile sample(samplePath);
+    REQUIRE(sample.open(QIODevice::WriteOnly));
+    sample.write("phone attached bytes");
+    sample.close();
+
+    f.chat->addPendingFiles({samplePath});
+    CHECK(f.chat->pendingFiles().size() == 1);
+    f.input->setText(u"read my report"_s);
+    QTest::mouseClick(f.send, Qt::LeftButton);
+    REQUIRE(QTest::qWaitFor([&f] { return f.host.uploadedPaths.size() == 1; }, 5'000));
+    CHECK(QFileInfo(f.host.uploadedPaths.first()).fileName() == u"report.txt"_s);
+    CHECK(f.host.submitted.last() == u"phone: read my report"_s);
+
+    f.server.onUserMessageFrom(u"read my report"_s, u"phone"_s, u"report.txt (20 B)"_s);
+    REQUIRE(QTest::qWaitFor([&f] { return !f.shown().isEmpty(); }, 5'000));
+    CHECK(f.shown().last().contains(u"report.txt (20 B)"_s));
 }

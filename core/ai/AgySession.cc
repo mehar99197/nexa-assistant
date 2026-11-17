@@ -10,8 +10,7 @@
 #include <QJsonObject>
 #include <QSaveFile>
 
-#include <signal.h>
-#include <sys/prctl.h>
+#include "core/ProcessUtils.h"
 
 using namespace Qt::StringLiterals;
 
@@ -22,13 +21,8 @@ namespace {
 constexpr int kIdleStopMs = 10 * 60 * 1000;
 constexpr qsizetype kStderrKept = 4'096;
 
-constexpr auto kProcessFlags = QProcess::UnixProcessFlag::CreateNewSession
-    | QProcess::UnixProcessFlag::ResetSignalHandlers | QProcess::UnixProcessFlag::CloseFileDescriptors;
-
-// The process leads its own session, so -pid reaches agy and anything it started.
 void killGroup(qint64 pid) {
-    if (pid <= 0) return;
-    if (::kill(pid_t(-pid), SIGKILL) != 0) ::kill(pid_t(pid), SIGKILL);
+    process::killTree(pid);
 }
 
 constexpr QFileDevice::Permissions kOwnerOnly = QFileDevice::ReadOwner | QFileDevice::WriteOwner;
@@ -120,10 +114,7 @@ void AgySession::start() {
     process_.setProgram(program_);
     process_.setArguments(arguments);
     process_.setWorkingDirectory(workspace(workingDir_));
-    process_.setUnixProcessParameters(kProcessFlags);
-    // Its own session takes it out of reach of the terminal's hangup: tie it to Nexa instead, so a
-    // crash of Nexa does not leave agy running.
-    process_.setChildProcessModifier([] { ::prctl(PR_SET_PDEATHSIG, SIGKILL); });
+    process::configureChild(process_);
     qCInfo(lcAi) << "starting agy" << (model_.isEmpty() ? u"(its own model)"_s : model_);
     process_.start();
 }

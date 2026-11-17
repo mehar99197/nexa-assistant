@@ -12,7 +12,7 @@
 #include <QJsonParseError>
 #include <QJsonValue>
 #include <QSaveFile>
-#include <QStandardPaths>
+#include "core/config/Portable.h"
 
 using namespace Qt::StringLiterals;
 
@@ -41,7 +41,7 @@ QStringList removedProviders(const QJsonObject &before, const Config &after) {
 ConfigStore::ConfigStore(QString path) : path_(std::move(path)) {}
 
 QString ConfigStore::defaultPath() {
-    return QStandardPaths::writableLocation(QStandardPaths::GenericConfigLocation) + u"/nexa/config.json"_s;
+    return portable::configDir() + u"/config.json"_s;
 }
 
 Result<Config> ConfigStore::load() const {

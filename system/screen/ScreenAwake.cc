@@ -2,18 +2,27 @@
 
 #include "core/Logging.h"
 
+#include <QPointer>
+#include <QVariantMap>
+
+#ifdef Q_OS_UNIX
 #include <QDBusConnection>
 #include <QDBusMessage>
 #include <QDBusObjectPath>
 #include <QDBusPendingCallWatcher>
 #include <QDBusPendingReply>
-#include <QPointer>
-#include <QVariantMap>
+#elif defined(Q_OS_WIN)
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+#include <windows.h>
+#endif
 
 using namespace Qt::StringLiterals;
 
 namespace nexa {
 
+#ifdef Q_OS_UNIX
 namespace {
 
 // Inhibit flags, the same in the portal and in GNOME's session manager: 4 suspend, 8 idle (blanking and the lock).
@@ -88,5 +97,36 @@ void ScreenAwake::drop() {
         gnomeCookie_ = 0;
     }
 }
+#elif defined(Q_OS_WIN)
+ScreenAwake::ScreenAwake(QObject *parent) : QObject(parent) {}
+
+ScreenAwake::~ScreenAwake() { drop(); }
+
+void ScreenAwake::hold(const QString &) {
+    wanted_ = true;
+    if (winHeld_) return;
+    if (::SetThreadExecutionState(ES_CONTINUOUS | ES_SYSTEM_REQUIRED | ES_DISPLAY_REQUIRED) != 0) {
+        winHeld_ = true;
+        qCDebug(lcApp) << "screen kept on through Windows SetThreadExecutionState";
+    }
+}
+
+void ScreenAwake::release() {
+    wanted_ = false;
+    drop();
+}
+
+void ScreenAwake::drop() {
+    if (!winHeld_) return;
+    ::SetThreadExecutionState(ES_CONTINUOUS);
+    winHeld_ = false;
+}
+#else
+ScreenAwake::ScreenAwake(QObject *parent) : QObject(parent) {}
+ScreenAwake::~ScreenAwake() = default;
+void ScreenAwake::hold(const QString &) { wanted_ = true; }
+void ScreenAwake::release() { wanted_ = false; }
+void ScreenAwake::drop() {}
+#endif
 
 } // namespace nexa

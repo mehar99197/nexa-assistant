@@ -189,3 +189,45 @@ TEST_CASE("The welcome tells a phone every way to this PC and the certificate to
     CHECK(changed->type == Type::Routes);
     CHECK(changed->routes == routes.mid(0, 2));
 }
+
+TEST_CASE("RemoteProtocol carries ThemeStyle and accepted attachments while staying backwards-compatible") {
+    using Type = remote::ServerMessage::Type;
+    remote::ThemeStyle style;
+    style.themeId = u"abyss"_s;
+    style.designId = u"console"_s;
+    style.ground = u"#0b0e14"_s;
+    style.panel = u"#141923"_s;
+    style.panelRaised = u"#1b2230"_s;
+    style.line = u"#273043"_s;
+    style.text = u"#e6edf3"_s;
+    style.muted = u"#8b949e"_s;
+    style.idle = u"#39c5bb"_s;
+    style.wake = u"#6fd38a"_s;
+    style.listen = u"#5be3d6"_s;
+    style.stt = u"#9db4ff"_s;
+    style.think = u"#b39dff"_s;
+    style.act = u"#f0b24b"_s;
+    style.speak = u"#7be8c0"_s;
+    style.fast = u"#e6fffb"_s;
+    style.error = u"#ff7a66"_s;
+    style.onAccent = u"#06201c"_s;
+    style.fontFace = u"mono"_s;
+    style.bubbleStyle = u"lines"_s;
+    style.radius = 4;
+
+    const auto welcomeMsg = remote::decodeServer(remote::welcome(u"Phone"_s, true, false, u"idle"_s, {}, {}, style));
+    REQUIRE(welcomeMsg);
+    REQUIRE(welcomeMsg->theme);
+    CHECK(*welcomeMsg->theme == style);
+
+    const auto liveTheme = remote::decodeServer(remote::theme(style));
+    REQUIRE(liveTheme);
+    CHECK(liveTheme->type == Type::Theme);
+    REQUIRE(liveTheme->theme);
+    CHECK(*liveTheme->theme == style);
+
+    const auto acc = remote::decodeServer(remote::accepted(u"check file"_s, u"phone"_s, u"notes.txt (12 B)"_s));
+    REQUIRE(acc);
+    CHECK(acc->type == Type::Accepted);
+    CHECK(acc->attachments == u"notes.txt (12 B)"_s);
+}

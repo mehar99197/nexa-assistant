@@ -2,6 +2,7 @@
 // Claude Code is ever started here, and nothing signs in or out of anything real.
 
 #include "core/ai/ClaudeCodeSignIn.h"
+#include "core/ProcessUtils.h"
 
 #include "QtStringMakers.h"
 
@@ -13,8 +14,6 @@
 #include <QTest>
 
 #include <catch2/catch_test_macros.hpp>
-
-#include <signal.h>
 
 #include <optional>
 
@@ -63,7 +62,13 @@ struct ClaudeAuthRig {
         return names;
     }
 
-    QString program() const { return QStringLiteral(NEXA_TESTS_DIR "/fake-claude/claude"); }
+    QString program() const {
+#ifdef Q_OS_WIN
+        return QStringLiteral(NEXA_TESTS_DIR "/fake-claude/claude.cmd");
+#else
+        return QStringLiteral(NEXA_TESTS_DIR "/fake-claude/claude");
+#endif
+    }
     QString workingDir() const { return dir.filePath(u"work"_s); }
 
     QTemporaryDir dir;
@@ -98,7 +103,7 @@ struct Heard {
     std::optional<Error> error;
 };
 
-bool alive(qint64 pid) { return pid > 0 && ::kill(pid_t(pid), 0) == 0; }
+bool alive(qint64 pid) { return process::isAlive(pid); }
 
 QStringList g_logged;
 void collect(QtMsgType, const QMessageLogContext &, const QString &message) { g_logged.append(message); }

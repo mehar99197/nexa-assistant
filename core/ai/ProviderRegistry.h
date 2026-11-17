@@ -61,6 +61,9 @@ public:
     // not already there; the hand-tuned one wins on a clash and takes the catalogue's category, website, hint and
     // free-tier mark. Built once.
     static const QList<ProviderPreset> &presets();
+    // Managed Nexa AI relay preset (requires a Pro or Team licence; token comes from AccountManager at runtime).
+    static ProviderPreset nexaAiPreset();
+    static bool isNexaManaged(const ProviderConfig &config);
     // "Programs", then the catalogue's categories, in display order.
     static QStringList presetCategories();
     QList<ProviderPreset> availablePresets() const; // presets whose kind is registered

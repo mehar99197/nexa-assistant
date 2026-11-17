@@ -98,7 +98,10 @@ public:
     bool isOnline() const { return state_ == State::Online; }
 
     bool ask(const QString &text);                      // false when not online
+    // Upload attachments over POST /api/upload with pinned TLS + Bearer auth (falls back to ask() if empty).
+    void uploadAsk(const QString &text, const QStringList &filePaths, std::function<void(Result<void>)> done);
     bool askAloud(const QByteArray &pcm16kMonoInt16);   // one whole utterance
+    std::optional<remote::ThemeStyle> theme() const { return theme_; }
     void cancel();
     bool unlock();                                      // Unlock PC (hardcore mode); false when not online
     bool answer(quint64 id, bool allow);                // a question a task waits on
@@ -113,6 +116,7 @@ signals:
     void routesLearned(const QList<nexa::RemoteRoute> &routes, const QString &fingerprint);
     void connectedVia(const QString &via);
     void received(const nexa::remote::ServerMessage &message);     // everything after the welcome
+    void themeChanged(const nexa::remote::ThemeStyle &theme);      // PC palette/design arrived or updated
     void unauthorized(const QString &reason);                       // the token was refused: pair again
     void certificateRejected(const QString &fingerprint);           // not the pinned one; nothing was sent
 
@@ -147,6 +151,7 @@ private:
     bool welcomed_{false};
     bool rejected_{false};  // the certificate: no point trying again
     int attempts_{0};
+    std::optional<remote::ThemeStyle> theme_;
 };
 
 } // namespace nexa

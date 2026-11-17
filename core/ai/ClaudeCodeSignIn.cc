@@ -6,12 +6,11 @@
 #include "core/ai/ProgramLookup.h"
 
 #include <QRegularExpression>
-#include <QStandardPaths>
+#include "core/config/Portable.h"
 #include <QTimer>
 #include <QUrl>
 
-#include <signal.h>
-#include <sys/prctl.h>
+#include "core/ProcessUtils.h"
 
 #include <algorithm>
 #include <utility>
@@ -24,19 +23,14 @@ namespace {
 
 constexpr qsizetype kLoginOutputKept = 64 * 1024;   // a login prints a few lines; more than this is not the login
 
-// The same flags ClaudeCodeSession runs the program with: its own session, so -pid reaches it and anything it started.
-constexpr auto kProcessFlags = QProcess::UnixProcessFlag::CreateNewSession
-    | QProcess::UnixProcessFlag::ResetSignalHandlers | QProcess::UnixProcessFlag::CloseFileDescriptors;
-
 void killGroup(qint64 pid) {
-    if (pid <= 0) return;
-    if (::kill(pid_t(-pid), SIGKILL) != 0) ::kill(pid_t(pid), SIGKILL);
+    process::killTree(pid);
 }
 
 // The group alone, for a leader that has already gone: the browser it started may still be there as a member. Never
 // the bare pid, which by now may be somebody else's.
 void killGroupOnly(qint64 pgid) {
-    if (pgid > 0) ::kill(pid_t(-pgid), SIGKILL);
+    process::killTree(pgid, true, false);
 }
 
 QString duration(int ms) {
@@ -54,7 +48,7 @@ const QString kInstructions =
 ClaudeCodeSignIn::ClaudeCodeSignIn(QString program, QString workingDir, QObject *parent)
     : ISignIn(parent), program_(std::move(program)), workingDir_(std::move(workingDir)) {
     if (workingDir_.isEmpty()) {
-        workingDir_ = QStandardPaths::writableLocation(QStandardPaths::GenericCacheLocation) + u"/nexa/claude"_s;
+        workingDir_ = portable::cacheDir() + u"/claude"_s;
     }
     timer_.setSingleShot(true);
     connect(&timer_, &QTimer::timeout, this, &ClaudeCodeSignIn::onTimeout);
@@ -170,9 +164,7 @@ void ClaudeCodeSignIn::run(const QStringList &arguments, Step step, int timeoutM
     process->setProgram(program_);
     process->setArguments(arguments);
     process->setWorkingDirectory(ClaudeCodeSession::workspace(workingDir_));
-    process->setUnixProcessParameters(kProcessFlags);
-    // Its own session takes it out of reach of the terminal's hangup: tie it to Nexa instead.
-    process->setChildProcessModifier([] { ::prctl(PR_SET_PDEATHSIG, SIGKILL); });
+    process::configureChild(*process);
     if (step == Step::Login) {
         connect(process, &QProcess::readyReadStandardOutput, this, [this, process] {
             if (process == process_) readLogin();

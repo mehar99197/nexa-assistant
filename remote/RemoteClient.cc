@@ -3,7 +3,10 @@
 #include "core/Logging.h"
 
 #include <QCryptographicHash>
+#include <QFile>
+#include <QFileInfo>
 #include <QHostAddress>
+#include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QNetworkAccessManager>
@@ -331,6 +334,16 @@ void RemoteClient::onTextMessage(const QString &text) {
         emit welcomed(message->device, message->voice, message->busy, message->mode);
         emit connectedVia(current().via);
         emit routesLearned(message->routes, message->fingerprint);
+        if (message->theme) {
+            theme_ = message->theme;
+            emit themeChanged(*theme_);
+        }
+        return;
+    case remote::ServerMessage::Type::Theme:
+        if (message->theme) {
+            theme_ = message->theme;
+            emit themeChanged(*theme_);
+        }
         return;
     case remote::ServerMessage::Type::Routes:
         emit routesLearned(message->routes, {});
@@ -398,6 +411,70 @@ bool RemoteClient::ask(const QString &text) {
     if (!welcomed_) return false;
     socket_->sendTextMessage(QString::fromUtf8(remote::text(text)));
     return true;
+}
+
+void RemoteClient::uploadAsk(const QString &text, const QStringList &filePaths, std::function<void(Result<void>)> done) {
+    if (filePaths.isEmpty()) {
+        if (ask(text)) {
+            if (done) done(Result<void>{});
+        } else if (done) {
+            done(Error{ErrorCode::Network, u"Not connected to Nexa."_s});
+        }
+        return;
+    }
+    if (!welcomed_ || token_.isEmpty()) {
+        if (done) done(Error{ErrorCode::Network, u"Not connected to Nexa."_s});
+        return;
+    }
+    if (filePaths.size() > 8) {
+        if (done) done(Error{ErrorCode::InvalidArgument, u"At most 8 files may be attached."_s});
+        return;
+    }
+    QJsonArray filesJson;
+    for (const QString &path : filePaths) {
+        QFile file(path);
+        if (!file.open(QIODevice::ReadOnly)) {
+            if (done) done(Error{ErrorCode::Io, u"Cannot open %1: %2"_s.arg(path, file.errorString())});
+            return;
+        }
+        constexpr qint64 kMaxFileBytes = 8 * 1024 * 1024;
+        if (file.size() > kMaxFileBytes) {
+            if (done) done(Error{ErrorCode::InvalidArgument, u"%1 exceeds the 8 MB limit."_s.arg(QFileInfo(path).fileName())});
+            return;
+        }
+        const QByteArray bytes = file.readAll();
+        QString name = QFileInfo(path).fileName();
+        if (name.isEmpty()) name = QUrl(path).fileName();
+        if (name.isEmpty()) name = u"attachment.bin"_s;
+        filesJson.append(QJsonObject{
+            {u"name"_s, name},
+            {u"data"_s, QString::fromLatin1(bytes.toBase64())},
+        });
+    }
+    QNetworkRequest request{QUrl(current().url(u"/api/upload"_s))};
+    request.setRawHeader("ngrok-skip-browser-warning", "1");
+    request.setRawHeader("Authorization", "Bearer " + token_.toUtf8());
+    request.setHeader(QNetworkRequest::ContentTypeHeader, u"application/json"_s);
+    request.setTransferTimeout(kRequestTimeoutMs);
+    const QByteArray body = QJsonDocument(QJsonObject{
+        {u"text"_s, text.trimmed()},
+        {u"files"_s, filesJson},
+    }).toJson(QJsonDocument::Compact);
+    QNetworkReply *reply = network_->post(request, body);
+    guard(reply);
+    connect(reply, &QNetworkReply::finished, this, [reply, done = std::move(done)] {
+        reply->deleteLater();
+        const int status = reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt();
+        const QByteArray raw = reply->readAll();
+        if (reply->error() == QNetworkReply::NoError && status >= 200 && status < 300) {
+            if (done) done(Result<void>{});
+            return;
+        }
+        const QJsonObject obj = QJsonDocument::fromJson(raw).object();
+        QString msg = obj.value(u"error"_s).toString();
+        if (msg.isEmpty()) msg = status > 0 ? u"Upload failed (%1)."_s.arg(status) : reply->errorString();
+        if (done) done(Error{ErrorCode::Network, msg});
+    });
 }
 
 bool RemoteClient::askAloud(const QByteArray &pcm16kMonoInt16) {

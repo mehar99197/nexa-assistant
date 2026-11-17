@@ -55,7 +55,11 @@ TEST_CASE("Memory saves a fact once, however it is said again, and keeps it on d
     CHECK(f.store.entries().first().origin == u"asked"_s);     // the user's word outranks a guess
 
     const QString path = f.dir.filePath(u"nexa/memory.json"_s);
+#ifdef Q_OS_UNIX
     CHECK_FALSE(QFileInfo(path).permissions().testAnyFlags(kGroupOrOther));
+#else
+    Q_UNUSED(kGroupOrOther);
+#endif
     MemoryStore reopened(path);
     REQUIRE(reopened.load().isOk());
     REQUIRE(reopened.entries().size() == 1);

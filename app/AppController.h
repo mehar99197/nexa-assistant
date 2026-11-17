@@ -23,6 +23,7 @@
 
 namespace nexa {
 
+class AccountManager;
 class ConfigStore;
 class HttpClient;
 class IAiProvider;
@@ -61,6 +62,7 @@ struct AppServices {
     // Where the browser_* tools work, in words for the prompt; empty while they are not there.
     std::function<QString()> browserTarget;
     IInputLock *inputLock{nullptr};     // hardcore mode's lock on the laptop's keyboard and mouse (the root helper)
+    AccountManager *account{nullptr};   // licence/account entitlements + managed Nexa AI runtime token
 };
 
 // Mediator between the GUI, voice and core. Every request is a task on the mission board (MissionControl, which it
@@ -157,6 +159,7 @@ public:
     // Asks about an action that belongs to no task (the board answers the tasks' own questions).
     void setConfirmer(ToolExecutor::Confirmer confirmer);
     VoicePipeline *voice() const { return services_.voice; }
+    Config runtimeConfig() const;       // copy with runtime Nexa AI token injected + entitlement overrides
 
     // ITaskEnvironment: what every task is given.
     Result<std::shared_ptr<IAiProvider>> createProvider(const ModelChoice &choice) override;
@@ -200,6 +203,7 @@ signals:
     void coreModeChanged(nexa::CoreMode mode);
     void litNodesChanged(unsigned nodes);           // CoreNodes: the satellites the running action lights
     void screenSharingChanged(bool shared);
+    void accountRequired(const QString &message);   // active provider requires Nexa account / Pro-Team licence
     // The app the user is in changed: its name and a one-line hint, both empty when there is none.
     void appContextChanged(const QString &name, const QString &hint);
 
@@ -243,6 +247,7 @@ private:
     // `told`: the chat already says so (a reply that failed), otherwise a note is added.
     void credentialsRequired(const Error &error, bool told);
     void setOffline(bool offline, const QString &reason = {});
+    ProviderConfig runtimeProvider(const ProviderConfig &provider) const;
     ProviderConfig *activeProviderConfig();
     QString basePrompt(const QString &source = QString()) const;     // the request's source shapes it
     QString browserParagraph() const;                                 // empty while there are no browser tools

@@ -6,7 +6,7 @@
 #include "core/ai/ProgramLookup.h"
 #include "core/ai/TranscriptWriter.h"
 
-#include <QStandardPaths>
+#include "core/config/Portable.h"
 #include <QTimer>
 
 using namespace Qt::StringLiterals;
@@ -39,7 +39,7 @@ protected:
 ClaudeCodeProvider::ClaudeCodeProvider(ProviderConfig config, QString workingDir, QObject *parent)
     : IAiProvider(parent), config_(std::move(config)), workingDir_(std::move(workingDir)) {
     if (workingDir_.isEmpty()) {
-        workingDir_ = QStandardPaths::writableLocation(QStandardPaths::GenericCacheLocation) + u"/nexa/claude"_s;
+        workingDir_ = portable::cacheDir() + u"/claude"_s;
     }
     turnTimer_.setSingleShot(true);
     connect(&turnTimer_, &QTimer::timeout, this, [this] {

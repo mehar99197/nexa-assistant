@@ -36,14 +36,28 @@ QJsonObject arrayOf(const QJsonObject &items, const QString &description) {
 
 // A path a shell takes as one word.
 QString quoted(const QString &path) {
+#ifdef Q_OS_WIN
+    QString inner = QDir::toNativeSeparators(path);
+    inner.replace(u'"', u"\\\""_s);
+    return u'"' + inner + u'"';
+#else
     QString inner = path;
     inner.replace(u'\'', u"'\\''"_s);
     return u'\'' + inner + u'\'';
+#endif
 }
 
 QString findSoffice() {
+    QStringList extraDirs;
+#ifdef Q_OS_WIN
+    for (const QString &base : {qEnvironmentVariable("ProgramFiles"), qEnvironmentVariable("ProgramFiles(x86)"),
+                                qEnvironmentVariable("LOCALAPPDATA") + u"/Programs"_s}) {
+        if (!base.isEmpty()) extraDirs.append(base + u"/LibreOffice/program"_s);
+    }
+#endif
     for (const QString &name : {u"soffice"_s, u"libreoffice"_s}) {
-        const QString found = QStandardPaths::findExecutable(name);
+        QString found = QStandardPaths::findExecutable(name);
+        if (found.isEmpty() && !extraDirs.isEmpty()) found = QStandardPaths::findExecutable(name, extraDirs);
         if (!found.isEmpty()) return found;
     }
     return {};

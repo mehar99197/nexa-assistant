@@ -129,7 +129,7 @@ BrowserSettingsPage::BrowserSettingsPage(const BrowserConfig &config, BrowserSer
                       "asking — Playwright passes that token to the browser on its command line. Until then Nexa "
                       "works in a separate window with its own profile. In confirm-risky mode Nexa asks before it "
                       "clicks or types on a page. Changes take effect when you press OK.");
-    if (ChromeProfiles::firefoxInstalled([](const QString &program) { return QStandardPaths::findExecutable(program); })) {
+    if (ChromeProfiles::firefoxInstalled()) {
         help += u"\n\n"_s + tr("Firefox cannot be driven this way (there is no Playwright extension for it); Chrome, "
                                "Edge or Nexa's own profile can.");
     }

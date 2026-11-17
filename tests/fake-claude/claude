@@ -215,7 +215,7 @@ def result(session, text, turns, is_error=False, subtype="success", api_status=N
 def print_main(args):
     log({"argv": args, "pid": os.getpid(), "cwd": os.getcwd(), "pdeathsig": parent_death_signal(),
          "env": {k: os.environ.get(k) for k in ("CLAUDECODE", "CLAUDE_CODE_ENTRYPOINT", "CLAUDE_CONFIG_DIR")},
-         "pathFirst": os.environ.get("PATH", "").split(":")[0], "systemPrompt": option(args, "--system-prompt")})
+         "pathFirst": os.environ.get("PATH", "").split(os.pathsep)[0], "systemPrompt": option(args, "--system-prompt")})
     alias = option(args, "--model")
     model = ALIASES.get(alias, alias) if alias else "claude-sonnet-4-5"
     session = "fake-session-%d" % os.getpid()

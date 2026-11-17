@@ -2,6 +2,7 @@
 
 #include "core/ai/AgyProvider.h"
 #include "core/ai/ChatStream.h"
+#include "core/ProcessUtils.h"
 
 #include "QtStringMakers.h"
 
@@ -16,7 +17,9 @@
 
 #include <catch2/catch_test_macros.hpp>
 
+#ifdef Q_OS_UNIX
 #include <signal.h>
+#endif
 
 #include <optional>
 
@@ -57,7 +60,12 @@ struct AgyRig {
         return result;
     }
 
-    ProviderConfig config(const QString &program = QStringLiteral(NEXA_TESTS_DIR "/fake-agy/agy")) const {
+#ifdef Q_OS_WIN
+    static inline const QString kDefaultAgy = QStringLiteral(NEXA_TESTS_DIR "/fake-agy/agy.cmd");
+#else
+    static inline const QString kDefaultAgy = QStringLiteral(NEXA_TESTS_DIR "/fake-agy/agy");
+#endif
+    ProviderConfig config(const QString &program = kDefaultAgy) const {
         return ProviderConfig{.id = u"agy"_s, .kind = kKindAgy, .name = u"agy"_s, .baseUrl = program,
                               .defaultModel = u"fake-fast"_s, .requiresKey = false};
     }
@@ -90,7 +98,7 @@ Outcome run(AgyProvider &provider, const ChatRequest &request) {
     return outcome;
 }
 
-bool alive(qint64 pid) { return ::kill(pid_t(pid), 0) == 0; }
+bool alive(qint64 pid) { return process::isAlive(pid); }
 
 } // namespace
 
@@ -238,7 +246,9 @@ TEST_CASE("agy dies with Nexa, even when Nexa crashes") {
     AgyRig rig({QJsonObject{{u"text"_s, u"ok"_s}}});
     AgyProvider provider(rig.config(), rig.workingDir());
     REQUIRE_FALSE(run(provider, ask({u(u"hello"_s)})).error);
+#ifdef Q_OS_UNIX
     CHECK(rig.log(u"argv"_s).first().value(u"pdeathsig"_s).toInt() == SIGKILL);
+#endif
 }
 
 TEST_CASE("agy saying nothing for too long fails the turn, so another provider can answer") {

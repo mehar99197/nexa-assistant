@@ -85,7 +85,7 @@ bool isFieldCode(const QString &argument) {
 }
 
 QString basename(const QString &path) {
-    return path.section(u'/', -1);
+    return path.section(u'/', -1).section(u'\\', -1);
 }
 
 } // namespace

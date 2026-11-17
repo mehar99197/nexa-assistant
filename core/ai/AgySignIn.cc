@@ -4,11 +4,10 @@
 #include "core/ai/AgySession.h"
 
 #include <QRegularExpression>
-#include <QStandardPaths>
+#include "core/config/Portable.h"
 #include <QTimer>
 
-#include <signal.h>
-#include <sys/prctl.h>
+#include "core/ProcessUtils.h"
 
 #include <algorithm>
 #include <utility>
@@ -22,20 +21,14 @@ namespace {
 constexpr int kCloseTimeoutMs = 3'000;                  // session/close is politeness, not part of the answer
 constexpr qsizetype kLineLimit = 4 * 1024 * 1024;       // agy's replies are a few KB; no end of line in this much is not ACP
 
-// The same flags AgySession runs agy with: its own session, so -pid reaches agy and the language server it
-// starts, and nothing handed down that agy has no use for.
-constexpr auto kProcessFlags = QProcess::UnixProcessFlag::CreateNewSession
-    | QProcess::UnixProcessFlag::ResetSignalHandlers | QProcess::UnixProcessFlag::CloseFileDescriptors;
-
 void killGroup(qint64 pid) {
-    if (pid <= 0) return;
-    if (::kill(pid_t(-pid), SIGKILL) != 0) ::kill(pid_t(pid), SIGKILL);
+    process::killTree(pid);
 }
 
 // The group alone, for a leader that has already gone: its language server may still be there, and the
 // group lasts as long as any member does. Never the bare pid, which by now may be somebody else's.
 void killGroupOnly(qint64 pgid) {
-    if (pgid > 0) ::kill(pid_t(-pgid), SIGKILL);
+    process::killTree(pgid, true, false);
 }
 
 QString duration(int ms) {
@@ -54,7 +47,7 @@ const QRegularExpression &methodIdPattern() {
 AgySignIn::AgySignIn(QString program, QString workingDir, QObject *parent)
     : ISignIn(parent), program_(std::move(program)), workingDir_(std::move(workingDir)) {
     if (workingDir_.isEmpty()) {
-        workingDir_ = QStandardPaths::writableLocation(QStandardPaths::GenericCacheLocation) + u"/nexa/agy"_s;
+        workingDir_ = portable::cacheDir() + u"/agy"_s;
     }
     timer_.setSingleShot(true);
     connect(&timer_, &QTimer::timeout, this, &AgySignIn::onTimeout);
@@ -153,9 +146,7 @@ bool AgySignIn::begin(Operation operation) {
     process->setProgram(program_);
     process->setArguments({u"acp"_s});
     process->setWorkingDirectory(AgySession::workspace(workingDir_));
-    process->setUnixProcessParameters(kProcessFlags);
-    // Its own session takes it out of reach of the terminal's hangup: tie it to Nexa instead.
-    process->setChildProcessModifier([] { ::prctl(PR_SET_PDEATHSIG, SIGKILL); });
+    process::configureChild(*process);
     connect(process, &QProcess::readyReadStandardOutput, this, [this, process] {
         if (process == process_) readOutput();
     });

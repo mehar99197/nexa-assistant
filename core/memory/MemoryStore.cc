@@ -14,7 +14,7 @@
 #include <QRegularExpression>
 #include <QSaveFile>
 #include <QSet>
-#include <QStandardPaths>
+#include "core/config/Portable.h"
 
 #include <algorithm>
 
@@ -74,7 +74,7 @@ QJsonObject toJson(const MemoryEntry &entry) {
 MemoryStore::MemoryStore(QString path, QObject *parent) : QObject(parent), path_(std::move(path)) {}
 
 QString MemoryStore::defaultPath() {
-    return QStandardPaths::writableLocation(QStandardPaths::GenericDataLocation) + u"/nexa/memory.json"_s;
+    return portable::dataDir() + u"/memory.json"_s;
 }
 
 Result<void> MemoryStore::load() {

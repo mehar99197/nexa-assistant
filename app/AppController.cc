@@ -1,6 +1,7 @@
 #include "app/AppController.h"
 
 #include "app/MicrophoneLeveler.h"
+#include "core/account/AccountManager.h"
 #include "core/agent/VoicePrompt.h"
 #include "core/Logging.h"
 #include "core/agent/Agent.h"
@@ -197,6 +198,18 @@ AppController::AppController(AppServices services, Config config, QString enviro
         });
         connect(voice, &VoicePipeline::microphoneOverloaded, this, &AppController::microphoneOverloaded);
     }
+
+    if (AccountManager *account = services_.account) {
+        const auto onAccountUpdated = [this] {
+            applyVoiceConfig();
+            const ProviderConfig *active = config_.active();
+            if (provider_ && active && ProviderRegistry::isNexaManaged(*active) && !isBusy()) {
+                reloadProviders();
+            }
+        };
+        connect(account, &AccountManager::entitlementChanged, this, onAccountUpdated);
+        connect(account, &AccountManager::featuresChanged, this, onAccountUpdated);
+    }
 }
 
 AppController::~AppController() {
@@ -209,8 +222,16 @@ void AppController::start() {
     applyVoiceConfig();
     const ProviderConfig *active = config_.active();
     if (!active || !provider_) return;
+    if (ProviderRegistry::isNexaManaged(*active) && services_.account &&
+        !services_.account->verifiedFeatures().nexaAi) {
+        const QString msg = tr("%1 requires a Pro or Team plan (Settings → Account).").arg(active->name);
+        emit statusChanged(msg, true);
+        emit accountRequired(msg);
+        return;
+    }
     // A program is signed in by Settings → Providers, never by a key Nexa holds.
-    if (active->requiresKey && active->apiKey.isEmpty() && !ProviderRegistry::isProgramKind(active->kind)) {
+    if (active->requiresKey && active->apiKey.isEmpty() && !ProviderRegistry::isProgramKind(active->kind) &&
+        !ProviderRegistry::isNexaManaged(*active)) {
         emit statusChanged(tr("%1 needs an API key.").arg(active->name), true);
         emit apiKeyRequired(active->name);
         return;
@@ -786,9 +807,18 @@ bool AppController::canUseModel(bool report) {
         if (report) emit statusChanged(tr("No AI provider is configured — open Settings."), true);
         return false;
     }
+    const ProviderConfig *active = config_.active();
+    if (active && ProviderRegistry::isNexaManaged(*active) && services_.account &&
+        !services_.account->verifiedFeatures().nexaAi) {
+        const QString msg = tr("Nexa AI requires a Pro or Team plan (Settings → Account).");
+        if (report) {
+            emit statusChanged(msg, true);
+            emit accountRequired(msg);
+        }
+        return false;
+    }
     // agy and opencode take an empty model as their own default, so they answer before (and
     // without) the model list, which agy needs about 16 s for.
-    const ProviderConfig *active = config_.active();
     if (currentModel().isEmpty() && active && ProviderRegistry::needsModel(*active)) {
         if (report) emit statusChanged(tr("Choose a model first (model list in the toolbar)."), true);
         return false;
@@ -834,11 +864,12 @@ void AppController::setConfirmer(ToolExecutor::Confirmer confirmer) {
 void AppController::applyVoiceConfig() {
     VoicePipeline *voice = services_.voice;
     if (!voice) return;
-    const VoiceConfig &settings = config_.voice;
+    const Config effective = runtimeConfig();
+    const VoiceConfig &settings = effective.voice;
     QStringList problems;
 
     // The PC's voice, the phone app and the web remote all build from the same choice (Settings → Voice).
-    Result<std::unique_ptr<ISpeechRecognizer>> recognizer = VoiceBackends::createRecognizer(config_, services_.http);
+    Result<std::unique_ptr<ISpeechRecognizer>> recognizer = VoiceBackends::createRecognizer(effective, services_.http);
     if (recognizer) {
         voice->setRecognizer(std::move(recognizer).value());
     } else {
@@ -859,7 +890,7 @@ void AppController::applyVoiceConfig() {
     }
     voice->setWakeRecognizer(std::move(wake));
 
-    Result<std::unique_ptr<ITextToSpeech>> speech = VoiceBackends::createTextToSpeech(config_, services_.http, services_.sherpa);
+    Result<std::unique_ptr<ITextToSpeech>> speech = VoiceBackends::createTextToSpeech(effective, services_.http, services_.sherpa);
     if (speech) {
         voice->setTextToSpeech(std::move(speech).value());
     } else {
@@ -907,7 +938,7 @@ void AppController::rebuildProvider() {
 
     // The first choice, then every provider that may answer when it cannot: for the model list. Each task asks
     // through a chain of its own (createProvider).
-    Result<std::unique_ptr<IAiProvider>> created = services_.providers->createChain(config_);
+    Result<std::unique_ptr<IAiProvider>> created = services_.providers->createChain(runtimeConfig());
     if (!created) {
         emit statusChanged(created.error().message, true);
         return;
@@ -917,7 +948,7 @@ void AppController::rebuildProvider() {
 }
 
 Result<std::shared_ptr<IAiProvider>> AppController::makeChain() {
-    Result<std::unique_ptr<IAiProvider>> chain = services_.providers->createChain(config_);
+    Result<std::unique_ptr<IAiProvider>> chain = services_.providers->createChain(runtimeConfig());
     if (!chain) return chain.error();
     return shareProvider(std::move(chain).value());
 }
@@ -937,7 +968,11 @@ Result<std::shared_ptr<IAiProvider>> AppController::createProvider(const ModelCh
     if (!chosen) {
         return Error{ErrorCode::NotFound, tr("The provider %1 is no longer in Settings → Providers.").arg(choice.provider)};
     }
-    Result<std::unique_ptr<IAiProvider>> created = services_.providers->create(*chosen);
+    if (ProviderRegistry::isNexaManaged(*chosen) && services_.account &&
+        !services_.account->verifiedFeatures().nexaAi) {
+        return Error{ErrorCode::Unauthorized, tr("Nexa AI requires a Pro or Team plan (Settings → Account).")};
+    }
+    Result<std::unique_ptr<IAiProvider>> created = services_.providers->create(runtimeProvider(*chosen));
     if (!created) return created.error();
     return shareProvider(std::move(created).value());
 }
@@ -1013,6 +1048,12 @@ void AppController::refreshCoreMode() {
 
 void AppController::credentialsRequired(const Error &error, bool told) {
     const ProviderConfig *active = config_.active();
+    if (active && ProviderRegistry::isNexaManaged(*active)) {
+        const QString msg = describe(error);
+        if (!told) emit replyNotice(msg);
+        emit accountRequired(msg);
+        return;
+    }
     if (active && ProviderRegistry::isProgramKind(active->kind)) {
         // Only a sign-in is mended by the button; a model the program refuses, or a server whose password was
         // refused, keeps its own sentence (describe() shows it) and sends nobody to Settings → Providers → Sign in.
@@ -1022,6 +1063,26 @@ void AppController::credentialsRequired(const Error &error, bool told) {
         return;
     }
     emit apiKeyRequired(providerName());
+}
+
+ProviderConfig AppController::runtimeProvider(const ProviderConfig &provider) const {
+    ProviderConfig copy = provider;
+    if (ProviderRegistry::isNexaManaged(copy) && services_.account) {
+        copy.apiKey = services_.account->licenseToken();
+        if (copy.baseUrl.isEmpty() || copy.baseUrl == u"https://nexadownloadmanager.com/api/assistant/v1"_s) {
+            copy.baseUrl = services_.account->nexaAiBaseUrl();
+        }
+    }
+    return copy;
+}
+
+Config AppController::runtimeConfig() const {
+    Config copy = config_;
+    for (ProviderConfig &p : copy.providers) p = runtimeProvider(p);
+    if (services_.account && !services_.account->verifiedFeatures().ownVoice) {
+        copy.voice.ownVoice = false;
+    }
+    return copy;
 }
 
 void AppController::noteProviderError(const Error &error) {
@@ -1102,6 +1163,9 @@ QString AppController::describe(const Error &error) const {
     case ErrorCode::ConnectionRefused:
         return tr("Cannot reach %1 at %2 — is it running?").arg(name, active ? active->baseUrl : QString());
     case ErrorCode::Unauthorized:
+        if (active && ProviderRegistry::isNexaManaged(*active)) {
+            return tr("Nexa AI requires an active Pro or Team licence in Settings → Account (%1).").arg(error.message);
+        }
         if (active && ProviderRegistry::isProgramKind(active->kind)) {
             // Not a key: the program's own sign-in, in a sentence of Nexa's own. Any other refusal (a model the
             // program will not serve, a server's password) says what it was in the program's own words.

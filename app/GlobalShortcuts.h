@@ -1,13 +1,18 @@
 #pragma once
 
-#include <QDBusConnection>
-#include <QDBusMessage>
-#include <QDBusObjectPath>
 #include <QHash>
 #include <QList>
 #include <QObject>
 #include <QString>
 #include <QVariantMap>
+
+#ifdef Q_OS_UNIX
+#include <QDBusConnection>
+#include <QDBusMessage>
+#include <QDBusObjectPath>
+#elif defined(Q_OS_WIN)
+#include <memory>
+#endif
 
 namespace nexa {
 
@@ -46,6 +51,7 @@ signals:
     void registered();
     void unavailable(const QString &reason);
 
+#ifdef Q_OS_UNIX
 private slots:
     void onSessionCreated(uint response, const QVariantMap &results);
     void onShortcutsBound(uint response, const QVariantMap &results);
@@ -55,19 +61,40 @@ private slots:
                        const QVariantMap &options);
     void onShortcutsChanged(const QDBusMessage &message);
     void onSessionClosed(const QVariantMap &details);
+#endif
 
 private:
+#ifdef Q_OS_UNIX
     void registerApp();
     void createSession();
     void requestShortcuts();
     QString subscribe(const char *slot);        // listens on a fresh Request path and returns it
     void resubscribe(QString &path, const QString &actual, const char *slot);
     void unsubscribe(const QString &path, const char *slot);
-    void giveUp(const QString &reason);
     void readTriggers(const QVariant &shortcuts);
+#elif defined(Q_OS_WIN)
+    class NativeFilter;
+    struct WinHotkey {
+        int hotkeyId{0};
+        QString id;
+        uint mods{0};
+        uint vk{0};
+        QString label;
+        bool held{false};
+    };
+    void clearWinHotkeys();
+    void pollWinReleases();
+    friend class NativeFilter;
+#endif
+    void giveUp(const QString &reason);
 
     QString appId_;
+#ifdef Q_OS_UNIX
     QDBusConnection bus_;
+#elif defined(Q_OS_WIN)
+    std::unique_ptr<NativeFilter> filter_;
+    QList<WinHotkey> winHotkeys_;
+#endif
     QList<Shortcut> wanted_;
     QString sessionPath_;
     QString createPath_;        // Request of CreateSession

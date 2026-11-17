@@ -29,7 +29,8 @@ using namespace Qt::StringLiterals;
 namespace {
 
 QString python() {
-    return QStandardPaths::findExecutable(u"python3"_s);
+    if (const QString p = QStandardPaths::findExecutable(u"python3"_s); !p.isEmpty()) return p;
+    return QStandardPaths::findExecutable(u"python"_s);
 }
 
 QString fakeServer() {

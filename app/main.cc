@@ -8,12 +8,15 @@
 #include "app/TrayIcon.h"
 #include "app/SystemStatus.h"
 #include "app/UnixSignals.h"
+#include "core/account/AccountManager.h"
+#include "core/account/UpdateChecker.h"
 #include "core/agent/AppContext.h"
 #include "core/Logging.h"
 #include "core/ai/ProgramLookup.h"
 #include "core/ai/ProviderRegistry.h"
 #include "core/audit/AuditLog.h"
 #include "core/config/ConfigStore.h"
+#include "core/config/Portable.h"
 #include "core/intent/IntentRouter.h"
 #include "core/intent/MemoryIntents.h"
 #include "core/intent/MissionIntents.h"
@@ -31,6 +34,7 @@
 #include "system/SystemTools.h"
 #include "system/files/AttachmentLoader.h"
 #include "system/office/OfficeTools.h"
+#include "remote/LocalApiServer.h"
 #include "remote/PairingManager.h"
 #include "remote/RemoteServer.h"
 #include "remote/TlsIdentity.h"
@@ -47,6 +51,7 @@
 #include "system/commands/RootCommandRunner.h"
 #include "system/helper/HelperClient.h"
 #include "system/input/HelperInputLock.h"
+#include "system/input/WinInputLock.h"
 #include "system/input/IInputBackend.h"
 #include "system/input/InputBackendSelector.h"
 #include "system/input/RemoteDesktopSession.h"
@@ -175,6 +180,36 @@ private:
     QStringList notes_;
 };
 
+remote::ThemeStyle remoteThemeStyle(const ThemePack &pack, const DesignSpec &design) {
+    remote::ThemeStyle style;
+    style.themeId = pack.id;
+    style.designId = design.id;
+    style.ground = pack.tokens.ground.name(QColor::HexRgb);
+    style.panel = pack.tokens.panel.name(QColor::HexRgb);
+    style.panelRaised = pack.tokens.panelRaised.name(QColor::HexRgb);
+    style.line = pack.tokens.line.name(QColor::HexRgb);
+    style.text = pack.tokens.text.name(QColor::HexRgb);
+    style.muted = pack.tokens.muted.name(QColor::HexRgb);
+    style.idle = pack.tokens.idle.name(QColor::HexRgb);
+    style.wake = pack.tokens.wake.name(QColor::HexRgb);
+    style.listen = pack.tokens.listen.name(QColor::HexRgb);
+    style.stt = pack.tokens.stt.name(QColor::HexRgb);
+    style.think = pack.tokens.think.name(QColor::HexRgb);
+    style.act = pack.tokens.act.name(QColor::HexRgb);
+    style.speak = pack.tokens.speak.name(QColor::HexRgb);
+    style.fast = pack.tokens.fast.name(QColor::HexRgb);
+    style.error = pack.tokens.error.name(QColor::HexRgb);
+    style.onAccent = pack.tokens.onAccent.name(QColor::HexRgb);
+    style.fontFace = design.font == FontFace::Mono  ? u"mono"_s
+                   : design.font == FontFace::Serif ? u"serif"_s
+                                                    : u"sans"_s;
+    style.bubbleStyle = design.bubbles == BubbleStyle::Lines ? u"lines"_s
+                      : design.bubbles == BubbleStyle::Cards ? u"cards"_s
+                                                             : u"bubbles"_s;
+    style.radius = design.radius;
+    return style;
+}
+
 bool programExists(const QString &program) {
     if (program.contains(u'/')) return QFileInfo(program).isExecutable();
     return !QStandardPaths::findExecutable(program).isEmpty();
@@ -196,6 +231,7 @@ int main(int argc, char *argv[]) {
     // Never "nexa": that desktop id (and /usr/bin/nexa) belongs to Nexa Download Manager. The
     // reverse-DNS form is also what the portal needs to grant global hotkeys.
     QApplication::setDesktopFileName(u"org.nexa.Assistant"_s);
+    portable::initialise();
     // The installed theme icon when there is one, else the copy built into Nexa.
     QApplication::setWindowIcon(QIcon::fromTheme(u"org.nexa.Assistant"_s, QIcon(u":/nexa/nexa.svg"_s)));
 
@@ -291,8 +327,21 @@ int main(int argc, char *argv[]) {
     const DesignSpec startingDesign = NexaDesigns::resolve(runDesign.isEmpty() ? config.ui.design : runDesign);
     NexaTheme::apply(&app, startingTheme.tokens, startingTheme.style, startingDesign, startingTheme.chrome);
 
-    // AI providers
+    // AI providers & account/licence manager
     HttpClient http;
+    AccountManager account;
+    QObject::connect(&http, &HttpClient::nexaRemaining, &account, &AccountManager::noteUsageRemaining);
+    QObject::connect(&app, &QCoreApplication::aboutToQuit, &account, &AccountManager::releaseSeat);
+    account.start();
+
+    UpdateChecker updater;
+    QObject::connect(&updater, &UpdateChecker::checkFailed, [](const QString &reason) {
+        qCDebug(lcApp) << "update check:" << reason;
+    });
+    if (updater.isConfigured() && !parser.isSet(settingsShotsOption) && !parser.isSet(screenshotOption)) {
+        QTimer::singleShot(5000, &updater, [&updater] { updater.check(QCoreApplication::applicationVersion()); });
+    }
+
     ProviderRegistry providers(&http);
 
     // Tools, policy, audit
@@ -333,7 +382,11 @@ int main(int argc, char *argv[]) {
     // Hardcore mode's lock on the laptop's own keyboard and mouse, through the same helper; the screen stays on
     // while it is held.
     ScreenAwake screenAwake;
+#ifdef Q_OS_WIN
+    WinInputLock inputLock;
+#else
     HelperInputLock inputLock(&helperClient, &screenAwake);
+#endif
 
     // The phone, through adb: over USB, or over Wi-Fi once paired in Settings → Android. Nothing
     // here starts adb until a phone is remembered or a phone tool is used.
@@ -458,7 +511,8 @@ int main(int argc, char *argv[]) {
                     .memory = &memory,
                     .skills = &skills,
                     .browserTarget = [&browser] { return browser.targetPhrase(); },
-                    .inputLock = &inputLock},
+                    .inputLock = &inputLock,
+                    .account = &account},
         std::move(config), SystemInfo::summary());
     screenGate = &controller;
     QObject::connect(&browser, &BrowserService::notice, &controller, &AppController::notify);
@@ -470,9 +524,19 @@ int main(int argc, char *argv[]) {
     RemoteBridge remoteBridge(&controller, &http, &sherpa);
     controller.setPhonePaired([&pairing] { return !pairing.devices().isEmpty(); });
     RemoteServer remote(&pairing, &remoteBridge, &tlsIdentity);
-    // Away from home: Tailscale watched, the Cloudflare and ngrok tunnels run as Settings → Remote says.
+    // Away from home: Tailscale watched, the Cloudflare and ngrok tunnels run as Settings → Remote says (Pro / Team).
     RemoteAccess remoteAccess(&remote);
-    QObject::connect(&controller, &AppController::userMessageAccepted, &remote, &RemoteServer::onUserMessage);
+    remoteAccess.setEntitled(account.verifiedFeatures().awayFromHome);
+    const auto syncAwayEntitlement = [&remoteAccess, &account] {
+        remoteAccess.setEntitled(account.verifiedFeatures().awayFromHome);
+    };
+    QObject::connect(&account, &AccountManager::entitlementChanged, &remoteAccess, syncAwayEntitlement);
+    QObject::connect(&account, &AccountManager::featuresChanged, &remoteAccess, syncAwayEntitlement);
+    QObject::connect(&controller, &AppController::userMessageAccepted, &remote,
+                     [&remote](const QString &text, const QString &source, const QString &attachments) {
+                         const QString wireSource = source.startsWith(u"phone"_s) ? source : u"pc"_s;
+                         remote.onUserMessageFrom(text, wireSource, attachments);
+                     });
     // Hardcore mode's lock and the questions tasks wait on: the phone shows them, unlocks and answers.
     if (HardcoreMode *hardcore = controller.hardcore()) {
         QObject::connect(hardcore, &HardcoreMode::stateChanged, &remote, [&remote, &remoteBridge] {
@@ -511,8 +575,8 @@ int main(int argc, char *argv[]) {
                                : reason == FinishReason::Cancelled ? u"cancelled"_s
                                                                    : u"other"_s);
     });
-    const auto applyRemote = [&remote, &remoteBridge, &remoteAccess, &phone](const Config &updated) {
-        remoteBridge.applyConfig(updated);
+    const auto applyRemote = [&remote, &remoteBridge, &remoteAccess, &phone, &controller](const Config &updated) {
+        remoteBridge.applyConfig(controller.runtimeConfig());
         remoteAccess.apply(updated.remote);
         if (!updated.remote.enabled) {
             remote.stop();
@@ -526,10 +590,44 @@ int main(int argc, char *argv[]) {
     };
     applyRemote(controller.config());
 
+    // M15 Part B: Loopback-only (127.0.0.1) OpenAI-compatible HTTP proxy (off by default, no PC tools).
+    LocalApiServer localApi(&providers);
+    localApi.setConfigTransform([&account](const Config &cfg) -> Result<Config> {
+        Config copy = cfg;
+        const ProviderConfig *active = copy.active();
+        if (active && ProviderRegistry::isNexaManaged(*active) && !account.verifiedFeatures().nexaAi) {
+            return Error{ErrorCode::Unauthorized, QObject::tr("Nexa AI requires a Pro or Team plan.")};
+        }
+        for (ProviderConfig &p : copy.providers) {
+            if (ProviderRegistry::isNexaManaged(p)) {
+                p.apiKey = account.licenseToken();
+                if (p.baseUrl.isEmpty() || p.baseUrl == u"https://nexadownloadmanager.com/api/assistant/v1"_s) {
+                    p.baseUrl = account.nexaAiBaseUrl();
+                }
+            }
+        }
+        return copy;
+    });
+    const auto applyLocalApi = [&localApi, &controller](const Config &updated) {
+        if (!updated.localApi.enabled) {
+            localApi.stop();
+            return;
+        }
+        if (updated.localApi.bearerToken.trimmed().isEmpty()) {
+            Config withToken = updated;
+            withToken.localApi.bearerToken = LocalApiServer::generateBearerToken();
+            controller.updateConfig(withToken);
+            return;
+        }
+        localApi.updateConfig(updated);
+    };
+    applyLocalApi(controller.config());
+
     QObject::connect(&controller, &AppController::configChanged, &app,
-                     [applyAndroid, applyRemote, &mcp, &browser, &tools, &memory, &skills](const Config &updated) {
+                     [applyAndroid, applyRemote, applyLocalApi, &mcp, &browser, &tools, &memory, &skills](const Config &updated) {
                          applyAndroid(updated.android);
                          applyRemote(updated);
+                         applyLocalApi(updated);
                          mcp.apply(updated.mcp.servers);
                          browser.apply(updated.browser);
                          syncMemoryTools(tools, &memory, updated.memory);
@@ -583,9 +681,16 @@ int main(int argc, char *argv[]) {
                                        },
                                    .lowerMicrophone = [&controller] { controller.lowerMicrophone(); },
                                    .replyRunning = [&controller] { return controller.isBusy(); },
-                                   .providersChanged = [&controller] { controller.reloadProviders(); }},
+                                   .providersChanged = [&controller] { controller.reloadProviders(); },
+                                   .account = &account,
+                                   .updater = &updater},
                       AuditLog::defaultPath());
     if (!runDesign.isEmpty() || !runPalette.isEmpty()) window.wear(runPalette, runDesign);
+    const auto syncRemoteTheme = [&window, &remote] {
+        remote.setTheme(remoteThemeStyle(window.theme(), window.design()));
+    };
+    syncRemoteTheme();
+    QObject::connect(&window, &MainWindow::visualChanged, &remote, syncRemoteTheme);
     if (parser.isSet(sizeOption)) {
         const QStringList parts = parser.value(sizeOption).split(u'x');
         if (parts.size() == 2 && parts.at(0).toInt() > 0 && parts.at(1).toInt() > 0) {

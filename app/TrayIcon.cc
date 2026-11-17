@@ -9,11 +9,24 @@
 #include <QApplication>
 #include <QIcon>
 #include <QMenu>
+#include <QStyle>
 #include <QSystemTrayIcon>
 
 using namespace Qt::StringLiterals;
 
 namespace nexa {
+
+namespace {
+
+QIcon trayMenuIcon(const QString &themeName, QStyle::StandardPixmap fallback) {
+    if (const QIcon themed = QIcon::fromTheme(themeName); !themed.isNull()) return themed;
+    if (QStyle *style = QApplication::style()) {
+        if (const QIcon standard = style->standardIcon(fallback); !standard.isNull()) return standard;
+    }
+    return QIcon(u":/nexa/nexa.svg"_s);
+}
+
+} // namespace
 
 TrayIcon::TrayIcon(MainWindow *window, AppController *controller, QObject *parent)
     : QObject(parent), window_(window) {
@@ -22,17 +35,21 @@ TrayIcon::TrayIcon(MainWindow *window, AppController *controller, QObject *paren
     auto *menu = new QMenu(window);
     showAction_ = menu->addAction(tr("Show Nexa"), this, &TrayIcon::toggleWindow);
     if (VoicePipeline *voice = controller->voice()) {
-        menu->addAction(QIcon::fromTheme(u"audio-input-microphone"_s), tr("Talk"), voice, &VoicePipeline::toggleListening);
+        menu->addAction(trayMenuIcon(u"audio-input-microphone"_s, QStyle::SP_MediaVolume), tr("Talk"), voice,
+                        &VoicePipeline::toggleListening);
     }
-    menu->addAction(QIcon::fromTheme(u"process-stop"_s), tr("Stop everything"), controller, &AppController::panic);
+    menu->addAction(trayMenuIcon(u"process-stop"_s, QStyle::SP_BrowserStop), tr("Stop everything"), controller,
+                    &AppController::panic);
     menu->addSeparator();
-    menu->addAction(QIcon::fromTheme(u"preferences-system"_s), tr("Settings…"), window, [window] {
+    menu->addAction(trayMenuIcon(u"preferences-system"_s, QStyle::SP_FileDialogDetailedView), tr("Settings…"), window,
+                    [window] {
         window->show();
         window->raise();
         window->activateWindow();
         window->openSettings();
     });
-    menu->addAction(QIcon::fromTheme(u"application-exit"_s), tr("Quit Nexa"), qApp, &QApplication::quit);
+    menu->addAction(trayMenuIcon(u"application-exit"_s, QStyle::SP_DialogCloseButton), tr("Quit Nexa"), qApp,
+                    &QApplication::quit);
     // The menu says "Hide" while the window is up, and "Show" while it is not.
     connect(menu, &QMenu::aboutToShow, this, [this] {
         showAction_->setText(window_->isVisible() ? tr("Hide Nexa") : tr("Show Nexa"));

@@ -6,7 +6,7 @@
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QSaveFile>
-#include <QStandardPaths>
+#include "core/config/Portable.h"
 
 #include <algorithm>
 #include <cmath>
@@ -42,7 +42,7 @@ std::vector<double> frameLevels(const PcmAudio &audio) {
 } // namespace
 
 QString VoiceSample::defaultDir() {
-    return QStandardPaths::writableLocation(QStandardPaths::GenericDataLocation) + u"/nexa"_s;
+    return portable::dataDir();
 }
 
 QString VoiceSample::wavPath(const QString &dir) {

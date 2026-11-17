@@ -8,6 +8,7 @@
 #include "app/SystemStatus.h"
 #include "core/ai/ProviderRegistry.h"
 #include "core/net/HttpClient.h"
+#include "core/ProcessUtils.h"
 
 #include "QtStringMakers.h"
 
@@ -33,8 +34,6 @@
 #include <QToolButton>
 
 #include <catch2/catch_test_macros.hpp>
-
-#include <signal.h>
 
 using namespace nexa;
 using namespace Qt::StringLiterals;
@@ -69,9 +68,19 @@ struct Rig {
         Config config;
         config.providers = {
             ProviderConfig{.id = u"agy"_s, .kind = QString(kKindAgy), .name = u"agy"_s,
-                           .baseUrl = QStringLiteral(NEXA_TESTS_DIR "/fake-agy/agy"), .requiresKey = false},
+#ifdef Q_OS_WIN
+                           .baseUrl = QStringLiteral(NEXA_TESTS_DIR "/fake-agy/agy.cmd"),
+#else
+                           .baseUrl = QStringLiteral(NEXA_TESTS_DIR "/fake-agy/agy"),
+#endif
+                           .requiresKey = false},
             ProviderConfig{.id = u"codex"_s, .kind = QString(kKindCodex), .name = u"Codex"_s,
-                           .baseUrl = QStringLiteral(NEXA_TESTS_DIR "/fake-codex/codex"), .requiresKey = false},
+#ifdef Q_OS_WIN
+                           .baseUrl = QStringLiteral(NEXA_TESTS_DIR "/fake-codex/codex.cmd"),
+#else
+                           .baseUrl = QStringLiteral(NEXA_TESTS_DIR "/fake-codex/codex"),
+#endif
+                           .requiresKey = false},
             ProviderConfig{.id = u"groq"_s, .kind = QString(kKindOpenAiCompatible), .name = u"Groq"_s,
                            .baseUrl = u"https://api.groq.com/openai/v1"_s},
         };
@@ -125,7 +134,7 @@ struct Rig {
     std::unique_ptr<SettingsDialog> dialog;
 };
 
-bool alive(qint64 pid) { return pid > 0 && ::kill(pid_t(pid), 0) == 0; }
+bool alive(qint64 pid) { return process::isAlive(pid); }
 
 // Answers the next question box with `button` once it is up (it runs an event loop of its own); gives up after a second.
 void answerNextQuestion(QMessageBox::StandardButton button, int triesLeft = 100) {
@@ -192,7 +201,11 @@ TEST_CASE("Leaving the program field alone keeps the sign-in; naming another pro
     QTest::qWait(300);
     CHECK(rig.agyStarts() == starts);                // no second look for nothing
 
+#ifdef Q_OS_WIN
+    rig.program()->setText(QStringLiteral(NEXA_TESTS_DIR "/fake-agy/./agy.cmd"));
+#else
     rig.program()->setText(QStringLiteral(NEXA_TESTS_DIR "/fake-agy/./agy"));
+#endif
     emit rig.program()->editingFinished();
     REQUIRE(rig.block() != nullptr);
     CHECK(QTest::qWaitFor([&] { return rig.agyStarts() == starts + 1; }, kWaitMs));    // looked up again where it was named

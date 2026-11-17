@@ -36,6 +36,7 @@ class ITextToSpeech;
 // Settings → Providers (endpoints, API keys, chat and speech models, active provider), Voice
 // (recognition and speech engines, wake word), Policy (when to ask before acting) and General
 // (system prompt). Edits a copy of the config; the caller applies config() after accept().
+class AccountSettingsPage;
 class BrowserSettingsPage;
 class MemorySettingsPage;
 class MissionSettingsPage;
@@ -105,7 +106,7 @@ private:
     void dropSignIn();
     void checkSignIn();                     // a status check, when the Providers tab is the one in front
     void moveProvider(int by);              // ▲ / ▼: the order the chain follows after the first choice
-    void showRowsFor(const QString &kind);  // the fields a provider of this kind uses
+    void showRowsFor(const QString &kind, bool nexaManaged = false);  // the fields a provider of this kind uses
     void refreshActiveCombo();
     void testConnection();
     void showTestResult(const QString &text, bool ok);
@@ -261,6 +262,7 @@ private:
     int mcpRow_{-1};
     bool loadingConnector_{false};      // the form is being filled, not edited
 
+    AccountSettingsPage *accountPage_{nullptr};
     BrowserSettingsPage *browserPage_{nullptr};
     MemorySettingsPage *memoryPage_{nullptr};
     MissionSettingsPage *missionPage_{nullptr};

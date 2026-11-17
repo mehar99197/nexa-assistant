@@ -2,6 +2,7 @@
 
 #include "core/tools/TextToolParser.h"
 
+#include "core/tools/ToolArguments.h"
 #include "QtStringMakers.h"
 
 #include <QJsonDocument>
@@ -151,4 +152,57 @@ TEST_CASE("StreamFilter holds a reply that starts like a bare call") {
     CHECK(filter.feed(u", \"arguments\": {}}"_s).isEmpty());
     TextToolParser::StreamFilter fenced;
     CHECK(fenced.feed(u"```json\n{}"_s).isEmpty());
+}
+
+TEST_CASE("Claude Haiku <function_calls> XML blocks are parsed in one pass") {
+    const QString reply =
+        u"Checking that.\n<function_calls>\n"
+        "<invoke name=\"open_app\">\n"
+        "<parameter name=\"name\">firefox</parameter>\n"
+        "</invoke>\n"
+        "<invoke name=\"set_volume\">\n"
+        "<parameter name=\"level\">35</parameter>\n"
+        "</invoke>\n"
+        "</function_calls>\nTrailing note."_s;
+    const auto parsed = TextToolParser::parse(reply, kKnown);
+    CHECK(parsed.text == u"Checking that.\n\nTrailing note."_s);
+    REQUIRE(parsed.calls.size() == 2);
+    CHECK(parsed.calls[0].id == u"text_call_1"_s);
+    CHECK(parsed.calls[0].name == u"open_app"_s);
+    CHECK(arguments(parsed.calls[0]).value(u"name"_s).toString() == u"firefox"_s);
+    CHECK(parsed.calls[1].id == u"text_call_2"_s);
+    CHECK(parsed.calls[1].name == u"set_volume"_s);
+    CHECK(toolargs::intArg(arguments(parsed.calls[1]), u"level"_s) == 35);
+
+    // Self-closing invoke + <antml:function_calls> namespace + JSON object parameter.
+    const QString antml =
+        u"<antml:function_calls><antml:invoke name=\"take_screenshot\"/>"
+        "<antml:invoke name='open_app'><antml:parameter name='extra'>{\"tab\":2}</antml:parameter></antml:invoke>"
+        "</antml:function_calls>"_s;
+    const auto parsedAntml = TextToolParser::parse(antml, kKnown);
+    CHECK(parsedAntml.text.isEmpty());
+    REQUIRE(parsedAntml.calls.size() == 2);
+    CHECK(parsedAntml.calls[0].name == u"take_screenshot"_s);
+    CHECK(parsedAntml.calls[0].argumentsJson == u"{}"_s);
+    CHECK(parsedAntml.calls[1].name == u"open_app"_s);
+    CHECK(arguments(parsedAntml.calls[1]).value(u"extra"_s).toObject().value(u"tab"_s).toInt() == 2);
+
+    // Unknown tool in <function_calls> is left untouched for the user to see.
+    const QString unknown = u"<function_calls><invoke name=\"format_disk\"></invoke></function_calls>"_s;
+    const auto kept = TextToolParser::parse(unknown, kKnown);
+    CHECK(kept.calls.isEmpty());
+    CHECK(kept.text == unknown);
+}
+
+TEST_CASE("StreamFilter holds back <function_calls> and <antml:function_calls> prefixes across deltas") {
+    TextToolParser::StreamFilter filter;
+    CHECK(filter.feed(u"Wait a second.<fun"_s) == u"Wait a second."_s);
+    CHECK(filter.feed(u"ction_calls>\n<invoke name=\"open_app\">"_s).isEmpty());
+    CHECK(filter.feed(u"</function_calls>"_s).isEmpty());
+    CHECK(filter.shown() == u"Wait a second."_s);
+
+    TextToolParser::StreamFilter antml;
+    CHECK(antml.feed(u"Working.<antml:"_s) == u"Working."_s);
+    CHECK(antml.feed(u"function_calls><antml:invoke name=\"take_screenshot\"/></antml:function_calls>"_s).isEmpty());
+    CHECK(antml.shown() == u"Working."_s);
 }

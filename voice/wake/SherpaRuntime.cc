@@ -1,7 +1,15 @@
 #include "voice/wake/SherpaRuntime.h"
 
+#include <QDir>
 #include <QFileInfo>
-#include <QStandardPaths>
+#include "core/config/Portable.h"
+
+#ifdef Q_OS_WIN
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+#include <windows.h>
+#endif
 
 #include <type_traits>
 
@@ -19,7 +27,7 @@ SherpaRuntime::SherpaRuntime(QString modelsDir, QString libraryDir)
     : dir_(std::move(modelsDir)), libraryDir_(libraryDir.isEmpty() ? dir_ : std::move(libraryDir)) {}
 
 QString SherpaRuntime::defaultDir() {
-    return QStandardPaths::writableLocation(QStandardPaths::GenericDataLocation) + u"/nexa/sherpa"_s;
+    return portable::dataDir() + u"/sherpa"_s;
 }
 
 QString SherpaRuntime::kwsDir() const {
@@ -46,7 +54,17 @@ bool SherpaRuntime::load() {
     if (attempted_) return loaded_;
     attempted_ = true;
 
-    const QString path = libraryDir_ + u"/lib/libsherpa-onnx-c-api.so"_s;
+    const QString path = [] (const QString &base) -> QString {
+#ifdef Q_OS_WIN
+        const QString libPath = base + u"/lib/sherpa-onnx-c-api.dll"_s;
+        if (QFileInfo::exists(libPath)) return libPath;
+        const QString binPath = base + u"/bin/sherpa-onnx-c-api.dll"_s;
+        if (QFileInfo::exists(binPath)) return binPath;
+        return base + u"/sherpa-onnx-c-api.dll"_s;
+#else
+        return base + u"/lib/libsherpa-onnx-c-api.so"_s;
+#endif
+    }(libraryDir_);
     const QStringList models{kwsDir() + u"/encoder-epoch-12-avg-2-chunk-16-left-64.int8.onnx"_s,
                              kwsDir() + u"/decoder-epoch-12-avg-2-chunk-16-left-64.int8.onnx"_s,
                              kwsDir() + u"/joiner-epoch-12-avg-2-chunk-16-left-64.int8.onnx"_s,
@@ -62,7 +80,15 @@ bool SherpaRuntime::load() {
         }
     }
     library_.setFileName(path);
+#ifdef Q_OS_WIN
+    const QString nativeLibDir = QDir::toNativeSeparators(QFileInfo(path).absolutePath());
+    ::SetDllDirectoryW(reinterpret_cast<LPCWSTR>(nativeLibDir.utf16()));
+    const bool loadedLib = library_.load();
+    ::SetDllDirectoryW(nullptr);
+    if (!loadedLib) {
+#else
     if (!library_.load()) {
+#endif
         problem_ = u"Cannot load sherpa-onnx (%1) — %2."_s.arg(library_.errorString(), kInstall);
         return false;
     }

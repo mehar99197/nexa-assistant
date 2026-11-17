@@ -3,6 +3,7 @@
 #include "core/Logging.h"
 #include "proto/HelperTypes.h"
 
+#ifdef Q_OS_UNIX
 #include "HelperProxy.h"
 
 #include <QDBusConnection>
@@ -11,10 +12,13 @@
 #include <QDBusMetaType>
 #include <QDBusPendingCallWatcher>
 #include <QDBusServiceWatcher>
+#endif
 
 using namespace Qt::StringLiterals;
 
 namespace nexa {
+
+#ifdef Q_OS_UNIX
 
 namespace {
 
@@ -270,5 +274,62 @@ void HelperClient::unlockInputAndWait() {
     proxy_->setTimeout(kPrivilegedTimeoutMs);
     if (reply.isError()) qCWarning(lcApp).noquote() << "hardcore: the last unlock was not answered:" << reply.error().message();
 }
+#else
+bool HelperClient::isInstalled() { return false; }
+QString HelperClient::installCommand() { return {}; }
+
+HelperClient::HelperClient(QObject *parent) : QObject(parent) {}
+HelperClient::~HelperClient() = default;
+
+void HelperClient::noteOutcome(bool, const Error &) {}
+void HelperClient::onOutputChunk(qulonglong, uchar, const QByteArray &) {}
+void HelperClient::onFinished(qulonglong, int, const QString &) {}
+void HelperClient::onHelperGone() {}
+void HelperClient::setReady(bool ready, const QString &reason) {
+    unavailable_ = ready ? QString() : reason;
+    if (ready_ == ready) return;
+    ready_ = ready;
+    emit readyChanged(ready_);
+}
+
+void HelperClient::isAuthorized(FlagDone done) { done(false); }
+void HelperClient::forgetAuthorization(Done done) { done(Result<void>{}); }
+void HelperClient::probe(TextDone done) {
+    const QString reason = u"Linux root helper is not used on this platform."_s;
+    setReady(false, reason);
+    done(Error{ErrorCode::NotSupported, reason});
+}
+void HelperClient::runCommand(const QStringList &, const QString &, const QStringList &, int, JobOutput, JobFinished,
+                              std::function<void(Result<quint64>)> started) {
+    started(Error{ErrorCode::NotSupported, u"Linux root helper is not used on this platform."_s});
+}
+void HelperClient::cancelJob(quint64) {}
+void HelperClient::cancelAllJobs() {}
+void HelperClient::typeText(const QString &, TextDone done) {
+    done(Error{ErrorCode::NotSupported, u"Linux root helper is not used on this platform."_s});
+}
+void HelperClient::pressKeys(const QList<int> &, Done done) {
+    done(Error{ErrorCode::NotSupported, u"Linux root helper is not used on this platform."_s});
+}
+void HelperClient::mouseMove(int, int, Done done) {
+    done(Error{ErrorCode::NotSupported, u"Linux root helper is not used on this platform."_s});
+}
+void HelperClient::mouseMoveAbs(int, int, int, int, Done done) {
+    done(Error{ErrorCode::NotSupported, u"Linux root helper is not used on this platform."_s});
+}
+void HelperClient::mouseButton(int, bool, Done done) {
+    done(Error{ErrorCode::NotSupported, u"Linux root helper is not used on this platform."_s});
+}
+void HelperClient::mouseScroll(int, int, Done done) {
+    done(Error{ErrorCode::NotSupported, u"Linux root helper is not used on this platform."_s});
+}
+void HelperClient::lockInput(std::function<void(Result<QStringList>)> done) {
+    done(Error{ErrorCode::NotSupported, u"Linux root helper is not used on this platform."_s});
+}
+void HelperClient::unlockInput(Done done) {
+    done(Error{ErrorCode::NotSupported, u"Linux root helper is not used on this platform."_s});
+}
+void HelperClient::unlockInputAndWait() {}
+#endif
 
 } // namespace nexa

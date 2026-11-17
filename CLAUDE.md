@@ -1,6 +1,6 @@
 # Nexa — guide for Claude Code
 
-Linux AI assistant in C++20 + Qt 6 Widgets (Kali, GNOME on Wayland). The full design, the owner's
+Cross-platform AI assistant in C++20 + Qt 6 Widgets (Linux primary / GNOME on Wayland + Windows x64 + Android bridge). The full design, the owner's
 decisions and the milestone status live in **ARCHITECTURE.md** — read its *Status* section first and
 update it at the end of every milestone.
 
@@ -100,7 +100,7 @@ checking `git status` first). One Node/MySQL backend (`ndm-website/backend`) ser
 parameter (`'ndm'` default, `'assistant'` for this app) on `/api/releases/*`, `/api/subscription/*`, `/api/device/*`,
 `/api/license/*`, `/api/user/*` and `/api/admin/*`, and mounts the OpenAI-compatible Nexa AI relay at
 `/api/assistant/v1` (`GET /models`, `POST /chat/completions` with a 15-minute Ed25519 licence token carrying
-`prd: 'assistant'`, `acct` and `features.nexaAi`). The assistant's public site (`ndm-website/assistant`, served from
+`product: 'assistant'`, `acct` and `features.nexaAi`). The assistant's public site (`ndm-website/assistant`, served from
 `assistant.nexadownloadmanager.com` and proxying `/api/*` to the shared backend socket) is built and uploaded alongside
 `frontend`, `admin` and `backend` by `./deploy/build-and-upload.sh` (guarded by `deploy/deploy-guard.sh`, skippable with
 `SKIP_ASSISTANT=1`). Pushing, creating the Hostinger subdomain, editing the live `nexa-api/.env` (`ASSISTANT_AI_*`) and
@@ -165,7 +165,8 @@ text-only model refuses images with a 400; the `Agent` then resends without them
 
 ## Layout
 
-- `core/` — no Qt Widgets, no syscalls: `Result.h`, `Logging`, `config/`, `net/` (HttpClient, SseParser),
+- `core/` — no Qt Widgets, no syscalls: `Result.h`, `Logging`, `ProcessUtils` (cross-platform child containment and descendant process-tree termination), `config/` (`Config`, `ConfigStore`, `Portable` — detects `portable.txt` next to the binary for portable Windows/Linux data storage), `net/` (HttpClient, SseParser),
+  `account/` (built as hardened `nexa_account` for shipping binaries and `nexa_account_dev` with `NEXA_DEV_BUILD=1` + `NEXA_TEST_CREDENTIAL_STORE=1` for Catch2 so tests stay isolated from production keys and host keyrings: `AccountManager`, `CredentialStore` with WinCred / secret-tool / 0600 fallback, `Guard` + `Obfuscation`, `KeyIntegrity`, `LicenseToken` verifying `product == "assistant"`, `Entitlements`, `UpdateChecker` with Ed25519 feed + SHA-256 verification),
   `ai/` (OpenAiProvider, AnthropicProvider, GeminiProvider — each maps ChatRequest to its own wire format and
   decodes its own events; SseChatStream is the stream all three share; ToolCallAccumulator; the registry, whose
   `createChain` builds the `ProviderChain`, `createSignIn` the sign-in of a program, and `presets()` is the programs,
@@ -362,8 +363,9 @@ text-only model refuses images with a 400; the `Agent` then resends without them
   (`mode` = the wire key, `nodes` = the satellites lit), which `welcome` carries too; `lock` (hardcore mode holds the
   PC's keyboard and mouse) with the phone's `unlock`, and `approval` / `settled` with the phone's `answer` (a task's
   question, Approve / Deny on the page and in Nexa Phone). Phone requests carry the
-  source `phone` or `phone-voice`. `RemoteClient` is the phone's end of the same protocol (pair, hello, backoff, trust on first
-  use pinned to the certificate's fingerprint); `RemoteProtocol` decodes both directions.
+  Phone requests carry the source `phone` or `phone-voice`. `RemoteClient` is the phone's end of the same protocol (pair, hello, backoff, trust on first
+  use pinned to the certificate's fingerprint); `RemoteProtocol` decodes both directions; Phone and Web sync active `ThemeStyle` (`Theme` wire message; CSP-safe CSSOM variables in `web/app.js`) and support file uploads (`POST /api/upload`). **Local API (M15 Part B)**: `remote/LocalApiServer` binds `127.0.0.1` only (off by default, Settings → Local API toggle + bearer token) exposing `GET /v1/models` and `POST /v1/chat/completions` over `ProviderChain` + `TurnLedger` with zero PC-tool execution, kept decoupled from `nexa_account` via `ConfigTransform`.
+- **Windows & cross-platform** (`system/`, `packaging/`, `.github/workflows/build.yml`): `WinInputLock` (`WH_KEYBOARD_LL` / `WH_MOUSE_LL` passing `SendInput` `LLKHF_INJECTED`/`LLMHF_INJECTED`; `Ctrl+Alt+Del` and UAC prompts remain OS-handled), `WinInputBackend` (`SendInput`), `RootCommandRunner` (`ShellExecuteExW` `"runas"` UAC elevation), `AppLauncher` / `DesktopEntryIndex` (Start Menu `.lnk`), `ProcessStats` / `SystemInfo` / `WpctlAudioController` (CoreAudio COM) / `MprisController` (`VK_MEDIA_*`) / `ScreenAwake` (`SetThreadExecutionState`) / `ScreenCapture` (`QScreen::grabWindow`). Packaging: `packaging/installer.nsi` + `packaging/nexa-assistant.rc`; `.github/workflows/build.yml` runs `cppcheck`, Ubuntu `.deb` (`scripts/build-deb.sh` `-Zgzip`), and MSYS2/MinGW64 Windows (Qt plugins + OpenSSL + pinned Windows sherpa-onnx/piper + NSIS `.exe` + `portable.txt` zip + optional `WINDOWS_CERT_P12` Authenticode).
 - **Away from home** (M21): `remote/RemoteRoutes` (pure: the ways a phone reaches this PC, ordered, on the wire),
   `RemoteServer`'s tunnel door (loopback, port + 2; its sessions are `viaTunnel`), `system/net/` (`TunnelLog` pure,
   `TunnelProcess` = cloudflared / ngrok as a child with backoff and an `--edge` fallback, `TailscaleWatcher` =

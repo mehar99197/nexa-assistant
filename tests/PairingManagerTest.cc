@@ -95,7 +95,9 @@ TEST_CASE("The token is never written down, only its hash") {
     const QByteArray stored = file.readAll();
     CHECK_FALSE(stored.contains(token.toUtf8()));
     CHECK(stored.contains(PairingManager::hashToken(token).toUtf8()));
+#ifdef Q_OS_UNIX
     CHECK_FALSE(file.permissions().testAnyFlags(QFileDevice::ReadGroup | QFileDevice::ReadOther));
+#endif
 
     // A restart remembers the phone.
     PairingManager restarted = f.make();

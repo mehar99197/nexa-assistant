@@ -1,8 +1,12 @@
 add_library(nexa_core STATIC
     Result.h
     Logging.h Logging.cc
+    ProcessUtils.h ProcessUtils.cc
+    account/Entitlements.h account/Entitlements.cc
+    account/Obfuscation.h
     config/Config.h config/Config.cc
     config/ConfigStore.h config/ConfigStore.cc
+    config/Portable.h config/Portable.cc
     net/HttpClient.h net/HttpClient.cc
     net/MultipartForm.h net/MultipartForm.cc
     net/SseParser.h net/SseParser.cc
@@ -103,3 +107,63 @@ target_link_libraries(nexa_core
     PRIVATE
         nexa_options
 )
+
+set(NEXA_ACCOUNT_SOURCES
+    account/AccountManager.h account/AccountManager.cc
+    account/CredentialStore.h account/CredentialStore.cc
+    account/Guard.h account/Guard.cc
+    account/KeyIntegrity.h account/KeyIntegrity.cc
+    account/LicenseToken.h account/LicenseToken.cc
+    account/UpdateChecker.h account/UpdateChecker.cc
+)
+
+# Production account & licensing library: verifies against NEXA_LICENSE_PUBLIC_KEY + KeyIntegrity,
+# and applies obfuscation on Release shipping builds (unless NEXA_DEV_BUILD=ON).
+add_library(nexa_account STATIC ${NEXA_ACCOUNT_SOURCES})
+target_link_libraries(nexa_account
+    PUBLIC
+        nexa_core
+        Qt6::Core
+        Qt6::Network
+    PRIVATE
+        nexa_options
+        OpenSSL::Crypto
+)
+if(WIN32)
+    target_link_libraries(nexa_account PRIVATE advapi32 shell32)
+endif()
+if(NEXA_LICENSE_PUBLIC_KEY AND NOT NEXA_DEV_BUILD)
+    target_compile_definitions(nexa_account PRIVATE
+        NEXA_LICENSE_PUBLIC_KEY="${NEXA_LICENSE_PUBLIC_KEY}"
+        NEXA_LICENSE_KEY_DIGEST="${NEXA_LICENSE_KEY_DIGEST}"
+    )
+endif()
+if(NEXA_DEV_BUILD)
+    target_compile_definitions(nexa_account PRIVATE NEXA_DEV_BUILD=1)
+endif()
+target_compile_definitions(nexa_account PRIVATE
+    $<$<AND:$<BOOL:${NEXA_OBFUSCATE_LICENSE}>,$<NOT:$<BOOL:${NEXA_DEV_BUILD}>>,$<OR:$<CONFIG:Release>,$<CONFIG:MinSizeRel>>>:NEXA_OBFUSCATE_LICENSE=1>
+    NEXA_CHECK_ROTATION_SEED=${NEXA_CHECK_ROTATION_SEED}
+)
+
+# Development/test account library: compiled with the dev signing key + in-memory credential store
+# so Catch2 suites exercise full HTTP flows without touching the host keyring or production key.
+if(NEXA_BUILD_TESTS)
+    add_library(nexa_account_dev STATIC ${NEXA_ACCOUNT_SOURCES})
+    target_link_libraries(nexa_account_dev
+        PUBLIC
+            nexa_core
+            Qt6::Core
+            Qt6::Network
+        PRIVATE
+            nexa_options
+            OpenSSL::Crypto
+    )
+    target_compile_definitions(nexa_account_dev PRIVATE
+        NEXA_DEV_BUILD=1
+        NEXA_TEST_CREDENTIAL_STORE=1
+    )
+    if(WIN32)
+        target_link_libraries(nexa_account_dev PRIVATE advapi32 shell32)
+    endif()
+endif()

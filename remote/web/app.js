@@ -34,7 +34,49 @@ const state = {
   pcNodes: [],
   localMode: null,      // what this phone itself is doing (recording, waiting, playing)
   speaking: null,       // the <audio> reading a reply
+  files: [],            // queued File objects for /api/upload
 };
+
+const COLOR_VARS = {
+  ground: '--ground',
+  panel: '--panel',
+  panelRaised: '--panel2',
+  line: '--line',
+  text: '--text',
+  muted: '--muted',
+  idle: '--nx-idle',
+  wake: '--nx-wake',
+  listen: '--nx-listen',
+  stt: '--nx-stt',
+  think: '--nx-think',
+  act: '--nx-act',
+  speak: '--nx-speak',
+  fast: '--nx-fast',
+  error: '--nx-error',
+  onAccent: '--on-accent',
+};
+
+function applyTheme(theme) {
+  if (!theme || typeof theme !== 'object') return;
+  const root = document.documentElement;
+  for (const [key, cssVar] of Object.entries(COLOR_VARS)) {
+    if (typeof theme[key] === 'string' && theme[key]) root.style.setProperty(cssVar, theme[key]);
+  }
+  if (Number.isFinite(theme.radius)) root.style.setProperty('--radius', `${Math.max(0, theme.radius)}px`);
+  if (typeof theme.ground === 'string' && theme.ground) {
+    const meta = document.querySelector('meta[name="theme-color"]');
+    if (meta) meta.setAttribute('content', theme.ground);
+  }
+  for (const cls of ['design-bubbles', 'design-lines', 'design-cards', 'font-sans', 'font-mono', 'font-serif']) {
+    document.body.classList.remove(cls);
+  }
+  if (theme.bubbleStyle === 'lines' || theme.bubbleStyle === 'cards' || theme.bubbleStyle === 'bubbles') {
+    document.body.classList.add(`design-${theme.bubbleStyle}`);
+  }
+  if (theme.fontFace === 'mono' || theme.fontFace === 'serif' || theme.fontFace === 'sans') {
+    document.body.classList.add(`font-${theme.fontFace}`);
+  }
+}
 
 function show(view) {
   $('pair').hidden = view !== 'pair';
@@ -290,10 +332,16 @@ setInterval(() => send({ t: 'ping' }), 25000);
 
 // ---------------------------------------------------------------- the conversation
 
-function addMessage(kind, text) {
+function addMessage(kind, text, attachments = '') {
   const item = document.createElement('li');
   item.className = kind;
   item.textContent = text;
+  if (attachments) {
+    const att = document.createElement('span');
+    att.className = 'attach-line';
+    att.textContent = `📎 ${attachments}`;
+    item.append(att);
+  }
   $('messages').append(item);
   $('chat').classList.add('has-messages');
   item.scrollIntoView({ block: 'end' });
@@ -378,9 +426,13 @@ function handle(message) {
       setStatus('Your PC · connected', 'ok');
       $('status').title = message.device;
       setPcMode(message.mode || (message.busy ? 'think' : 'idle'));
+      if (message.theme) applyTheme(message.theme);
       // The PC sends the lock and what waits right after this, so whatever was shown before is out of date.
       showLock(false);
       $('approvals').replaceChildren();
+      break;
+    case 'theme':
+      if (message.theme) applyTheme(message.theme);
       break;
     case 'lock':
       showLock(Boolean(message.locked), message.text);
@@ -398,7 +450,7 @@ function handle(message) {
       state.reply = null;
       const fromPc = message.source === 'pc';
       addMeta('You', fromPc ? 'PC' : message.source === 'phone-voice' ? 'voice' : '', true);
-      addMessage(fromPc ? 'user from-pc' : 'user', message.text);
+      addMessage(fromPc ? 'user from-pc' : 'user', message.text, message.attachments || '');
       state.replyMeta = addMeta('Nexa', '', false);
       break;
     }
@@ -460,16 +512,86 @@ function playSpeech(url) {
   audio.play().then(() => setLocalMode('speak')).catch(done);
 }
 
-// ---------------------------------------------------------------- asking
+// ---------------------------------------------------------------- asking & attachments
 
-$('ask').addEventListener('submit', (event) => {
+function renderFileChips() {
+  const host = $('file-chips');
+  host.replaceChildren();
+  host.hidden = state.files.length === 0;
+  for (let i = 0; i < state.files.length; i++) {
+    const file = state.files[i];
+    const chip = document.createElement('button');
+    chip.type = 'button';
+    chip.className = 'file-chip';
+    chip.textContent = `📎 ${file.name} ×`;
+    chip.addEventListener('click', () => {
+      state.files.splice(i, 1);
+      renderFileChips();
+    });
+    host.append(chip);
+  }
+}
+
+$('attach').addEventListener('click', () => $('file-input').click());
+$('file-input').addEventListener('change', (event) => {
+  const picked = Array.from(event.target.files || []);
+  for (const file of picked) {
+    if (state.files.length >= 8) break;
+    if (file.size > 8 * 1024 * 1024) {
+      addMessage('error', `${file.name} exceeds the 8 MB limit.`);
+      continue;
+    }
+    state.files.push(file);
+  }
+  event.target.value = '';
+  renderFileChips();
+});
+
+function bytesToBase64(buffer) {
+  const bytes = new Uint8Array(buffer);
+  let binary = '';
+  for (let i = 0; i < bytes.length; i += 0x8000) {
+    binary += String.fromCharCode(...bytes.subarray(i, i + 0x8000));
+  }
+  return btoa(binary);
+}
+
+$('ask').addEventListener('submit', async (event) => {
   event.preventDefault();
   if (state.busy) {
     send({ t: 'cancel' });
     return;
   }
   const text = $('text').value.trim();
-  if (!text) return;
+  const files = state.files.slice();
+  if (!text && files.length === 0) return;
+
+  if (files.length > 0) {
+    try {
+      const encoded = [];
+      for (const file of files) {
+        const buf = await file.arrayBuffer();
+        encoded.push({ name: file.name, data: bytesToBase64(buf) });
+      }
+      const res = await fetch('/api/upload', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${state.token || ''}`,
+        },
+        body: JSON.stringify({ text, files: encoded }),
+      });
+      const body = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(body.error || `Upload failed (${res.status}).`);
+      $('text').value = '';
+      state.files = [];
+      renderFileChips();
+    } catch (error) {
+      addMessage('error', error.message || 'Upload failed.');
+    }
+    return;
+  }
+
   if (send({ t: 'text', text })) {
     $('text').value = '';
   } else {

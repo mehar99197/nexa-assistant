@@ -1,21 +1,24 @@
 #include "system/input/RemoteDesktopSession.h"
 
 #include "core/Logging.h"
+#include "core/config/Portable.h"
 
-#include <QDBusArgument>
-#include <QDBusMessage>
-#include <QDBusObjectPath>
-#include <QDBusPendingCallWatcher>
-#include <QDBusPendingReply>
-#include <QDBusVariant>
 #include <QDir>
 #include <QFile>
 #include <QFileInfo>
 #include <QRandomGenerator>
 #include <QRectF>
 #include <QSaveFile>
-#include <QStandardPaths>
 #include <QStringList>
+
+#ifdef Q_OS_UNIX
+#include <QDBusArgument>
+#include <QDBusMessage>
+#include <QDBusObjectPath>
+#include <QDBusPendingCallWatcher>
+#include <QDBusPendingReply>
+#include <QDBusVariant>
+#endif
 
 #include <algorithm>
 #include <limits>
@@ -25,6 +28,7 @@ using namespace Qt::StringLiterals;
 
 namespace nexa {
 
+#ifdef Q_OS_UNIX
 namespace {
 
 const QString kPortal = u"org.freedesktop.portal.Desktop"_s;
@@ -113,25 +117,10 @@ RemoteDesktopSession::~RemoteDesktopSession() {
     if (bus_.isConnected()) QDBusConnection::disconnectFromBus(kConnectionName);
 }
 
-QString RemoteDesktopSession::defaultTokenPath() {
-    return QStandardPaths::writableLocation(QStandardPaths::GenericDataLocation) + u"/nexa/remote-desktop-token"_s;
-}
+#endif
 
-bool RemoteDesktopSession::isAvailable() {
-    // Asked once: the answer does not change while the session lasts, and the check is a blocking
-    // round trip to the portal.
-    static const bool available = [] {
-        const QDBusConnection bus = QDBusConnection::sessionBus();
-        if (!bus.isConnected()) return false;
-        QDBusMessage get = QDBusMessage::createMethodCall(kPortal, kPortalPath,
-                                                          u"org.freedesktop.DBus.Properties"_s, u"Get"_s);
-        get << kRemoteDesktop << u"AvailableDeviceTypes"_s;
-        const QDBusMessage reply = bus.call(get, QDBus::Block, 1500);
-        if (reply.type() != QDBusMessage::ReplyMessage || reply.arguments().isEmpty()) return false;
-        const uint types = reply.arguments().constFirst().value<QDBusVariant>().variant().toUInt();
-        return (types & kDevicePointer) != 0;
-    }();
-    return available;
+QString RemoteDesktopSession::defaultTokenPath() {
+    return portable::dataDir() + u"/remote-desktop-token"_s;
 }
 
 RemoteDesktopSession::StreamUnits RemoteDesktopSession::unitsFor(const QString &currentDesktop) {
@@ -183,6 +172,24 @@ std::optional<RemoteDesktopSession::StreamPoint> RemoteDesktopSession::locate(QP
     return StreamPoint{best->nodeId,
                        QPointF(std::clamp((logical.x() - area.left()) * perLogicalX, 0.0, width - 1.0),
                                std::clamp((logical.y() - area.top()) * perLogicalY, 0.0, height - 1.0))};
+}
+
+#ifdef Q_OS_UNIX
+bool RemoteDesktopSession::isAvailable() {
+    // Asked once: the answer does not change while the session lasts, and the check is a blocking
+    // round trip to the portal.
+    static const bool available = [] {
+        const QDBusConnection bus = QDBusConnection::sessionBus();
+        if (!bus.isConnected()) return false;
+        QDBusMessage get = QDBusMessage::createMethodCall(kPortal, kPortalPath,
+                                                          u"org.freedesktop.DBus.Properties"_s, u"Get"_s);
+        get << kRemoteDesktop << u"AvailableDeviceTypes"_s;
+        const QDBusMessage reply = bus.call(get, QDBus::Block, 1500);
+        if (reply.type() != QDBusMessage::ReplyMessage || reply.arguments().isEmpty()) return false;
+        const uint types = reply.arguments().constFirst().value<QDBusVariant>().variant().toUInt();
+        return (types & kDevicePointer) != 0;
+    }();
+    return available;
 }
 
 void RemoteDesktopSession::pointerTo(QPoint physical, QSize physicalDesktop, Done done) {
@@ -456,5 +463,35 @@ void RemoteDesktopSession::saveToken(const QString &token) {
     file.write(token.toUtf8());
     if (file.commit()) QFile::setPermissions(tokenPath_, QFileDevice::ReadOwner | QFileDevice::WriteOwner);
 }
+#else
+RemoteDesktopSession::RemoteDesktopSession(QString appId, QString tokenPath, QObject *parent)
+    : QObject(parent),
+      appId_(std::move(appId)),
+      tokenPath_(std::move(tokenPath)),
+      units_(StreamUnits::Logical) {}
+
+RemoteDesktopSession::~RemoteDesktopSession() = default;
+
+bool RemoteDesktopSession::isAvailable() { return false; }
+
+void RemoteDesktopSession::pointerTo(QPoint, QSize, Done done) {
+    done(Error{ErrorCode::NotSupported, tr("Desktop remote-control portal is only used on Linux.")});
+}
+void RemoteDesktopSession::pointerBy(double, double, Done done) {
+    done(Error{ErrorCode::NotSupported, tr("Desktop remote-control portal is only used on Linux.")});
+}
+void RemoteDesktopSession::pointerButton(int, bool, Done done) {
+    done(Error{ErrorCode::NotSupported, tr("Desktop remote-control portal is only used on Linux.")});
+}
+void RemoteDesktopSession::pointerScroll(int, int, Done done) {
+    done(Error{ErrorCode::NotSupported, tr("Desktop remote-control portal is only used on Linux.")});
+}
+void RemoteDesktopSession::keyboardKey(int, bool, Done done) {
+    done(Error{ErrorCode::NotSupported, tr("Desktop remote-control portal is only used on Linux.")});
+}
+void RemoteDesktopSession::close() {}
+void RemoteDesktopSession::onResponse(uint, const QVariantMap &) {}
+void RemoteDesktopSession::onClosed(const QVariantMap &) {}
+#endif
 
 } // namespace nexa

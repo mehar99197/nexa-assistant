@@ -44,6 +44,7 @@ PhoneWindow::PhoneWindow(PhoneSettings *settings, RemoteClient *client, Recorder
 
     connect(pair_, &PairPage::pairRequested, this, &PhoneWindow::onPairRequested);
     connect(chat_, &ChatPage::askRequested, this, &PhoneWindow::onAsk);
+    connect(chat_, &ChatPage::askWithFilesRequested, this, &PhoneWindow::onAskWithFiles);
     connect(chat_, &ChatPage::cancelRequested, client_, &RemoteClient::cancel);
     connect(chat_, &ChatPage::unlockRequested, client_, &RemoteClient::unlock);
     connect(chat_, &ChatPage::approvalAnswered, client_, &RemoteClient::answer);
@@ -53,6 +54,7 @@ PhoneWindow::PhoneWindow(PhoneSettings *settings, RemoteClient *client, Recorder
 
     connect(client_, &RemoteClient::stateChanged, this, &PhoneWindow::onStateChanged);
     connect(client_, &RemoteClient::welcomed, this, &PhoneWindow::onWelcomed);
+    connect(client_, &RemoteClient::themeChanged, chat_, &ChatPage::applyRemoteTheme);
     connect(client_, &RemoteClient::received, this, &PhoneWindow::onReceived);
     connect(client_, &RemoteClient::unauthorized, this, &PhoneWindow::onUnauthorized);
     connect(client_, &RemoteClient::certificateRejected, this, &PhoneWindow::onCertificateRejected);
@@ -239,7 +241,8 @@ void PhoneWindow::onReceived(const remote::ServerMessage &message) {
     switch (message.type) {
     case Type::Accepted:
         chat_->endReply();
-        chat_->addMessage(message.source == u"pc"_s ? ChatPage::Kind::FromPc : ChatPage::Kind::User, message.text);
+        chat_->addMessage(message.source == u"pc"_s ? ChatPage::Kind::FromPc : ChatPage::Kind::User,
+                          message.text, message.attachments);
         break;
     case Type::Delta:
         chat_->appendReply(message.text);
@@ -289,6 +292,7 @@ void PhoneWindow::onReceived(const remote::ServerMessage &message) {
     case Type::Welcome:
     case Type::Pong:
     case Type::Routes:      // the client says them (routesLearned)
+    case Type::Theme:       // handled by RemoteClient::themeChanged
         break;
     }
 }
@@ -307,6 +311,12 @@ void PhoneWindow::onCertificateRejected(const QString &fingerprint) {
 
 void PhoneWindow::onAsk(const QString &text) {
     if (!client_->ask(text)) chat_->addMessage(ChatPage::Kind::Error, tr("Not connected to Nexa."));
+}
+
+void PhoneWindow::onAskWithFiles(const QString &text, const QStringList &filePaths) {
+    client_->uploadAsk(text, filePaths, [this](Result<void> res) {
+        if (!res) chat_->addMessage(ChatPage::Kind::Error, res.error().message);
+    });
 }
 
 void PhoneWindow::onTalkPressed() {

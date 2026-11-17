@@ -53,6 +53,7 @@ private:
     void onRoutesLearned(const QList<nexa::RemoteRoute> &routes, const QString &fingerprint);
     void useLearnedRoutes();
     void onAsk(const QString &text);
+    void onAskWithFiles(const QString &text, const QStringList &filePaths);
     void onTalkPressed();
     void onTalkReleased();
     void beginRecording();

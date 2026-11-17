@@ -4,13 +4,16 @@
 
 #include <QSocketNotifier>
 
+#ifdef Q_OS_UNIX
 #include <array>
 #include <csignal>
 #include <sys/socket.h>
 #include <unistd.h>
+#endif
 
 namespace nexa {
 
+#ifdef Q_OS_UNIX
 namespace {
 
 constexpr std::array kSignals{SIGTERM, SIGINT, SIGHUP};
@@ -48,5 +51,10 @@ void UnixSignals::handle(int signal) {
     const unsigned char byte = static_cast<unsigned char>(signal);
     [[maybe_unused]] const ssize_t written = ::write(fds_[0], &byte, 1);
 }
+#else
+UnixSignals::UnixSignals(QObject *parent) : QObject(parent) {}
+UnixSignals::~UnixSignals() = default;
+void UnixSignals::handle(int) {}
+#endif
 
 } // namespace nexa

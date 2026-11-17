@@ -324,6 +324,21 @@ SkillsConfig SkillsConfig::fromJson(const QJsonObject &json) {
     return config;
 }
 
+QJsonObject LocalApiConfig::toJson() const {
+    QJsonObject json{{u"enabled"_s, enabled}, {u"port"_s, int(port)}};
+    if (!bearerToken.isEmpty()) json.insert(u"bearerToken"_s, bearerToken);
+    return json;
+}
+
+LocalApiConfig LocalApiConfig::fromJson(const QJsonObject &json) {
+    LocalApiConfig config;
+    config.enabled = json.value(u"enabled"_s).toBool(config.enabled);
+    const int parsedPort = json.value(u"port"_s).toInt(int(kDefaultPort));
+    config.port = quint16(std::clamp(parsedPort, 1024, 65535));
+    config.bearerToken = json.value(u"bearerToken"_s).toString().trimmed();
+    return config;
+}
+
 QJsonObject ModelChoice::toJson() const {
     QJsonObject json{{u"provider"_s, provider}};
     if (!model.isEmpty()) json.insert(u"model"_s, model);
@@ -373,6 +388,7 @@ QJsonObject Config::toJson() const {
     json.insert(u"memory"_s, memory.toJson());
     json.insert(u"skills"_s, skills.toJson());
     json.insert(u"mission"_s, mission.toJson());
+    json.insert(u"localApi"_s, localApi.toJson());
     return json;
 }
 
@@ -399,11 +415,12 @@ Config Config::fromJson(const QJsonObject &json) {
     config.memory = MemoryConfig::fromJson(json.value(u"memory"_s).toObject());
     config.skills = SkillsConfig::fromJson(json.value(u"skills"_s).toObject());
     config.mission = MissionConfig::fromJson(json.value(u"mission"_s).toObject());
+    config.localApi = LocalApiConfig::fromJson(json.value(u"localApi"_s).toObject());
 
     config.extra = json;
     for (const QString &key :
          {u"version"_s, u"providers"_s, u"activeProvider"_s, u"systemPrompt"_s, u"policy"_s, u"voice"_s, u"android"_s,
-          u"remote"_s, u"agent"_s, u"ui"_s, u"mcp"_s, u"browser"_s, u"memory"_s, u"skills"_s, u"mission"_s}) {
+          u"remote"_s, u"agent"_s, u"ui"_s, u"mcp"_s, u"browser"_s, u"memory"_s, u"skills"_s, u"mission"_s, u"localApi"_s}) {
         config.extra.remove(key);
     }
     return config;

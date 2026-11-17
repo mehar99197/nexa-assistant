@@ -60,7 +60,9 @@ TEST_CASE("The sample is saved 0600 with its words, loads back the same, and is 
     for (const QString &path : {VoiceSample::wavPath(dir.path()), VoiceSample::infoPath(dir.path())}) {
         INFO(path.toStdString());
         CHECK(QFile::exists(path));
+#ifdef Q_OS_UNIX
         CHECK((QFile::permissions(path) & (QFileDevice::ReadGroup | QFileDevice::ReadOther | QFileDevice::WriteGroup | QFileDevice::WriteOther)) == 0);
+#endif
     }
     const Result<VoiceSample> loaded = VoiceSample::load(dir.path());
     REQUIRE(loaded);

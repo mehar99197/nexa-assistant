@@ -22,7 +22,11 @@ constexpr int kWaitMs = 15'000;
 
 struct Rig {
     Rig() : phone(&adb) {
+#ifdef Q_OS_WIN
+        adb.setProgram(QStringLiteral(NEXA_TESTS_DIR "/fake-adb/adb.cmd"));
+#else
         adb.setProgram(QStringLiteral(NEXA_TESTS_DIR "/fake-adb/adb"));
+#endif
         registerAndroidTools(registry, &phone, nullptr);
     }
 

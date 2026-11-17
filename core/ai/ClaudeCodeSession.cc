@@ -6,8 +6,7 @@
 #include <QDir>
 #include <QFile>
 
-#include <signal.h>
-#include <sys/prctl.h>
+#include "core/ProcessUtils.h"
 
 using namespace Qt::StringLiterals;
 
@@ -18,13 +17,8 @@ namespace {
 constexpr int kIdleStopMs = 10 * 60 * 1000;
 constexpr qsizetype kStderrKept = 4'096;
 
-constexpr auto kProcessFlags = QProcess::UnixProcessFlag::CreateNewSession
-    | QProcess::UnixProcessFlag::ResetSignalHandlers | QProcess::UnixProcessFlag::CloseFileDescriptors;
-
-// The process leads its own session, so -pid reaches Claude Code and anything it started.
 void killGroup(qint64 pid) {
-    if (pid <= 0) return;
-    if (::kill(pid_t(-pid), SIGKILL) != 0) ::kill(pid_t(pid), SIGKILL);
+    process::killTree(pid);
 }
 
 void makePrivateDir(const QString &path) {
@@ -104,10 +98,7 @@ void ClaudeCodeSession::start() {
     process_.setProgram(program_);
     process_.setArguments(arguments(model_, systemPrompt_));
     process_.setWorkingDirectory(workspace(workingDir_));
-    process_.setUnixProcessParameters(kProcessFlags);
-    // Its own session takes it out of reach of the terminal's hangup: tie it to Nexa instead, so a crash of Nexa does
-    // not leave Claude Code running.
-    process_.setChildProcessModifier([] { ::prctl(PR_SET_PDEATHSIG, SIGKILL); });
+    process::configureChild(process_);
     qCInfo(lcAi) << "starting claude" << (model_.isEmpty() ? u"(its own model)"_s : model_) << "with a system prompt of"
                  << systemPrompt_.size() << "characters";
     process_.start();

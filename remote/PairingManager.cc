@@ -13,7 +13,7 @@
 #include <QRandomGenerator>
 #include <QRegularExpression>
 #include <QSaveFile>
-#include <QStandardPaths>
+#include "core/config/Portable.h"
 
 using namespace Qt::StringLiterals;
 
@@ -48,7 +48,7 @@ PairingManager::PairingManager(QString path, Clock clock, QObject *parent)
 }
 
 QString PairingManager::defaultPath() {
-    return QStandardPaths::writableLocation(QStandardPaths::GenericConfigLocation) + u"/nexa/remote-devices.json"_s;
+    return portable::configDir() + u"/remote-devices.json"_s;
 }
 
 QDateTime PairingManager::now() const {

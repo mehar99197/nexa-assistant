@@ -7,7 +7,7 @@
 #include "core/ai/TranscriptWriter.h"
 
 #include <QProcess>
-#include <QStandardPaths>
+#include "core/config/Portable.h"
 #include <QTimer>
 
 using namespace Qt::StringLiterals;
@@ -42,7 +42,7 @@ protected:
 AgyProvider::AgyProvider(ProviderConfig config, QString workingDir, QObject *parent)
     : IAiProvider(parent), config_(std::move(config)), workingDir_(std::move(workingDir)) {
     if (workingDir_.isEmpty()) {
-        workingDir_ = QStandardPaths::writableLocation(QStandardPaths::GenericCacheLocation) + u"/nexa/agy"_s;
+        workingDir_ = portable::cacheDir() + u"/agy"_s;
     }
     turnTimer_.setSingleShot(true);
     connect(&turnTimer_, &QTimer::timeout, this, [this] {

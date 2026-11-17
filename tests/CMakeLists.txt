@@ -7,7 +7,6 @@ add_executable(nexa_tests
     AdbParsersTest.cc
     AdbShellTest.cc
     AndroidToolsTest.cc
-    AtspiCacheTest.cc
     AtspiScreenReaderTest.cc
     AssetDownloaderTest.cc
     EngineAssetsTest.cc
@@ -101,7 +100,7 @@ add_executable(nexa_tests
     ProviderRegistryTest.cc
     # The dialog itself, for the sign-in block it holds per program row, built from app/ with its pages.
     SettingsDialogProvidersTest.cc SettingsDialogThemesTest.cc
-        ../app/SettingsDialog.cc ../app/BrowserSettingsPage.cc ../app/RemoteAccess.cc
+        ../app/SettingsDialog.cc ../app/AccountSettingsPage.cc ../app/BrowserSettingsPage.cc ../app/RemoteAccess.cc
         ../app/MemorySettingsPage.cc ../app/MissionSettingsPage.cc ../app/SkillsSettingsPage.cc ../app/PhoneLink.cc
         ../app/GlobalShortcuts.cc ../app/VoiceEnrolmentDialog.cc ../app/VoiceSampleDialog.cc
     SkillCatalogTest.cc
@@ -117,16 +116,17 @@ add_executable(nexa_tests
     UiHierarchyTest.cc
     RemoteServerTest.cc
     RemoteServerIntegrationTest.cc
-    # The helper's own authorisation record. Pure enough to test here without any root privilege,
-    # and worth testing: it is what keeps the password prompt from coming back.
-    SessionGrantsTest.cc ../helper/SessionGrants.cc
-    # Hardcore mode's lock of the keyboard and pointer, over a fake /sys/class/input.
-    InputDevicesTest.cc ../helper/InputDevices.cc
-    DeviceLockTest.cc ../helper/DeviceLock.cc
     SherpaTest.cc
     SseParserTest.cc
     SystemPureTest.cc
+    AccountManagerTest.cc
+    AccountIntegrationTest.cc
+    GuardTest.cc
+    LicenseTokenTest.cc
+    LocalApiServerTest.cc
+    PortableTest.cc
     TextToolParserTest.cc
+    UpdateCheckerTest.cc
     ToolCallAccumulatorTest.cc
     TtsFileRendererTest.cc
     TurnLedgerTest.cc
@@ -144,6 +144,7 @@ add_executable(nexa_tests
 
 target_link_libraries(nexa_tests PRIVATE
     nexa_core
+    nexa_account_dev
     nexa_proto
     nexa_system
     nexa_voice
@@ -151,9 +152,40 @@ target_link_libraries(nexa_tests PRIVATE
     nexa_ui
     $<$<BOOL:${NEXA_BUILD_PHONE}>:nexa_phone_ui>
     nexa_options
+    OpenSSL::Crypto
     Qt6::Test
     Catch2::Catch2
 )
+
+if(UNIX AND NOT ANDROID AND NOT APPLE)
+    target_sources(nexa_tests PRIVATE
+        AtspiCacheTest.cc
+        SessionGrantsTest.cc ../helper/SessionGrants.cc
+        InputDevicesTest.cc ../helper/InputDevices.cc
+        DeviceLockTest.cc ../helper/DeviceLock.cc
+    )
+    target_link_libraries(nexa_tests PRIVATE Qt6::DBus)
+elseif(WIN32)
+    target_link_libraries(nexa_tests PRIVATE user32)
+endif()
+
+# Standalone obfuscated Guard binary: proves identical truth-table behaviour under NEXA_OBFUSCATE_LICENSE.
+add_executable(nexa_guard_obf_test
+    TestMain.cc
+    GuardTest.cc
+    ../core/account/Guard.cc
+)
+target_include_directories(nexa_guard_obf_test PRIVATE "${PROJECT_SOURCE_DIR}")
+target_link_libraries(nexa_guard_obf_test PRIVATE
+    nexa_options
+    Qt6::Widgets
+    Catch2::Catch2
+)
+target_compile_definitions(nexa_guard_obf_test PRIVATE
+    NEXA_OBFUSCATE_LICENSE=1
+    NEXA_CHECK_ROTATION_SEED=${NEXA_CHECK_ROTATION_SEED}
+)
+add_test(NAME nexa_guard_obf_test COMMAND nexa_guard_obf_test)
 
 # Where the test data lives (the fake MCP server script).
 target_compile_definitions(nexa_tests PRIVATE NEXA_TESTS_DIR="${CMAKE_CURRENT_SOURCE_DIR}")

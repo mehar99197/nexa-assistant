@@ -29,8 +29,13 @@ using namespace Qt::StringLiterals;
 namespace {
 
 constexpr int kWaitMs = 20'000;
+#ifdef Q_OS_WIN
+const QString kFake = QStringLiteral(NEXA_TESTS_DIR "/fake-opencode/opencode.cmd");
+const QString kSilent = QStringLiteral(NEXA_TESTS_DIR "/fake-opencode/silent.cmd");
+#else
 const QString kFake = QStringLiteral(NEXA_TESTS_DIR "/fake-opencode/opencode");
 const QString kSilent = QStringLiteral(NEXA_TESTS_DIR "/fake-opencode/silent");
+#endif
 
 // GET /provider/auth of a clean opencode 1.19.3 (its own sandboxed server, 2026-10-31), plus "google" as the
 // owner's opencode-antigravity-auth plugin adds it.

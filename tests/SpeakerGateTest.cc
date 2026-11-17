@@ -59,7 +59,9 @@ TEST_CASE("A voice profile is the mean direction of its recordings, kept private
     QTemporaryDir dir;
     const QString path = dir.filePath(u"nexa/voice-profile.json"_s);
     REQUIRE(profile.save(path).isOk());
+#ifdef Q_OS_UNIX
     CHECK_FALSE(QFileInfo(path).permissions().testAnyFlags(QFileDevice::ReadGroup | QFileDevice::ReadOther));
+#endif
     const Result<VoiceProfile> loaded = VoiceProfile::load(path);
     REQUIRE(loaded.isOk());
     CHECK(loaded.value().model == u"model.onnx"_s);

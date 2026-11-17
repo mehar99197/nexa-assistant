@@ -7,6 +7,7 @@
 
 namespace nexa {
 
+class AccountManager;
 class AdbDiscovery;
 class AndroidDevice;
 class AssetDownloader;
@@ -22,6 +23,7 @@ class RemoteAccess;
 class RemoteServer;
 class SherpaRuntime;
 class SpeakerGate;
+class UpdateChecker;
 class VoicePipeline;
 class SkillCatalog;
 
@@ -55,6 +57,8 @@ struct SystemStatus {
     // must not be disturbed), and a sign-in or sign-out succeeded (the providers are built again).
     std::function<bool()> replyRunning;
     std::function<void()> providersChanged;
+    AccountManager *account{nullptr};
+    UpdateChecker *updater{nullptr};
 };
 
 } // namespace nexa

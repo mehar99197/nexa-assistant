@@ -17,16 +17,26 @@ public:
 
     void hold(const QString &reason);
     void release();
+#ifdef Q_OS_WIN
+    bool isHeld() const { return winHeld_; }
+#else
     bool isHeld() const { return !portalHandle_.isEmpty() || gnomeCookie_ != 0; }
+#endif
 
 private:
+#ifndef Q_OS_WIN
     void holdThroughGnome(const QString &reason);
+#endif
     void drop();
 
     bool wanted_{false};
+#ifdef Q_OS_WIN
+    bool winHeld_{false};
+#else
     bool asking_{false};
     QString portalHandle_;      // the portal's request object: closing it ends the inhibition
     uint gnomeCookie_{0};
+#endif
 };
 
 } // namespace nexa

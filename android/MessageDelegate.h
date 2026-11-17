@@ -1,5 +1,6 @@
 #pragma once
 
+#include "ui/NexaDesigns.h"
 #include "ui/NexaTheme.h"
 
 #include <QFont>
@@ -22,6 +23,7 @@ public:
     explicit MessageDelegate(QAbstractItemView *view);
 
     void setTokens(const ThemeTokens &tokens);
+    void setDesign(BubbleStyle bubbles, int radius, FontFace face);
 
     void paint(QPainter *painter, const QStyleOptionViewItem &option, const QModelIndex &index) const override;
     QSize sizeHint(const QStyleOptionViewItem &option, const QModelIndex &index) const override;
@@ -37,6 +39,9 @@ private:
 
     QAbstractItemView *view_;
     ThemeTokens tokens_;
+    BubbleStyle bubbles_{BubbleStyle::Bubbles};
+    int radius_{14};
+    FontFace face_{FontFace::Sans};
 };
 
 } // namespace nexa

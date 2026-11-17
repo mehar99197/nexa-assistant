@@ -12,10 +12,9 @@
 #include <QPointer>
 #include <QProcessEnvironment>
 #include <QRandomGenerator>
-#include <QStandardPaths>
+#include "core/config/Portable.h"
 
-#include <signal.h>
-#include <sys/prctl.h>
+#include "core/ProcessUtils.h"
 
 using namespace Qt::StringLiterals;
 
@@ -30,9 +29,6 @@ constexpr int kMcpListTimeoutMs = 25'000;
 constexpr int kEventsIdleMs = 60'000;      // opencode sends a heartbeat every 10 s
 constexpr int kReopenEventsMs = 1'000;
 constexpr qsizetype kStderrKept = 4'096;
-
-constexpr auto kProcessFlags = QProcess::UnixProcessFlag::CreateNewSession
-    | QProcess::UnixProcessFlag::ResetSignalHandlers | QProcess::UnixProcessFlag::CloseFileDescriptors;
 
 // opencode's own permissions, denied as a second lock: every prompt switches its tools off — all but
 // `read` for opencode's free models, whose service refuses a request without it; denied here, it is
@@ -53,7 +49,7 @@ OpenCodeServer::OpenCodeServer(HttpClient *http, QString program, QUrl attachUrl
     : QObject(parent), http_(http), program_(std::move(program)), attachUrl_(std::move(attachUrl)),
       workingDir_(std::move(workingDir)), password_(std::move(attachPassword)) {
     if (workingDir_.isEmpty()) {
-        workingDir_ = QStandardPaths::writableLocation(QStandardPaths::GenericCacheLocation) + u"/nexa/opencode"_s;
+        workingDir_ = portable::cacheDir() + u"/opencode"_s;
     }
     deadline_.setSingleShot(true);
     connect(&deadline_, &QTimer::timeout, this, [this] {
@@ -109,8 +105,7 @@ OpenCodeServer::~OpenCodeServer() {
     }
     disconnect(&process_, nullptr, this, nullptr);
     if (process_.state() == QProcess::NotRunning) return;
-    const qint64 pid = process_.processId();
-    if (::kill(pid_t(-pid), SIGKILL) != 0) ::kill(pid_t(pid), SIGKILL);
+    process::killTree(process_.processId());
     process_.waitForFinished(2'000);
 }
 
@@ -161,10 +156,7 @@ void OpenCodeServer::startProcess() {
     process_.setArguments({u"serve"_s, u"--hostname"_s, u"127.0.0.1"_s, u"--port"_s, u"0"_s});
     process_.setWorkingDirectory(workingDir_);
     process_.setStandardInputFile(QProcess::nullDevice());    // `opencode run` would wait for stdin to end
-    process_.setUnixProcessParameters(kProcessFlags);
-    // Its own session takes it out of reach of the terminal's hangup: tie it to Nexa instead, so a
-    // crash of Nexa does not leave a server running (and the next start add another).
-    process_.setChildProcessModifier([] { ::prctl(PR_SET_PDEATHSIG, SIGKILL); });
+    process::configureChild(process_);
     qCInfo(lcAi) << "starting opencode's server";
     process_.start();
 }
@@ -287,8 +279,7 @@ void OpenCodeServer::finishStart(const Result<void> &result) {
 void OpenCodeServer::stopProcess() {
     state_ = State::Idle;
     if (process_.state() == QProcess::NotRunning) return;
-    const qint64 pid = process_.processId();
-    if (::kill(pid_t(-pid), SIGKILL) != 0) ::kill(pid_t(pid), SIGKILL);
+    process::killTree(process_.processId());
 }
 
 } // namespace nexa

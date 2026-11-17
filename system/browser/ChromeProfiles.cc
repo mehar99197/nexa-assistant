@@ -25,14 +25,53 @@ struct Known {
 };
 
 const QList<Known> &knownBrowsers() {
+#ifdef Q_OS_WIN
+    static const QList<Known> known{
+        {u"chrome"_s, u"Google Chrome"_s, u"Google/Chrome/User Data"_s, {u"chrome.exe"_s, u"chrome"_s}, true},
+        {u"msedge"_s, u"Microsoft Edge"_s, u"Microsoft/Edge/User Data"_s, {u"msedge.exe"_s, u"msedge"_s}, true},
+        {u"brave"_s, u"Brave"_s, u"BraveSoftware/Brave-Browser/User Data"_s, {u"brave.exe"_s, u"brave"_s}, false},
+        {u"chromium"_s, u"Chromium"_s, u"Chromium/User Data"_s, {u"chromium.exe"_s, u"chromium"_s}, false},
+    };
+#else
     static const QList<Known> known{
         {u"chrome"_s, u"Google Chrome"_s, u"google-chrome"_s, {u"google-chrome-stable"_s, u"google-chrome"_s}, true},
         {u"msedge"_s, u"Microsoft Edge"_s, u"microsoft-edge"_s, {u"microsoft-edge-stable"_s, u"microsoft-edge"_s}, true},
         {u"brave"_s, u"Brave"_s, u"BraveSoftware/Brave-Browser"_s, {u"brave-browser"_s, u"brave"_s}, false},
         {u"chromium"_s, u"Chromium"_s, u"chromium"_s, {u"chromium"_s, u"chromium-browser"_s}, false},
     };
+#endif
     return known;
 }
+
+#ifdef Q_OS_WIN
+QString findWindowsBrowserExecutable(const QString &program) {
+    if (const QString onPath = QStandardPaths::findExecutable(program); !onPath.isEmpty()) return onPath;
+    QStringList subdirs;
+    const QString lower = program.toLower();
+    if (lower.startsWith(u"chrome"_s) && !lower.startsWith(u"chromium"_s)) {
+        subdirs = {u"Google/Chrome/Application"_s};
+    } else if (lower.startsWith(u"msedge"_s)) {
+        subdirs = {u"Microsoft/Edge/Application"_s};
+    } else if (lower.startsWith(u"brave"_s)) {
+        subdirs = {u"BraveSoftware/Brave-Browser/Application"_s};
+    } else if (lower.startsWith(u"chromium"_s)) {
+        subdirs = {u"Chromium/Application"_s};
+    } else if (lower.startsWith(u"firefox"_s)) {
+        subdirs = {u"Mozilla Firefox"_s};
+    }
+    QStringList dirs;
+    for (const QString &root : {qEnvironmentVariable("ProgramFiles"), qEnvironmentVariable("ProgramFiles(x86)"),
+                                qEnvironmentVariable("LOCALAPPDATA")}) {
+        if (root.isEmpty()) continue;
+        for (const QString &sub : subdirs) dirs.append(root + u'/' + sub);
+    }
+    QString found = QStandardPaths::findExecutable(program, dirs);
+    if (found.isEmpty() && lower.startsWith(u"chromium"_s)) {
+        found = QStandardPaths::findExecutable(u"chrome.exe"_s, dirs);
+    }
+    return found;
+}
+#endif
 
 int profileNumber(const QString &directory) {
     return directory == u"Default"_s ? -1 : directory.mid(8).toInt();     // "Profile 12" → 12
@@ -124,12 +163,26 @@ QList<BrowserInstall> ChromeProfiles::detect(const QString &configHome, const Fi
 }
 
 QList<BrowserInstall> ChromeProfiles::detect() {
+#ifdef Q_OS_WIN
+    QString localAppData = qEnvironmentVariable("LOCALAPPDATA");
+    if (localAppData.isEmpty()) localAppData = QStandardPaths::writableLocation(QStandardPaths::GenericDataLocation);
+    return detect(localAppData, [](const QString &program) { return findWindowsBrowserExecutable(program); });
+#else
     return detect(QStandardPaths::writableLocation(QStandardPaths::GenericConfigLocation),
                   [](const QString &program) { return QStandardPaths::findExecutable(program); });
+#endif
 }
 
 bool ChromeProfiles::firefoxInstalled(const FindExecutable &findExecutable) {
     return !findExecutable(u"firefox"_s).isEmpty() || !findExecutable(u"firefox-esr"_s).isEmpty();
+}
+
+bool ChromeProfiles::firefoxInstalled() {
+#ifdef Q_OS_WIN
+    return firefoxInstalled([](const QString &program) { return findWindowsBrowserExecutable(program); });
+#else
+    return firefoxInstalled([](const QString &program) { return QStandardPaths::findExecutable(program); });
+#endif
 }
 
 } // namespace nexa

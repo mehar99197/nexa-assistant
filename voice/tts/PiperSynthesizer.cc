@@ -81,9 +81,9 @@ bool PiperSynthesizer::ensureRunning() {
 
 void PiperSynthesizer::readOutput() {
     stdout_ += process_.readAllStandardOutput();
-    const QString prefix = outputDir_.path() + u'/';
+    const QString prefix = QDir::cleanPath(outputDir_.path()) + u'/';
     for (qsizetype newline; (newline = stdout_.indexOf('\n')) >= 0;) {
-        const QString path = QString::fromUtf8(stdout_.left(newline)).trimmed();
+        const QString path = QDir::cleanPath(QDir::fromNativeSeparators(QString::fromUtf8(stdout_.left(newline)).trimmed()));
         stdout_.remove(0, newline + 1);
         // Only ever touch files in our own directory, whatever Piper prints.
         if (!path.startsWith(prefix) || path.contains(u"/../"_s)) continue;

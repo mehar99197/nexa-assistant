@@ -2,6 +2,7 @@
 
 #include "app/AppController.h"
 #include "core/Logging.h"
+#include "core/agent/Attachments.h"
 #include "voice/VoiceBackends.h"
 #include "voice/stt/ISpeechRecognizer.h"
 #include "voice/stt/Transcript.h"
@@ -48,6 +49,31 @@ bool RemoteBridge::isBusy() const {
 
 void RemoteBridge::submit(const QString &text, const QString &source) {
     controller_->submit(text, source);
+}
+
+QString RemoteBridge::attachmentDir() const {
+    return AttachmentLoader::defaultKeepDir();
+}
+
+void RemoteBridge::submitWithAttachments(const QString &text, const QString &source, const QStringList &savedPaths) {
+    QList<Attachment> files;
+    for (const QString &path : savedPaths) {
+        if (files.size() >= attachments::kMaxFiles) break;
+        const Result<Attachment> described = attachments::describe(path);
+        if (described) {
+            files.append(described.value());
+        } else {
+            qCInfo(lcApp).noquote() << "remote upload skipped" << path << ":" << described.error().message;
+        }
+    }
+    if (files.isEmpty()) {
+        controller_->submit(text, source);
+        return;
+    }
+    const QPointer<RemoteBridge> self(this);
+    loader_.prepare(files, [self, text, source](QList<PreparedAttachment> prepared) {
+        if (self) self->controller_->submit(text, source, prepared);
+    });
 }
 
 void RemoteBridge::cancel() {

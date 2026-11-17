@@ -8,7 +8,7 @@
 
 #include <QDir>
 #include <QJsonObject>
-#include <QStandardPaths>
+#include "core/config/Portable.h"
 #include <QTimer>
 
 using namespace Qt::StringLiterals;
@@ -48,7 +48,7 @@ protected:
 CodexProvider::CodexProvider(ProviderConfig config, QString workingDir, QObject *parent)
     : IAiProvider(parent), config_(std::move(config)), workingDir_(std::move(workingDir)) {
     if (workingDir_.isEmpty()) {
-        workingDir_ = QStandardPaths::writableLocation(QStandardPaths::GenericCacheLocation) + u"/nexa/codex"_s;
+        workingDir_ = portable::cacheDir() + u"/codex"_s;
     }
     turnTimer_.setSingleShot(true);
     connect(&turnTimer_, &QTimer::timeout, this, [this] {

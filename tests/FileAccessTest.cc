@@ -25,8 +25,10 @@ TEST_CASE("FileAccess confines paths to its roots, also through .. and symlinks"
     CHECK_FALSE(files.resolve(outside.filePath(u"x.txt"_s)).isOk());
     CHECK(files.resolve(outside.filePath(u"x.txt"_s)).error().code == ErrorCode::PermissionDenied);
 
+#ifndef Q_OS_WIN
     REQUIRE(QFile::link(outside.path(), allowed.filePath(u"link"_s)));
     CHECK_FALSE(files.resolve(allowed.filePath(u"link/secret.txt"_s)).isOk());
+#endif
 }
 
 TEST_CASE("FileAccess expands ~ and resolves relative paths against home") {

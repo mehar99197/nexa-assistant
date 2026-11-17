@@ -1,5 +1,8 @@
 #include "voice/tts/Phonemizer.h"
 
+#include "core/ProcessUtils.h"
+
+#include <QDir>
 #include <QFileInfo>
 #include <QJsonArray>
 #include <QJsonDocument>
@@ -22,7 +25,11 @@ const QString kInstall = u"run scripts/download-piper.sh"_s;
 Phonemizer::Phonemizer(QString piperDir) : piperDir_(std::move(piperDir)) {}
 
 QString Phonemizer::binary(const QString &piperDir) {
+#ifdef Q_OS_WIN
+    return piperDir + u"/piper_phonemize.exe"_s;
+#else
     return piperDir + u"/piper_phonemize"_s;
+#endif
 }
 
 bool Phonemizer::available() const {
@@ -40,9 +47,15 @@ Result<QStringList> Phonemizer::tokens(const QString &text) const {
     if (line.isEmpty()) return Error{ErrorCode::InvalidArgument, u"Nothing to say."_s};
     QProcess process;
     QProcessEnvironment environment = QProcessEnvironment::systemEnvironment();
+#ifdef Q_OS_WIN
+    const QString pathEnv = environment.value(u"PATH"_s);
+    environment.insert(u"PATH"_s, pathEnv.isEmpty() ? piperDir_ : piperDir_ + QDir::listSeparator() + pathEnv);
+#else
     const QString libraries = environment.value(u"LD_LIBRARY_PATH"_s);
     environment.insert(u"LD_LIBRARY_PATH"_s, libraries.isEmpty() ? piperDir_ : piperDir_ + u':' + libraries);
+#endif
     process.setProcessEnvironment(environment);
+    process::configureChild(process);
     process.setProgram(binary(piperDir_));
     process.setArguments({u"-l"_s, u"en-us"_s, u"--espeak-data"_s, piperDir_ + u"/espeak-ng-data"_s});
     process.start();

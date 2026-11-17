@@ -209,6 +209,25 @@ ProviderConfig ProviderRegistry::fromPreset(const ProviderPreset &preset) {
     };
 }
 
+ProviderPreset ProviderRegistry::nexaAiPreset() {
+    return {
+        .id = u"nexa-ai"_s,
+        .kind = QString(kKindOpenAiCompatible),
+        .name = u"Nexa AI"_s,
+        .baseUrl = u"https://nexadownloadmanager.com/api/assistant/v1"_s,
+        .requiresKey = false,
+        .defaultModel = u"nexa-fast"_s,
+        .category = u"Cloud"_s,
+        .website = u"https://nexadownloadmanager.com/assistant"_s,
+        .hint = u"Managed Nexa AI relay (Pro & Team plans, 1,000 requests/month via your Nexa account)."_s,
+        .freeTier = false,
+    };
+}
+
+bool ProviderRegistry::isNexaManaged(const ProviderConfig &config) {
+    return config.id == u"nexa-ai"_s || config.id.startsWith(u"nexa-ai-"_s);
+}
+
 QList<ProviderConfig> ProviderRegistry::defaultProviders(const std::function<bool(const QString &program)> &installed) {
     QList<ProviderConfig> providers;
     for (const ProviderPreset &preset : presets()) {

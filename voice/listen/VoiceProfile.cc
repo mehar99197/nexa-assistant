@@ -7,7 +7,7 @@
 #include <QJsonDocument>
 #include <QJsonValue>
 #include <QSaveFile>
-#include <QStandardPaths>
+#include "core/config/Portable.h"
 
 #include <cmath>
 
@@ -31,7 +31,7 @@ QList<float> unit(QList<float> vector) {
 } // namespace
 
 QString VoiceProfile::defaultPath() {
-    return QStandardPaths::writableLocation(QStandardPaths::GenericDataLocation) + u"/nexa/voice-profile.json"_s;
+    return portable::dataDir() + u"/voice-profile.json"_s;
 }
 
 double VoiceProfile::cosine(const QList<float> &a, const QList<float> &b) {

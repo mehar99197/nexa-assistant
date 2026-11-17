@@ -51,7 +51,9 @@ QNetworkReply *HttpClient::postStreaming(const QNetworkRequest &request, const Q
     QNetworkRequest streaming(request);
     streaming.setRawHeader("Accept", "text/event-stream");
     streaming.setTransferTimeout(std::chrono::milliseconds(idleTimeoutMs));
-    return manager_.post(streaming, body);
+    QNetworkReply *reply = manager_.post(streaming, body);
+    watchNexaHeaders(reply);
+    return reply;
 }
 
 QNetworkReply *HttpClient::getStreaming(const QNetworkRequest &request, int idleTimeoutMs) {
@@ -61,11 +63,30 @@ QNetworkReply *HttpClient::getStreaming(const QNetworkRequest &request, int idle
     return manager_.get(streaming);
 }
 
+void HttpClient::watchNexaHeaders(QNetworkReply *reply) {
+    if (!reply) return;
+    const QPointer<HttpClient> self(this);
+    const auto inspect = [self, reply] {
+        if (!self || !reply->hasRawHeader("X-Nexa-Remaining")) return;
+        bool ok = false;
+        const int remaining = reply->rawHeader("X-Nexa-Remaining").trimmed().toInt(&ok);
+        if (ok && remaining >= 0) emit self->nexaRemaining(remaining);
+    };
+    connect(reply, &QNetworkReply::metaDataChanged, this, inspect);
+    connect(reply, &QNetworkReply::finished, this, inspect);
+}
+
 QNetworkReply *HttpClient::deliver(QNetworkReply *reply, QObject *context, BodyCallback done) {
+    const QPointer<HttpClient> self(this);
     const QPointer<QObject> guard(context);
     const bool guarded = context != nullptr;
-    connect(reply, &QNetworkReply::finished, reply, [reply, guard, guarded, done = std::move(done)] {
+    connect(reply, &QNetworkReply::finished, reply, [self, reply, guard, guarded, done = std::move(done)] {
         reply->deleteLater();
+        if (self && reply->hasRawHeader("X-Nexa-Remaining")) {
+            bool ok = false;
+            const int remaining = reply->rawHeader("X-Nexa-Remaining").trimmed().toInt(&ok);
+            if (ok && remaining >= 0) emit self->nexaRemaining(remaining);
+        }
         if (guarded && !guard) return;
         const QByteArray body = reply->readAll();
         if (reply->error() != QNetworkReply::NoError || httpStatus(reply) >= 400) {

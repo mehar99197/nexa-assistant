@@ -26,6 +26,8 @@ public:
 
     void apply(const RemoteConfig &config);     // Settings saved, or the server started or stopped
     void stopAll(bool wait = false);
+    void setEntitled(bool entitled);
+    bool isEntitled() const { return entitled_; }
 
     const TailscaleWatcher *tailscale() const { return tailscale_; }
     const TunnelProcess *cloudflare() const { return cloudflare_; }
@@ -46,6 +48,7 @@ private:
 
     RemoteServer *server_;
     RemoteConfig config_;
+    bool entitled_{true};
     TailscaleWatcher *tailscale_;
     TunnelProcess *cloudflare_;
     TunnelProcess *ngrok_;

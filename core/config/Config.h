@@ -221,6 +221,21 @@ struct SkillsConfig {
     bool operator==(const SkillsConfig &) const = default;
 };
 
+// Settings → Account / Local API (M15 Part B): loopback-only OpenAI-compatible HTTP server
+// (127.0.0.1, off by default, Bearer-token protected, no PC tool execution).
+struct LocalApiConfig {
+    static constexpr quint16 kDefaultPort = 18765;
+
+    bool enabled{false};
+    quint16 port{kDefaultPort};
+    QString bearerToken;
+
+    QJsonObject toJson() const;
+    static LocalApiConfig fromJson(const QJsonObject &json);
+
+    bool operator==(const LocalApiConfig &) const = default;
+};
+
 // Typed view of ~/.config/nexa/config.json. Sections this build does not know stay in `extra` and
 // are written back unchanged, so no build drops settings it does not understand.
 struct Config {
@@ -245,6 +260,7 @@ struct Config {
     MemoryConfig memory;
     SkillsConfig skills;
     MissionConfig mission;
+    LocalApiConfig localApi;
     QJsonObject extra;
 
     QJsonObject toJson() const;

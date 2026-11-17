@@ -4,6 +4,7 @@
 #include "core/ai/ChatStream.h"
 #include "core/ai/CodexProvider.h"
 #include "core/ai/ProviderChain.h"
+#include "core/ProcessUtils.h"
 
 #include "QtStringMakers.h"
 
@@ -18,7 +19,9 @@
 
 #include <catch2/catch_test_macros.hpp>
 
+#ifdef Q_OS_UNIX
 #include <signal.h>
+#endif
 
 #include <optional>
 
@@ -81,7 +84,12 @@ struct CodexRig {
         return index < starts.size() ? qint64(starts.at(index).value(u"pid"_s).toInteger()) : 0;
     }
 
-    ProviderConfig config(const QString &program = QStringLiteral(NEXA_TESTS_DIR "/fake-codex/codex"),
+#ifdef Q_OS_WIN
+    static inline const QString kDefaultCodex = QStringLiteral(NEXA_TESTS_DIR "/fake-codex/codex.cmd");
+#else
+    static inline const QString kDefaultCodex = QStringLiteral(NEXA_TESTS_DIR "/fake-codex/codex");
+#endif
+    ProviderConfig config(const QString &program = kDefaultCodex,
                           const QString &model = u"fake-fast"_s) const {
         return ProviderConfig{.id = u"codex"_s, .kind = kKindCodex, .name = u"Codex"_s, .baseUrl = program,
                               .defaultModel = model, .requiresKey = false};
@@ -115,7 +123,7 @@ Outcome run(CodexProvider &provider, const ChatRequest &request) {
     return outcome;
 }
 
-bool alive(qint64 pid) { return pid > 0 && ::kill(pid_t(pid), 0) == 0; }
+bool alive(qint64 pid) { return process::isAlive(pid); }
 
 QJsonObject entry(const char *json) { return QJsonDocument::fromJson(QByteArray(json)).object(); }
 
@@ -196,7 +204,9 @@ TEST_CASE("A first request starts a locked-down thread and streams the reply", "
     CHECK(argv.contains(u"skill_search"_s));
     CHECK(argv.contains(u"web_search=\"disabled\""_s));
     CHECK(starts.first().value(u"cwd"_s).toString().startsWith(rig.workingDir()));
+#ifdef Q_OS_UNIX
     CHECK(starts.first().value(u"pdeathsig"_s).toInt() == SIGKILL);
+#endif
 
     const QList<QJsonObject> threads = rig.requests(u"thread/start"_s);
     REQUIRE(threads.size() == 1);
@@ -214,8 +224,10 @@ TEST_CASE("A first request starts a locked-down thread and streams the reply", "
     CHECK_FALSE(servers.value(u"beta"_s).toObject().value(u"enabled"_s).toBool(true));
     // The private folder is for the owner alone.
     CHECK(QFileInfo(rig.workingDir() + u"/work"_s).isDir());
+#ifdef Q_OS_UNIX
     CHECK((QFileInfo(rig.workingDir() + u"/work"_s).permissions() & (QFileDevice::ReadGroup | QFileDevice::ReadOther
                                                                        | QFileDevice::WriteOther)) == QFileDevice::Permissions());
+#endif
 
     // The order of the conversation with the server: handshake, account, config, thread, turn.
     QStringList order;
@@ -573,13 +585,21 @@ TEST_CASE("The provider's server ends with it", "[codex]") {
 
 TEST_CASE("CodexProvider::locate takes a configured program only if it can be run", "[codex]") {
     CHECK(CodexProvider::locate(u"/nonexistent/codex"_s).isEmpty());
+#ifdef Q_OS_WIN
+    CHECK(CodexProvider::locate(QStringLiteral(NEXA_TESTS_DIR "/fake-codex/codex.cmd")).endsWith(u"fake-codex/codex.cmd"_s));
+#else
     CHECK(CodexProvider::locate(QStringLiteral(NEXA_TESTS_DIR "/fake-codex/codex")).endsWith(u"fake-codex/codex"_s));
+#endif
 }
 
 TEST_CASE("A program that cannot start fails the request with NotFound, and listing models too", "[codex]") {
     CodexRig rig({});
     QTemporaryDir bin;
+#ifdef Q_OS_WIN
+    const QString path = bin.filePath(u"codex.exe"_s);
+#else
     const QString path = bin.filePath(u"codex"_s);
+#endif
     QFile file(path);
     REQUIRE(file.open(QIODevice::WriteOnly));
     file.write("#!/nonexistent/interpreter\n");

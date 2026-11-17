@@ -2,6 +2,7 @@
 
 #include "core/config/Config.h"
 #include "remote/IRemoteHost.h"
+#include "system/files/AttachmentLoader.h"
 
 #include <QObject>
 
@@ -31,6 +32,8 @@ public:
 
     bool isBusy() const override;
     void submit(const QString &text, const QString &source) override;
+    void submitWithAttachments(const QString &text, const QString &source, const QStringList &savedPaths) override;
+    QString attachmentDir() const override;
     void cancel() override;
     void transcribe(const QByteArray &pcm16k, std::function<void(Result<QString>)> done) override;
     bool canTranscribe() const override;
@@ -52,6 +55,7 @@ private:
     mutable std::unique_ptr<ISpeechRecognizer> recognizer_;
     mutable std::unique_ptr<TtsFileRenderer> renderer_;
     bool transcribing_{false};
+    AttachmentLoader loader_;
 };
 
 } // namespace nexa

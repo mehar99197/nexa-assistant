@@ -37,7 +37,28 @@ QString npmPrefix(const QString &home) {
 
 QStringList programSearchDirs(const QString &home) {
     QStringList dirs{home + u"/.local/bin"_s, home + u"/.npm-global/bin"_s};
-    if (const QString prefix = npmPrefix(home); !prefix.isEmpty()) dirs.append(prefix + u"/bin"_s);
+    if (const QString prefix = npmPrefix(home); !prefix.isEmpty()) {
+#ifdef Q_OS_WIN
+        dirs.append(prefix);
+#endif
+        dirs.append(prefix + u"/bin"_s);
+    }
+#ifdef Q_OS_WIN
+    if (const QString appData = qEnvironmentVariable("APPDATA"); !appData.isEmpty()) {
+        dirs.append(QDir::cleanPath(appData + u"/npm"_s));
+    }
+    dirs.append(home + u"/AppData/Roaming/npm"_s);
+    if (const QString localAppData = qEnvironmentVariable("LOCALAPPDATA"); !localAppData.isEmpty()) {
+        dirs.append(QDir::cleanPath(localAppData + u"/Programs"_s));
+    }
+    dirs.append(home + u"/AppData/Local/Programs"_s);
+    if (const QString nvmSymlink = qEnvironmentVariable("NVM_SYMLINK"); !nvmSymlink.isEmpty()) {
+        dirs.append(QDir::cleanPath(nvmSymlink));
+    }
+    if (const QString nvmHome = qEnvironmentVariable("NVM_HOME"); !nvmHome.isEmpty()) {
+        dirs.append(QDir::cleanPath(nvmHome));
+    }
+#endif
 
     QStringList nodes = QDir(home + u"/.nvm/versions/node"_s).entryList(QDir::Dirs | QDir::NoDotAndDotDot);
     std::sort(nodes.begin(), nodes.end(), [](const QString &a, const QString &b) {
@@ -46,7 +67,10 @@ QStringList programSearchDirs(const QString &home) {
     });
     for (const QString &node : nodes) dirs.append(home + u"/.nvm/versions/node/"_s + node + u"/bin"_s);
 
-    dirs.append({home + u"/.volta/bin"_s, home + u"/.bun/bin"_s, u"/usr/local/bin"_s});
+    dirs.append({home + u"/.volta/bin"_s, home + u"/.bun/bin"_s});
+#ifndef Q_OS_WIN
+    dirs.append(u"/usr/local/bin"_s);
+#endif
     dirs.removeDuplicates();
     return dirs;
 }
@@ -65,15 +89,19 @@ QString findProgram(const QString &name, const QString &configured) {
 }
 
 QString programSearchHint() {
+#ifdef Q_OS_WIN
+    return u"looked on PATH, in %APPDATA%\\npm, %LOCALAPPDATA%\\Programs, ~/.local/bin, npm's prefix, nvm, Volta and Bun folders"_s;
+#else
     return u"looked on PATH, in ~/.local/bin, ~/.npm-global/bin, npm's prefix, nvm's, Volta's and Bun's folders "
            "and /usr/local/bin"_s;
+#endif
 }
 
 QProcessEnvironment environmentFor(const QString &program) {
     QProcessEnvironment environment = QProcessEnvironment::systemEnvironment();
     const QString folder = QFileInfo(program).absolutePath();
     const QString path = environment.value(u"PATH"_s);
-    environment.insert(u"PATH"_s, path.isEmpty() ? folder : folder + u':' + path);
+    environment.insert(u"PATH"_s, path.isEmpty() ? folder : folder + QDir::listSeparator() + path);
     return environment;
 }
 

@@ -28,6 +28,12 @@ public:
     // A request from the phone, handled exactly as one typed on the PC: fast path or agent,
     // policy and audit alike. `source` is "phone", or "phone-voice" when it was spoken.
     virtual void submit(const QString &text, const QString &source) = 0;
+    // Submit a request accompanied by already-saved local attachment paths (uploaded over /api/upload).
+    virtual void submitWithAttachments(const QString &text, const QString &source, const QStringList &savedPaths) {
+        (void)savedPaths;
+        submit(text, source);
+    }
+    virtual QString attachmentDir() const { return {}; }
     virtual void cancel() = 0;
     // A spoken request recorded on the phone: 16 kHz mono 16-bit PCM in, the words out.
     virtual void transcribe(const QByteArray &pcm16k, std::function<void(Result<QString>)> done) = 0;

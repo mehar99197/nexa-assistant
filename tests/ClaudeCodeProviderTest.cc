@@ -6,6 +6,7 @@
 #include "core/ai/ClaudeCodeSession.h"
 #include "core/ai/ProviderChain.h"
 #include "core/ai/ProviderRegistry.h"
+#include "core/ProcessUtils.h"
 
 #include "QtStringMakers.h"
 
@@ -20,7 +21,9 @@
 
 #include <catch2/catch_test_macros.hpp>
 
+#ifdef Q_OS_UNIX
 #include <signal.h>
+#endif
 
 #include <optional>
 
@@ -30,7 +33,11 @@ using namespace Qt::StringLiterals;
 namespace {
 
 constexpr int kWaitMs = 10'000;
+#ifdef Q_OS_WIN
+const QString kFake = QStringLiteral(NEXA_TESTS_DIR "/fake-claude/claude.cmd");
+#else
 const QString kFake = QStringLiteral(NEXA_TESTS_DIR "/fake-claude/claude");
+#endif
 
 // A scratch folder, the fake's script and log in it, and the environment that points the fake there. The two variables
 // that mark a Claude Code terminal are set, so the tests see them removed.
@@ -104,7 +111,7 @@ Outcome run(ClaudeCodeProvider &provider, const ChatRequest &request) {
     return outcome;
 }
 
-bool alive(qint64 pid) { return pid > 0 && ::kill(pid_t(pid), 0) == 0; }
+bool alive(qint64 pid) { return process::isAlive(pid); }
 
 QJsonObject entry(const char *json) { return QJsonDocument::fromJson(QByteArray(json)).object(); }
 
@@ -177,7 +184,9 @@ TEST_CASE("A first request starts claude with Nexa's prompt as a flag, its own t
     CHECK(env.value(u"CLAUDE_CODE_ENTRYPOINT"_s).isNull());
     CHECK(env.value(u"CLAUDE_CONFIG_DIR"_s).toString() == qEnvironmentVariable("CLAUDE_CONFIG_DIR"));
     CHECK(starts.first().value(u"pathFirst"_s).toString() == QFileInfo(kFake).absolutePath());
+#ifdef Q_OS_UNIX
     CHECK(starts.first().value(u"pdeathsig"_s).toInt() == SIGKILL);
+#endif
 }
 
 TEST_CASE("The next request reuses the warm process and sends only the new turn", "[claude-code]") {

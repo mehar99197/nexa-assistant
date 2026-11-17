@@ -12,6 +12,8 @@
 #include "QtStringMakers.h"
 
 #include <QElapsedTimer>
+#include <QFileInfo>
+#include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QNetworkAccessManager>
@@ -37,6 +39,11 @@ class FakeHost : public IRemoteHost {
 public:
     bool isBusy() const override { return busy; }
     void submit(const QString &text, const QString &source) override { submitted.append(source + u": "_s + text); }
+    void submitWithAttachments(const QString &text, const QString &source, const QStringList &savedPaths) override {
+        submitted.append(source + u": "_s + text);
+        uploadedPaths.append(savedPaths);
+    }
+    QString attachmentDir() const override { return uploadDir; }
     void cancel() override { ++cancels; }
     void transcribe(const QByteArray &pcm16k, std::function<void(Result<QString>)> done) override {
         heardBytes = pcm16k.size();
@@ -58,6 +65,8 @@ public:
     bool locked{false};
     int unlocks{0};
     QList<RemoteApproval> waiting;
+    QString uploadDir;
+    QStringList uploadedPaths;
     QStringList answers;
     QStringList submitted;
     int cancels{0};
@@ -420,4 +429,73 @@ TEST_CASE("A phone through a tunnel is told apart, and every phone learns every 
     REQUIRE(finished.wait(5000));
     CHECK(reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt() == 200);
     reply->deleteLater();
+}
+
+TEST_CASE("RemoteServer serves upload endpoint with Bearer auth and broadcasts theme + attachments") {
+    if (!haveOpenssl()) SKIP("openssl is needed to make the certificate");
+    Fixture f;
+    f.host.uploadDir = f.directory.filePath(u"uploads"_s);
+    REQUIRE(f.start());
+
+    remote::ThemeStyle theme;
+    theme.themeId = u"neon-cyan"_s;
+    theme.designId = u"cards"_s;
+    theme.ground = u"#080b10"_s;
+    theme.panel = u"#101622"_s;
+    theme.text = u"#f0f6fc"_s;
+    theme.idle = u"#00e5ff"_s;
+    theme.bubbleStyle = u"cards"_s;
+    theme.fontFace = u"mono"_s;
+    theme.radius = 6;
+    f.server.setTheme(theme);
+
+    const QString token = f.pairedToken();
+    REQUIRE_FALSE(token.isEmpty());
+
+    Client phone(f.localOrigin());
+    REQUIRE(phone.open(f.local(u"/ws"_s).replace(u"http:"_s, u"ws:"_s)));
+    phone.send({{u"t"_s, u"hello"_s}, {u"token"_s, token}});
+    const QJsonObject welcome = phone.waitFor(u"welcome"_s);
+    CHECK(welcome.value(u"theme"_s).toObject().value(u"themeId"_s).toString() == u"neon-cyan"_s);
+    CHECK(welcome.value(u"theme"_s).toObject().value(u"bubbleStyle"_s).toString() == u"cards"_s);
+
+    // Live theme update broadcasts immediately.
+    theme.ground = u"#11151d"_s;
+    f.server.setTheme(theme);
+    const QJsonObject themeMsg = phone.waitFor(u"theme"_s);
+    CHECK(themeMsg.value(u"theme"_s).toObject().value(u"ground"_s).toString() == u"#11151d"_s);
+
+    // Unauthenticated POST /api/upload is refused (401).
+    QNetworkRequest unauthReq(QUrl(f.local(u"/api/upload"_s)));
+    unauthReq.setHeader(QNetworkRequest::ContentTypeHeader, u"application/json"_s);
+    QNetworkReply *unauth = f.network.post(unauthReq, R"({"text":"hi","files":[{"name":"a.txt","data":"SGk="}]})");
+    QSignalSpy unauthDone(unauth, &QNetworkReply::finished);
+    REQUIRE(unauthDone.wait(5000));
+    CHECK(unauth->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt() == 401);
+    unauth->deleteLater();
+
+    // Authenticated POST /api/upload sanitizes path traversal, saves file 0600, and submits to host.
+    QNetworkRequest uploadReq(QUrl(f.local(u"/api/upload"_s)));
+    uploadReq.setHeader(QNetworkRequest::ContentTypeHeader, u"application/json"_s);
+    uploadReq.setRawHeader("Authorization", "Bearer " + token.toUtf8());
+    const QByteArray payload = QJsonDocument(QJsonObject{
+        {u"text"_s, u"review attachment"_s},
+        {u"files"_s, QJsonArray{QJsonObject{
+            {u"name"_s, u"../../evil/hello.txt"_s},
+            {u"data"_s, QString::fromLatin1(QByteArrayLiteral("hello attachment").toBase64())},
+        }}},
+    }).toJson(QJsonDocument::Compact);
+    QNetworkReply *okReply = f.network.post(uploadReq, payload);
+    QSignalSpy okDone(okReply, &QNetworkReply::finished);
+    REQUIRE(okDone.wait(5000));
+    CHECK(okReply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt() == 200);
+    okReply->deleteLater();
+
+    REQUIRE(f.host.uploadedPaths.size() == 1);
+    CHECK(QFileInfo(f.host.uploadedPaths.first()).fileName() == u"hello.txt"_s);
+    CHECK(f.host.submitted.last() == u"phone: review attachment"_s);
+
+    f.server.onUserMessageFrom(u"review attachment"_s, u"phone"_s, u"hello.txt (16 B)"_s);
+    const QJsonObject acc = phone.waitFor(u"accepted"_s);
+    CHECK(acc.value(u"attachments"_s).toString() == u"hello.txt (16 B)"_s);
 }

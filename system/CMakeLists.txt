@@ -36,7 +36,8 @@ add_library(nexa_system STATIC
     input/InputBackendSelector.h input/InputBackendSelector.cc
     input/PortalInputBackend.h input/PortalInputBackend.cc
     input/RemoteDesktopSession.h input/RemoteDesktopSession.cc
-    input/XTestInputBackend.h input/XTestInputBackend.cc
+    input/WinInputBackend.h input/WinInputBackend.cc
+    input/WinInputLock.h input/WinInputLock.cc
     info/ProcessStats.h info/ProcessStats.cc
     info/SystemInfo.h info/SystemInfo.cc
     media/MprisController.h media/MprisController.cc
@@ -51,17 +52,22 @@ add_library(nexa_system STATIC
     setup/EngineAssets.h setup/EngineAssets.cc
 )
 
-# X11/XTEST is the fallback input backend, used on X11 sessions and for XWayland windows.
-find_package(X11 REQUIRED COMPONENTS Xtst)
-
 target_link_libraries(nexa_system
     PUBLIC
         nexa_core
         nexa_proto
         Qt6::Gui
-        Qt6::DBus
     PRIVATE
         nexa_options
-        X11::X11
-        X11::Xtst
 )
+
+if(UNIX AND NOT ANDROID AND NOT APPLE)
+    # X11/XTEST is the fallback input backend, used on X11 sessions and for XWayland windows.
+    find_package(X11 REQUIRED COMPONENTS Xtst)
+    target_sources(nexa_system PRIVATE input/XTestInputBackend.h input/XTestInputBackend.cc)
+    target_link_libraries(nexa_system PUBLIC Qt6::DBus PRIVATE X11::X11 X11::Xtst)
+endif()
+
+if(WIN32)
+    target_link_libraries(nexa_system PRIVATE user32 psapi shell32 ole32 oleaut32 uuid)
+endif()

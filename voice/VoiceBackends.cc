@@ -23,7 +23,7 @@
 
 #include <QDir>
 #include <QFileInfo>
-#include <QStandardPaths>
+#include "core/config/Portable.h"
 
 using namespace Qt::StringLiterals;
 
@@ -89,7 +89,7 @@ QString baseUrl(const ProviderConfig &provider) {
 } // namespace
 
 QString VoiceBackends::dataDir() {
-    return QStandardPaths::writableLocation(QStandardPaths::GenericDataLocation) + u"/nexa"_s;
+    return portable::dataDir();
 }
 
 QString VoiceBackends::whisperModelPath(const QString &model) {
@@ -101,7 +101,11 @@ QString VoiceBackends::piperDir() {
 }
 
 QString VoiceBackends::piperBinary() {
+#ifdef Q_OS_WIN
+    return piperDir() + u"/piper.exe"_s;
+#else
     return piperDir() + u"/piper"_s;
+#endif
 }
 
 QStringList VoiceBackends::piperVoices() {

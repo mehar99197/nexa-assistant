@@ -1,6 +1,8 @@
 #include "system/a11y/AtspiNode.h"
 
+#ifdef Q_OS_UNIX
 #include <QDBusMetaType>
+#endif
 
 #include <mutex>
 
@@ -34,6 +36,7 @@ constexpr const char *const kRoles[] = {
 constexpr uint kRoleCount = sizeof(kRoles) / sizeof(kRoles[0]);
 static_assert(kRoleCount == 131, "the AT-SPI role table has 131 entries");
 
+#ifdef Q_OS_UNIX
 NodeRef toRef(const WireRef &wire) {
     return NodeRef{wire.bus, wire.path.path()};
 }
@@ -71,6 +74,7 @@ Node toNode(const ListedItem &item) {
     node.states = toStates(item.states);
     return node;
 }
+#endif
 
 } // namespace
 
@@ -83,6 +87,7 @@ QString roleName(uint role) {
     return QString::fromLatin1(role < kRoleCount ? kRoles[role] : "unknown");
 }
 
+#ifdef Q_OS_UNIX
 QDBusArgument &operator<<(QDBusArgument &argument, const WireRef &ref) {
     argument.beginStructure();
     argument << ref.bus << ref.path;
@@ -140,6 +145,7 @@ void registerCacheTypes() {
         qDBusRegisterMetaType<QList<ListedItem>>();
     });
 }
+#endif
 
 CacheForm cacheForm(QStringView signature) {
     if (signature == kCountedSignature) return CacheForm::Counted;
@@ -147,6 +153,7 @@ CacheForm cacheForm(QStringView signature) {
     return CacheForm::Unknown;
 }
 
+#ifdef Q_OS_UNIX
 QList<Node> toNodes(const QList<CountedItem> &items) {
     QList<Node> nodes;
     nodes.reserve(items.size());
@@ -179,5 +186,6 @@ Result<QList<Node>> decodeCacheItems(const QDBusArgument &items, const QString &
     }
     return Error{ErrorCode::Parse, u"The application's accessibility cache is in a form Nexa does not read (%1)."_s.arg(signature)};
 }
+#endif
 
 } // namespace nexa::atspi

@@ -6,6 +6,7 @@
 #include "core/ai/OpenCodeServer.h"
 #include "core/ai/ProviderChain.h"
 #include "core/net/HttpClient.h"
+#include "core/ProcessUtils.h"
 
 #include "QtStringMakers.h"
 
@@ -20,7 +21,9 @@
 
 #include <catch2/catch_test_macros.hpp>
 
+#ifdef Q_OS_UNIX
 #include <signal.h>
+#endif
 
 #include <optional>
 
@@ -30,7 +33,13 @@ using namespace Qt::StringLiterals;
 namespace {
 
 constexpr int kWaitMs = 15'000;
+#ifdef Q_OS_WIN
+const QString kFake = QStringLiteral(NEXA_TESTS_DIR "/fake-opencode/opencode.cmd");
+const QString kSilent = QStringLiteral(NEXA_TESTS_DIR "/fake-opencode/silent.cmd");
+#else
 const QString kFake = QStringLiteral(NEXA_TESTS_DIR "/fake-opencode/opencode");
+const QString kSilent = QStringLiteral(NEXA_TESTS_DIR "/fake-opencode/silent");
+#endif
 
 struct OpenCodeRig {
     explicit OpenCodeRig(const QJsonArray &script = {}) {
@@ -110,7 +119,7 @@ QString promptText(const QJsonObject &request) {
     return request.value(u"body"_s).toObject().value(u"parts"_s).toArray().at(0).toObject().value(u"text"_s).toString();
 }
 
-bool alive(qint64 pid) { return ::kill(pid_t(pid), 0) == 0; }
+bool alive(qint64 pid) { return process::isAlive(pid); }
 
 } // namespace
 
@@ -208,7 +217,7 @@ TEST_CASE("Cancel aborts the session") {
 
 TEST_CASE("A server that never says it is listening fails within the limit") {
     OpenCodeRig rig;
-    std::shared_ptr<OpenCodeServer> server = rig.server(QStringLiteral(NEXA_TESTS_DIR "/fake-opencode/silent"));
+    std::shared_ptr<OpenCodeServer> server = rig.server(kSilent);
     server->setStartTimeoutMs(1'500);
     std::optional<Result<void>> started;
     server->ensureStarted([&](Result<void> result) { started = result; });
@@ -303,7 +312,9 @@ TEST_CASE("Nexa's opencode server dies with Nexa, even when Nexa crashes") {
     OpenCodeRig rig;
     OpenCodeProvider provider(config(), &rig.http, rig.server());
     REQUIRE(models(provider)->isOk());
+#ifdef Q_OS_UNIX
     CHECK(rig.log().first().value(u"pdeathsig"_s).toInt() == SIGKILL);
+#endif
 }
 
 TEST_CASE("opencode saying nothing for too long fails the turn and stops the session") {

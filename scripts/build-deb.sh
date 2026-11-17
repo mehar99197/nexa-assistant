@@ -186,7 +186,7 @@ done
 
 DEB="$OUT/nexa-assistant_${VERSION}_amd64.deb"
 rm -f "$DEB"
-dpkg-deb --build --root-owner-group "$STAGE" "$DEB" >/dev/null
+dpkg-deb --build -Zgzip --root-owner-group "$STAGE" "$DEB" >/dev/null
 echo "== built $DEB ($(du -h "$DEB" | cut -f1))"
 dpkg-deb --info "$DEB" | sed -n '1,12p'
 echo "== $(dpkg-deb --contents "$DEB" | wc -l) entries"

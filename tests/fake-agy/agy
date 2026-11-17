@@ -152,7 +152,8 @@ def acp_main(args, config):
     log_start(args)
     if config.get("child"):
         import subprocess
-        child = subprocess.Popen(["sleep", "120"])
+        cmd = [sys.executable, "-c", "import time; time.sleep(120)"] if os.name == "nt" else ["sleep", "120"]
+        child = subprocess.Popen(cmd)
         log({"child": child.pid})
     for line in sys.stdin:
         if not line.strip():

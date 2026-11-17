@@ -1,5 +1,6 @@
 #include "app/SettingsDialog.h"
 
+#include "app/AccountSettingsPage.h"
 #include "app/RemoteAccess.h"
 
 #include "app/BrowserSettingsPage.h"
@@ -11,6 +12,7 @@
 #include "app/VoiceEnrolmentDialog.h"
 #include "app/VoiceSampleDialog.h"
 
+#include "core/account/AccountManager.h"
 #include "core/ai/IAiProvider.h"
 #include "app/GlobalShortcuts.h"
 #include "remote/PairingManager.h"
@@ -133,6 +135,8 @@ SettingsDialog::SettingsDialog(Config config, ProviderRegistry *registry, HttpCl
     addPage(skillsPage_, tr("Skills"));
     addPage(buildPolicyTab(), tr("Policy"));
     addPage(buildGeneralTab(), tr("General"));
+    accountPage_ = new AccountSettingsPage(config_.localApi, status_.account, status_.updater, this);
+    addPage(accountPage_, tr("Account"));
 
     // Back on Providers: the sign-in shown there is looked at again (not within 20 s of the last look).
     connect(tabs_, &QTabWidget::currentChanged, this, [this](int index) {
@@ -328,6 +332,7 @@ void SettingsDialog::accept() {
     memoryPage_->store(config_.memory);
     missionPage_->store(config_.mission);
     skillsPage_->store(config_.skills);
+    if (accountPage_) accountPage_->store(config_.localApi);
     // The memory's own file, not the config: what the page changed, applied to the memory as it is now.
     if (const Result<void> edited = memoryPage_->applyEdits(); !edited) {
         tabs_->setCurrentWidget(tabOf(memoryPage_));
@@ -373,8 +378,15 @@ QWidget *SettingsDialog::buildProvidersTab() {
     downButton->setToolTip(tr("Ask this provider later when the first choice cannot answer"));
     connect(downButton, &QToolButton::clicked, this, [this] { moveProvider(1); });
 
+    auto *nexaAiButton = new QPushButton(tr("Nexa AI"), page);
+    nexaAiButton->setObjectName(u"providerAddNexaAi"_s);
+    nexaAiButton->setAutoDefault(false);
+    nexaAiButton->setToolTip(tr("Add Nexa AI managed relay (Pro / Team — uses your signed Nexa account)"));
+    connect(nexaAiButton, &QPushButton::clicked, this, [this] { addProvider(ProviderRegistry::nexaAiPreset()); });
+
     auto *listButtons = new QHBoxLayout;
     listButtons->addWidget(addButton);
+    listButtons->addWidget(nexaAiButton);
     listButtons->addWidget(removeButton);
     listButtons->addWidget(upButton);
     listButtons->addWidget(downButton);
@@ -991,16 +1003,21 @@ void SettingsDialog::refreshOwnVoice() {
     SherpaRuntime *sherpa = status_.sherpa;
     const bool engine = sherpa && sherpa->load() && sherpa->canCloneVoice();
     const Phonemizer phonemizer(VoiceBackends::piperDir());
-    recordSampleButton_->setEnabled(status_.voice != nullptr);
+    const bool entitled = !status_.account || status_.account->verifiedFeatures().ownVoice;
+    ownVoiceCheck_->setEnabled(entitled);
+    recordSampleButton_->setEnabled(entitled && status_.voice != nullptr);
     recordSampleButton_->setText(sample ? tr("Record again…") : tr("Record my voice…"));
-    hearSampleButton_->setEnabled(sample.isOk() && engine && phonemizer.available());
+    hearSampleButton_->setEnabled(entitled && sample.isOk() && engine && phonemizer.available());
     forgetSampleButton_->setEnabled(sample.isOk());
     QStringList notes;
+    if (!entitled) {
+        notes.append(tr("Speak in my voice requires a Pro or Team plan (Settings → Account)."));
+    }
     if (sample) {
         notes.append(tr("Recorded %1, %2 s.")
                          .arg(QLocale().toString(sample.value().recorded.toLocalTime().date(), QLocale::ShortFormat))
                          .arg(sample.value().durationMs() / 1000.0, 0, 'f', 1));
-    } else {
+    } else if (entitled) {
         notes.append(tr("No sample yet: record the passage once, and Nexa can speak in your voice."));
     }
     if (!engine) notes.append(tr("ZipVoice is not installed — run scripts/download-sherpa.sh, then reopen Settings."));
@@ -1009,6 +1026,10 @@ void SettingsDialog::refreshOwnVoice() {
 }
 
 void SettingsDialog::hearOwnVoice() {
+    if (status_.account && !status_.account->verifiedFeatures().ownVoice) {
+        ownVoiceStatus_->setText(tr("Speak in my voice requires a Pro or Team plan (Settings → Account)."));
+        return;
+    }
     if (testSpeech_) testSpeech_->stop();
     Result<std::unique_ptr<ISpeechSynthesizer>> own = VoiceBackends::createOwnVoice(config_.voice, status_.sherpa);
     if (!own) {
@@ -1710,12 +1731,30 @@ void SettingsDialog::showRemote() {
 }
 
 void SettingsDialog::showAwayFromHome() {
+    const bool entitled = !status_.account || status_.account->verifiedFeatures().awayFromHome;
+    tailscaleCheck_->setEnabled(entitled);
+    cloudflareMode_->setEnabled(entitled);
+    cloudflareHostname_->setEnabled(entitled && cloudflareMode_->currentData() == u"named"_s);
+    ngrokCheck_->setEnabled(entitled);
+    ngrokDomain_->setEnabled(entitled);
+
     RemoteAccess *access = status_.remoteAccess;
     if (!access) {
-        for (QLabel *label : {tailscaleState_, cloudflareState_, ngrokState_}) label->setText(tr("Not available here."));
+        for (QLabel *label : {tailscaleState_, cloudflareState_, ngrokState_}) {
+            label->setText(entitled ? tr("Not available here.")
+                                    : tr("Requires a Pro or Team plan (Settings → Account)."));
+        }
         tailscaleSignIn_->setEnabled(false);
         return;
     }
+    if (!entitled) {
+        tailscaleSignIn_->setEnabled(false);
+        for (QLabel *label : {tailscaleState_, cloudflareState_, ngrokState_}) {
+            label->setText(tr("Requires a Pro or Team plan (Settings → Account)."));
+        }
+        return;
+    }
+    tailscaleSignIn_->setEnabled(true);
     tailscaleState_->setText(access->describe(RemoteRoute::Kind::Tailscale));
     tailscaleSignIn_->setVisible(access->tailscale()->installed() && !access->tailscale()->state().signedIn);
     cloudflareState_->setText(access->describe(RemoteRoute::Kind::Cloudflare));
@@ -1974,7 +2013,7 @@ void SettingsDialog::showProvider(int row) {
     textToolsCheck_->setChecked(provider.textTools);
     fallbackCheck_->setChecked(provider.fallback);
     showKeyCheck_->setChecked(false);
-    showRowsFor(provider.kind);
+    showRowsFor(provider.kind, ProviderRegistry::isNexaManaged(provider));
     if (valid) {
         showSignIn(provider);
     } else {
@@ -1994,7 +2033,7 @@ void SettingsDialog::storeProvider() {
     provider.fallback = fallbackCheck_->isChecked();
 }
 
-void SettingsDialog::showRowsFor(const QString &kind) {
+void SettingsDialog::showRowsFor(const QString &kind, bool nexaManaged) {
     const bool http = ProviderRegistry::isHttpKind(kind) || kind.isEmpty();
     const bool agy = kind == kKindAgy;
     const bool codex = kind == kKindCodex;
@@ -2009,9 +2048,9 @@ void SettingsDialog::showRowsFor(const QString &kind) {
                                      : codex  ? tr("codex on PATH or in ~/.npm-global/bin")
                                      : claude ? tr("claude on PATH or in ~/.local/bin")
                                               : tr("Nexa starts its own"));
-    // agy, Codex and Claude Code sign in by themselves (Sign-in below); a server of opencode's that the user runs has a
-    // password.
-    form->setRowVisible(keyRow_, !program);
+    // agy, Codex and Claude Code sign in by themselves (Sign-in below); Nexa AI uses Settings → Account's
+    // signed licence token (never stored in config.json); an opencode server has a password.
+    form->setRowVisible(keyRow_, !program && !nexaManaged);
     if (auto *label = qobject_cast<QLabel *>(form->labelForField(keyRow_))) {
         label->setText(http ? tr("API key:") : tr("Server password:"));
     }
@@ -2142,7 +2181,18 @@ void SettingsDialog::refreshActiveCombo() {
 void SettingsDialog::testConnection() {
     storeProvider();
     if (currentRow_ < 0 || currentRow_ >= config_.providers.size()) return;
-    Result<std::unique_ptr<IAiProvider>> created = registry_->create(config_.providers.at(currentRow_));
+    ProviderConfig tested = config_.providers.at(currentRow_);
+    if (ProviderRegistry::isNexaManaged(tested) && status_.account) {
+        if (!status_.account->verifiedFeatures().nexaAi) {
+            showTestResult(tr("Nexa AI requires a Pro or Team plan (Settings → Account)."), false);
+            return;
+        }
+        tested.apiKey = status_.account->licenseToken();
+        if (tested.baseUrl.isEmpty() || tested.baseUrl == u"https://nexadownloadmanager.com/api/assistant/v1"_s) {
+            tested.baseUrl = status_.account->nexaAiBaseUrl();
+        }
+    }
+    Result<std::unique_ptr<IAiProvider>> created = registry_->create(tested);
     if (!created) {
         showTestResult(created.error().message, false);
         return;

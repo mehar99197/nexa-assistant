@@ -2,11 +2,16 @@
 
 #include "core/Logging.h"
 #include "system/helper/HelperClient.h"
+
+#ifdef Q_OS_WIN
+#include "system/input/WinInputBackend.h"
+#else
 #include "system/input/CombinedInputBackend.h"
 #include "system/input/HelperInputBackend.h"
 #include "system/input/PortalInputBackend.h"
 #include "system/input/RemoteDesktopSession.h"
 #include "system/input/XTestInputBackend.h"
+#endif
 
 #include <QCoreApplication>
 
@@ -24,6 +29,15 @@ QString translated(const char *text) {
 
 InputBackendSelector::Choice InputBackendSelector::choose(HelperClient *helper, RemoteDesktopSession *remoteDesktop) {
     Choice choice;
+#ifdef Q_OS_WIN
+    Q_UNUSED(helper);
+    Q_UNUSED(remoteDesktop);
+    choice.backend = std::make_unique<WinInputBackend>();
+    choice.notes.append(translated("Using Windows SendInput: it reaches every visible desktop window."));
+    choice.summary = translated("Typing and clicking: Windows SendInput");
+    qCInfo(lcApp) << "input backend: Windows SendInput";
+    return choice;
+#else
     const bool wayland = XTestInputBackend::isWaylandSession();
     // Only worth asking about on Wayland: on X11, XTEST places the pointer exactly by itself.
     const bool portal = wayland && remoteDesktop && RemoteDesktopSession::isAvailable();
@@ -91,6 +105,7 @@ InputBackendSelector::Choice InputBackendSelector::choose(HelperClient *helper, 
     choice.summary = translated("Typing and clicking: unavailable");
     qCInfo(lcApp) << "no input backend:" << choice.notes;
     return choice;
+#endif
 }
 
 } // namespace nexa

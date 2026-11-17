@@ -9,7 +9,7 @@
 #include <QSet>
 #include <QTimer>
 
-#include <csignal>
+#include "core/ProcessUtils.h"
 
 using namespace Qt::StringLiterals;
 
@@ -19,17 +19,16 @@ namespace {
 
 constexpr int kKillGraceMs = 1'500;
 
-constexpr auto kProcessFlags = QProcess::UnixProcessFlag::CreateNewSession
-    | QProcess::UnixProcessFlag::ResetSignalHandlers | QProcess::UnixProcessFlag::CloseFileDescriptors;
-
-// The child leads its own session, so -pid addresses its whole process group.
-void signalGroup(qint64 pid, int signal) {
-    if (pid <= 0) return;
-    if (::kill(pid_t(-pid), signal) != 0) ::kill(pid_t(pid), signal);
+void terminateTree(qint64 pid, bool force) {
+    process::killTree(pid, force);
 }
 
 QString shellProgram() {
+#ifdef Q_OS_WIN
+    static const QString shell = qEnvironmentVariable("COMSPEC", u"cmd.exe"_s);
+#else
     static const QString shell = QFileInfo::exists(u"/bin/bash"_s) ? u"/bin/bash"_s : u"/bin/sh"_s;
+#endif
     return shell;
 }
 
@@ -72,7 +71,7 @@ LocalCommandRunner::~LocalCommandRunner() {
     for (auto it = jobs_.begin(); it != jobs_.end(); ++it) {
         QProcess *process = it.key();
         process->disconnect(this);
-        signalGroup(process->processId(), SIGKILL);
+        terminateTree(process->processId(), true);
         process->waitForFinished(1'000);
     }
 }
@@ -80,11 +79,28 @@ LocalCommandRunner::~LocalCommandRunner() {
 QStringList LocalCommandRunner::commandLine(const QString &command) {
     const QString trimmed = command.trimmed();
     if (trimmed.isEmpty()) return {};
+#ifdef Q_OS_WIN
+    if (needsShell(trimmed)) return {shellProgram(), u"/C"_s, trimmed};
+#else
     if (needsShell(trimmed)) return {shellProgram(), u"-c"_s, trimmed};
+#endif
     return QProcess::splitCommand(trimmed);
 }
 
 bool LocalCommandRunner::needsShell(const QString &command) {
+#ifdef Q_OS_WIN
+    static const QRegularExpression syntax(u"[|&<>()^%\\r\\n]"_s);
+    static const QSet<QString> builtins{
+        u"assoc"_s, u"break"_s, u"call"_s, u"cd"_s, u"chdir"_s, u"cls"_s, u"color"_s, u"copy"_s, u"date"_s,
+        u"del"_s,   u"dir"_s,   u"echo"_s, u"endlocal"_s, u"erase"_s, u"exit"_s, u"for"_s, u"ftype"_s, u"goto"_s,
+        u"if"_s,    u"md"_s,    u"mkdir"_s, u"mklink"_s, u"move"_s, u"path"_s, u"pause"_s, u"popd"_s, u"prompt"_s,
+        u"pushd"_s, u"rd"_s,    u"rem"_s,  u"ren"_s, u"rename"_s, u"rmdir"_s, u"set"_s, u"setlocal"_s, u"shift"_s,
+        u"start"_s, u"time"_s,  u"title"_s, u"type"_s, u"ver"_s, u"verify"_s, u"vol"_s,
+    };
+    if (syntax.match(command).hasMatch()) return true;
+    const QString first = command.section(u' ', 0, 0, QString::SectionSkipEmpty).toLower();
+    return builtins.contains(first);
+#else
     static const QRegularExpression syntax(u"[|&;<>()$`\\\\*?\\[\\]{}~'\"#!]|^\\s*\\w+="_s);
     static const QSet<QString> builtins{
         u"cd"_s, u"export"_s, u"source"_s, u"."_s, u"alias"_s, u"unset"_s, u"set"_s, u"eval"_s, u"exec"_s,
@@ -95,6 +111,7 @@ bool LocalCommandRunner::needsShell(const QString &command) {
     };
     if (syntax.match(command).hasMatch()) return true;
     return builtins.contains(command.section(u' ', 0, 0, QString::SectionSkipEmpty));
+#endif
 }
 
 QProcessEnvironment LocalCommandRunner::environment() {
@@ -117,6 +134,16 @@ void LocalCommandRunner::run(const QString &command, const QString &workingDirec
         done(Error{ErrorCode::InvalidArgument, u"The command is empty"_s});
         return;
     }
+    runProgram(argv.first(), argv.mid(1), workingDirectory, timeoutMs, environment(), std::move(done));
+}
+
+void LocalCommandRunner::runProgram(const QString &program, const QStringList &arguments,
+                                    const QString &workingDirectory, int timeoutMs,
+                                    const QProcessEnvironment &env, Done done) {
+    if (program.isEmpty()) {
+        done(Error{ErrorCode::InvalidArgument, u"The command is empty"_s});
+        return;
+    }
 
     auto *process = new QProcess(this);
     auto job = std::make_shared<Job>();
@@ -125,10 +152,10 @@ void LocalCommandRunner::run(const QString &command, const QString &workingDirec
     jobs_.insert(process, job);
 
     process->setProcessChannelMode(QProcess::MergedChannels);
-    process->setProcessEnvironment(environment());
+    process->setProcessEnvironment(env);
     process->setWorkingDirectory(workingDirectory.isEmpty() ? QDir::homePath() : workingDirectory);
     process->setStandardInputFile(QProcess::nullDevice());  // nothing may wait for keyboard input
-    process->setUnixProcessParameters(kProcessFlags);
+    process::configureChild(*process);
 
     connect(process, &QProcess::readyReadStandardOutput, this, [process, job] {
         job->output.append(process->readAllStandardOutput());
@@ -152,12 +179,12 @@ void LocalCommandRunner::run(const QString &command, const QString &workingDirec
     timeout->setSingleShot(true);
     connect(timeout, &QTimer::timeout, process, [process, job] {
         job->timedOut = true;
-        signalGroup(process->processId(), SIGTERM);
-        QTimer::singleShot(kKillGraceMs, process, [process] { signalGroup(process->processId(), SIGKILL); });
+        terminateTree(process->processId(), false);
+        QTimer::singleShot(kKillGraceMs, process, [process] { terminateTree(process->processId(), true); });
     });
     timeout->start(timeoutMs);
 
-    process->start(argv.first(), argv.mid(1));
+    process->start(program, arguments);
 }
 
 Result<qint64> LocalCommandRunner::startDetached(const QString &command, const QString &workingDirectory) {
@@ -171,7 +198,7 @@ Result<qint64> LocalCommandRunner::startDetached(const QString &command, const Q
     process.setStandardInputFile(QProcess::nullDevice());
     process.setStandardOutputFile(QProcess::nullDevice());
     process.setStandardErrorFile(QProcess::nullDevice());
-    process.setUnixProcessParameters(kProcessFlags);
+    process::configureChild(process);
     qint64 pid = 0;
     if (!process.startDetached(&pid)) {
         return Error{ErrorCode::NotFound, u"Cannot start \"%1\": %2"_s.arg(argv.first(), process.errorString())};
@@ -183,8 +210,8 @@ void LocalCommandRunner::cancelAll() {
     for (auto it = jobs_.begin(); it != jobs_.end(); ++it) {
         QProcess *process = it.key();
         it.value()->cancelled = true;
-        signalGroup(process->processId(), SIGTERM);
-        QTimer::singleShot(kKillGraceMs, process, [process] { signalGroup(process->processId(), SIGKILL); });
+        terminateTree(process->processId(), false);
+        QTimer::singleShot(kKillGraceMs, process, [process] { terminateTree(process->processId(), true); });
     }
 }
 

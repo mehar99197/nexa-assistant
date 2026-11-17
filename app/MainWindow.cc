@@ -1,4 +1,6 @@
 #include "app/MainWindow.h"
+#include "core/account/AccountManager.h"
+#include "core/account/UpdateChecker.h"
 #include "voice/EngineLocator.h"
 #include "system/setup/EngineAssets.h"
 #include "system/setup/AssetDownloader.h"
@@ -634,6 +636,17 @@ void MainWindow::buildStatusBar() {
     });
     statusBar()->addWidget(signInButton_);
 
+    accountButton_ = new QToolButton(this);
+    accountButton_->setObjectName(u"accountRequired"_s);
+    accountButton_->setText(tr("Account…"));
+    accountButton_->setToolTip(tr("Open Settings → Account to sign in or activate a Pro/Team licence"));
+    accountButton_->hide();
+    connect(accountButton_, &QToolButton::clicked, this, [this] {
+        accountButton_->hide();
+        openSettings(tr("Account"));
+    });
+    statusBar()->addWidget(accountButton_);
+
     appLabel_ = new QLabel(this);
     statusBar()->addPermanentWidget(appLabel_);
     showAppContext(controller_->appContextName(), controller_->appContextHint());
@@ -688,6 +701,29 @@ void MainWindow::buildStatusBar() {
         connect(status_.remote, &RemoteServer::runningChanged, this, &MainWindow::showRemote);
         connect(status_.remote, &RemoteServer::clientsChanged, this, &MainWindow::showRemote);
     }
+
+    planButton_ = new QToolButton(this);
+    planButton_->setObjectName(u"planPill"_s);
+    planButton_->setCursor(Qt::PointingHandCursor);
+    connect(planButton_, &QToolButton::clicked, this, [this] { openSettings(tr("Account")); });
+    statusBar()->addPermanentWidget(planButton_);
+    if (status_.account) {
+        connect(status_.account, &AccountManager::entitlementChanged, this, &MainWindow::showPlan);
+        connect(status_.account, &AccountManager::featuresChanged, this, &MainWindow::showPlan);
+        connect(status_.account, &AccountManager::statusChanged, this, &MainWindow::showPlan);
+    }
+    if (status_.updater) {
+        connect(status_.updater, &UpdateChecker::updateAvailable, this,
+                [this](const QString &version, const QString &, const QString &, const QString &) {
+                    pendingUpdateVersion_ = version;
+                    showPlan();
+                });
+        connect(status_.updater, &UpdateChecker::upToDate, this, [this] {
+            pendingUpdateVersion_.clear();
+            showPlan();
+        });
+    }
+    showPlan();
 }
 
 int MainWindow::missionColumnsFor(int width) {
@@ -821,6 +857,7 @@ void MainWindow::connectController() {
     connect(controller_, &AppController::providerChanged, this, [this](const QString &name) {
         providerLabel_->setText(name.isEmpty() ? tr("none") : name);
         if (signInButton_) signInButton_->hide();   // the providers were built again: it is asked again if still not signed in
+        if (accountButton_) accountButton_->hide();
     });
     connect(controller_, &AppController::modelsChanged, this, &MainWindow::showModels);
     // An empty list while a program lists its models reads as broken; say what is happening instead.
@@ -832,6 +869,7 @@ void MainWindow::connectController() {
     // Queued: the prompt is modal and must not run inside a network callback.
     connect(controller_, &AppController::apiKeyRequired, this, &MainWindow::promptForApiKey, Qt::QueuedConnection);
     connect(controller_, &AppController::signInRequired, this, &MainWindow::showSignInRequired);
+    connect(controller_, &AppController::accountRequired, this, &MainWindow::showAccountRequired);
 
     connect(controller_, &AppController::userMessageAccepted, this,
             [this](const QString &text, const QString &source, const QString &attachments) {
@@ -886,6 +924,7 @@ void MainWindow::connectController() {
             applyDesign(design);
             NexaTheme::apply(qApp, pack_.tokens, pack_.style, design_, pack_.chrome);
             refreshTheme();
+            emit visualChanged();
         }
     });
 
@@ -1126,6 +1165,7 @@ void MainWindow::applyPack(const ThemePack &pack) {
     pack_ = pack;
     NexaTheme::apply(qApp, pack_.tokens, pack_.style, design_, pack_.chrome);
     refreshTheme();
+    emit visualChanged();
 }
 
 void MainWindow::refreshTheme() {
@@ -1151,6 +1191,7 @@ void MainWindow::wear(const QString &palette, const QString &design) {
     pack_ = pack;
     NexaTheme::apply(qApp, pack_.tokens, pack_.style, design_, pack_.chrome);
     refreshTheme();
+    emit visualChanged();
 }
 
 void MainWindow::snapshotSettings(const QString &directory, std::function<void()> done) {
@@ -1186,6 +1227,40 @@ void MainWindow::showSignInRequired(const QString &providerName) {
     // controller's note or the failed reply); the status bar gets the way to the button.
     showStatus(tr("%1 is not signed in — Settings → Providers → Sign in.").arg(providerName), true);
     signInButton_->show();
+}
+
+void MainWindow::showAccountRequired(const QString &message) {
+    showStatus(message, true);
+    if (accountButton_) accountButton_->show();
+}
+
+void MainWindow::showPlan() {
+    if (!planButton_) return;
+    QString label = tr("Free");
+    QString tip = tr("Free plan — click to sign in, activate a Pro/Team licence, or configure local API.");
+    if (status_.account) {
+        const QString plan = status_.account->plan().trimmed().toLower();
+        if (plan == u"team"_s) {
+            label = tr("TEAM");
+        } else if (plan == u"pro"_s) {
+            label = tr("PRO");
+        } else if (!plan.isEmpty() && plan != u"free"_s) {
+            label = plan.toUpper();
+        }
+        tip = status_.account->status();
+        const Entitlements ent = status_.account->verifiedFeatures();
+        if (ent.nexaAi && status_.account->aiUsage().known) {
+            tip += u"\n"_s + tr("Nexa AI: %1/%2 remaining this month")
+                                 .arg(status_.account->aiUsage().remaining)
+                                 .arg(status_.account->aiUsage().limit);
+        }
+    }
+    if (!pendingUpdateVersion_.isEmpty()) {
+        label += tr(" · Update v%1").arg(pendingUpdateVersion_);
+        tip += u"\n"_s + tr("Signed update %1 is available (click to open Settings → Account).").arg(pendingUpdateVersion_);
+    }
+    planButton_->setText(label);
+    planButton_->setToolTip(tip);
 }
 
 void MainWindow::showModels(const QStringList &models, const QString &current) {

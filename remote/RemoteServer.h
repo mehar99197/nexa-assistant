@@ -1,6 +1,7 @@
 #pragma once
 
 #include "core/Result.h"
+#include "remote/RemoteProtocol.h"
 #include "remote/RemoteRoutes.h"
 
 #include <QByteArray>
@@ -67,6 +68,8 @@ public:
     // changes, so a phone away from home still knows where to knock.
     void setRoutes(const QList<RemoteRoute> &routes);
     QList<RemoteRoute> routes() const { return routes_; }
+    void setTheme(const remote::ThemeStyle &theme);
+    const remote::ThemeStyle &theme() const { return theme_; }
     int tunnelClientCount() const;      // phones connected through a tunnel
     QString fingerprint() const;
     QString problem() const { return problem_; }
@@ -80,7 +83,8 @@ public:
 
 public slots:
     // The conversation, from AppController (wired in app/main.cc).
-    void onUserMessage(const QString &text);
+    void onUserMessage(const QString &text, const QString &attachments = {});
+    void onUserMessageFrom(const QString &text, const QString &source, const QString &attachments = {});
     void onReplyStarted(const QString &source);
     void onReplyDelta(const QString &delta);
     void onReplyStep(const QString &description, bool ok);
@@ -112,6 +116,7 @@ private:
     void handleText(RemoteSession *session, const QString &text);
     void handleAudio(RemoteSession *session, const QByteArray &pcm);
     QHttpServerResponse pairRoute(const QHttpServerRequest &request);
+    QHttpServerResponse uploadRoute(const QHttpServerRequest &request);
     QHttpServerResponse staticFile(const QString &name) const;
     QHttpServerResponse speechRoute(const QString &file);
     bool allowPairingAttempt(const QHostAddress &from);
@@ -133,6 +138,7 @@ private:
     QPointer<RemoteSession> speaker_;                   // whose spoken request the reply answers
     QString lanAddress_;
     QList<RemoteRoute> routes_;
+    remote::ThemeStyle theme_;
     QString problem_;
     QString mode_{QStringLiteral("idle")};              // the core's state, told to a phone as it connects
     QStringList litNodes_;

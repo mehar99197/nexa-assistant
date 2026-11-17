@@ -7,7 +7,7 @@
 #include <QDir>
 #include <QHostInfo>
 #include <QRegularExpression>
-#include <QStandardPaths>
+#include "core/config/Portable.h"
 
 using namespace Qt::StringLiterals;
 
@@ -42,13 +42,19 @@ RemoteAccess::~RemoteAccess() {
 
 QString RemoteAccess::tunnelProgram(const QString &name) {
     if (const QString found = findProgram(name); !found.isEmpty()) return found;
-    const QString own = QStandardPaths::writableLocation(QStandardPaths::GenericDataLocation) + u"/nexa/tunnels"_s;
+    const QString own = portable::dataDir() + u"/tunnels"_s;
     return findProgramIn(name, {own});
+}
+
+void RemoteAccess::setEntitled(bool entitled) {
+    if (entitled_ == entitled) return;
+    entitled_ = entitled;
+    apply(config_);
 }
 
 void RemoteAccess::apply(const RemoteConfig &config) {
     config_ = config;
-    const bool on = config.enabled && server_->isRunning();
+    const bool on = entitled_ && config.enabled && server_->isRunning();
     tailscale_->setWatched(on && config.tailscale);
     if (!on) {
         stopAll();
@@ -91,25 +97,31 @@ void RemoteAccess::rebuildRoutes() {
     if (server_->isRunning()) {
         routes.append({RemoteRoute::Kind::Adb, server_->localUrl()});
         if (const QString lan = server_->lanUrl(); !lan.isEmpty()) routes.append({RemoteRoute::Kind::Lan, lan});
-        const tunnellog::TailscaleState state = tailscale_->state();
-        // Over Tailscale the phone talks to Nexa's own HTTPS, so only while that runs.
-        if (config_.tailscale && state.signedIn && !server_->fingerprint().isEmpty()) {
-            // The address first: it needs no Tailscale DNS on the phone; the name is the same place, for a browser.
-            if (!state.ipv4.isEmpty()) {
-                routes.append({RemoteRoute::Kind::Tailscale, u"https://%1:%2"_s.arg(state.ipv4).arg(server_->port())});
+        if (entitled_) {
+            const tunnellog::TailscaleState state = tailscale_->state();
+            // Over Tailscale the phone talks to Nexa's own HTTPS, so only while that runs.
+            if (config_.tailscale && state.signedIn && !server_->fingerprint().isEmpty()) {
+                // The address first: it needs no Tailscale DNS on the phone; the name is the same place, for a browser.
+                if (!state.ipv4.isEmpty()) {
+                    routes.append({RemoteRoute::Kind::Tailscale, u"https://%1:%2"_s.arg(state.ipv4).arg(server_->port())});
+                }
+                if (!state.dnsName.isEmpty()) {
+                    routes.append({RemoteRoute::Kind::Tailscale, u"https://%1:%2"_s.arg(state.dnsName).arg(server_->port())});
+                }
             }
-            if (!state.dnsName.isEmpty()) {
-                routes.append({RemoteRoute::Kind::Tailscale, u"https://%1:%2"_s.arg(state.dnsName).arg(server_->port())});
-            }
+            if (const QString url = cloudflare_->url(); !url.isEmpty()) routes.append({RemoteRoute::Kind::Cloudflare, url});
+            if (const QString url = ngrok_->url(); !url.isEmpty()) routes.append({RemoteRoute::Kind::Ngrok, url});
         }
-        if (const QString url = cloudflare_->url(); !url.isEmpty()) routes.append({RemoteRoute::Kind::Cloudflare, url});
-        if (const QString url = ngrok_->url(); !url.isEmpty()) routes.append({RemoteRoute::Kind::Ngrok, url});
     }
     server_->setRoutes(routes);
     emit changed();
 }
 
 QString RemoteAccess::describe(RemoteRoute::Kind kind) const {
+    if (!entitled_ && (kind == RemoteRoute::Kind::Tailscale || kind == RemoteRoute::Kind::Cloudflare ||
+                       kind == RemoteRoute::Kind::Ngrok)) {
+        return tr("Requires a Pro or Team plan (Settings → Account).");
+    }
     const bool on = config_.enabled && server_->isRunning();
     const auto tunnelState = [on](const TunnelProcess *tunnel, bool wanted) {
         if (!wanted) return tr("Off.");

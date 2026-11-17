@@ -2,6 +2,7 @@
 // ever started here, and nothing signs in or out of anything real.
 
 #include "core/ai/CodexSignIn.h"
+#include "core/ProcessUtils.h"
 
 #include "QtStringMakers.h"
 
@@ -15,7 +16,9 @@
 
 #include <catch2/catch_test_macros.hpp>
 
+#ifdef Q_OS_UNIX
 #include <signal.h>
+#endif
 
 #include <functional>
 #include <optional>
@@ -70,7 +73,13 @@ struct CodexRig {
         return starts.isEmpty() ? 0 : qint64(starts.first().value(u"pid"_s).toInteger());
     }
 
-    QString program() const { return QStringLiteral(NEXA_TESTS_DIR "/fake-codex/codex"); }
+    QString program() const {
+#ifdef Q_OS_WIN
+        return QStringLiteral(NEXA_TESTS_DIR "/fake-codex/codex.cmd");
+#else
+        return QStringLiteral(NEXA_TESTS_DIR "/fake-codex/codex");
+#endif
+    }
     QString workingDir() const { return dir.filePath(u"work"_s); }
 
     QTemporaryDir dir;
@@ -105,7 +114,7 @@ struct Heard {
     std::optional<Error> error;
 };
 
-bool alive(qint64 pid) { return pid > 0 && ::kill(pid_t(pid), 0) == 0; }
+bool alive(qint64 pid) { return process::isAlive(pid); }
 
 QStringList g_logged;
 void collect(QtMsgType, const QMessageLogContext &, const QString &message) { g_logged.append(message); }
@@ -158,7 +167,9 @@ TEST_CASE("The server is started without Codex's own tools, in its own folder, a
     CHECK(argv.contains(u"shell_tool"_s));
     CHECK(argv.contains(u"web_search=\"disabled\""_s));
     CHECK(starts.first().value(u"cwd"_s).toString().startsWith(rig.workingDir()));
+#ifdef Q_OS_UNIX
     CHECK(starts.first().value(u"pdeathsig"_s).toInt() == SIGKILL);
+#endif
     // The user's CODEX_HOME is left as it is: the sign-in is the owner's.
     CHECK(starts.first().value(u"codexHome"_s).toString() == qEnvironmentVariable("CODEX_HOME"));
     CHECK(QTest::qWaitFor([&] { return !alive(rig.pid()); }, kWaitMs));

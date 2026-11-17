@@ -10,8 +10,7 @@
 #include <QJsonValue>
 #include <QPointer>
 
-#include <signal.h>
-#include <sys/prctl.h>
+#include "core/ProcessUtils.h"
 
 using namespace Qt::StringLiterals;
 
@@ -23,13 +22,8 @@ constexpr int kIdleStopMs = 10 * 60 * 1000;
 constexpr int kInterruptGraceMs = 3'000;
 constexpr qsizetype kStderrKept = 4'096;
 
-constexpr auto kProcessFlags = QProcess::UnixProcessFlag::CreateNewSession
-    | QProcess::UnixProcessFlag::ResetSignalHandlers | QProcess::UnixProcessFlag::CloseFileDescriptors;
-
-// The process leads its own session, so -pid reaches Codex and anything it started.
 void killGroup(qint64 pid) {
-    if (pid <= 0) return;
-    if (::kill(pid_t(-pid), SIGKILL) != 0) ::kill(pid_t(pid), SIGKILL);
+    process::killTree(pid);
 }
 
 void makePrivateDir(const QString &path) {
@@ -93,10 +87,7 @@ void CodexConnection::start() {
     process_.setProcessEnvironment(environmentFor(program_));     // an npm install's node beside it (nvm)
     process_.setArguments(CodexProtocol::serverArguments());
     process_.setWorkingDirectory(workspace(workingDir_));
-    process_.setUnixProcessParameters(kProcessFlags);
-    // Its own session takes it out of reach of the terminal's hangup: tie it to Nexa instead, so a crash of
-    // Nexa does not leave Codex running.
-    process_.setChildProcessModifier([] { ::prctl(PR_SET_PDEATHSIG, SIGKILL); });
+    process::configureChild(process_);
     qCInfo(lcAi) << "starting codex app-server";
     handshakeTimer_.start(handshakeTimeoutMs_);
     process_.start();

@@ -210,8 +210,12 @@ TEST_CASE("ConfigStore keeps the file and its directory private") {
     const QFileDevice::Permissions file = QFileInfo(path).permissions();
     CHECK(file.testFlag(QFileDevice::ReadOwner));
     CHECK(file.testFlag(QFileDevice::WriteOwner));
+#ifdef Q_OS_UNIX
     CHECK_FALSE(file.testAnyFlags(kGroupOrOther));
     CHECK_FALSE(QFileInfo(QFileInfo(path).absolutePath()).permissions().testAnyFlags(kGroupOrOther));
+#else
+    Q_UNUSED(kGroupOrOther);
+#endif
 }
 
 TEST_CASE("ConfigStore reports malformed JSON, leaves the file alone and can move it aside") {
@@ -292,7 +296,9 @@ TEST_CASE("A save that removes providers keeps the settings from before it, priv
 
     REQUIRE(store.save(withProviders({u"opencode"_s})).isOk());
     REQUIRE(QFile::exists(store.previousPath()));
+#ifdef Q_OS_UNIX
     CHECK_FALSE(QFileInfo(store.previousPath()).permissions().testAnyFlags(kGroupOrOther));
+#endif
     const Result<Config> previous = ConfigStore(store.previousPath()).load();
     REQUIRE(previous.isOk());
     CHECK(idsIn(previous.value()) == QStringList{u"opencode"_s, u"agy"_s, u"codex"_s});

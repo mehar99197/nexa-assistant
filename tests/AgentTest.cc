@@ -118,7 +118,9 @@ TEST_CASE("Agent runs tool calls, feeds the results back and audits them") {
     CHECK(entry.value(u"tool"_s).toString() == u"echo"_s);
     CHECK(entry.value(u"source"_s).toString() == u"gui"_s);
     CHECK(entry.value(u"ok"_s).toBool());
+#ifdef Q_OS_UNIX
     CHECK((QFile::permissions(f.audit.path()) & (QFileDevice::ReadOther | QFileDevice::ReadGroup)) == 0);
+#endif
 }
 
 TEST_CASE("Agent reports bad arguments and unknown tools to the model and continues") {

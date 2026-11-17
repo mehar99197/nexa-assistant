@@ -1,11 +1,19 @@
 #include "system/media/MprisController.h"
 
+#include <QHash>
+#include <QStringList>
+
+#ifdef Q_OS_UNIX
 #include <QDBusMessage>
 #include <QDBusPendingCallWatcher>
 #include <QDBusPendingReply>
 #include <QDBusVariant>
-#include <QHash>
-#include <QStringList>
+#elif defined(Q_OS_WIN)
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+#include <windows.h>
+#endif
 
 #include <memory>
 
@@ -15,6 +23,7 @@ namespace nexa {
 
 namespace {
 
+#ifdef Q_OS_UNIX
 constexpr int kTimeoutMs = 3'000;
 const QString kPrefix = u"org.mpris.MediaPlayer2."_s;
 const QString kPath = u"/org/mpris/MediaPlayer2"_s;
@@ -23,6 +32,7 @@ const QString kPlayerInterface = u"org.mpris.MediaPlayer2.Player"_s;
 QString identity(const QString &player) {
     return player.mid(kPrefix.size()).section(u'.', 0, 0);  // "firefox.instance_1_74" → "firefox"
 }
+#endif
 
 QString pastTense(MprisController::Action action) {
     switch (action) {
@@ -38,7 +48,11 @@ QString pastTense(MprisController::Action action) {
 
 } // namespace
 
+#ifdef Q_OS_UNIX
 MprisController::MprisController(QDBusConnection bus, QObject *parent) : QObject(parent), bus_(std::move(bus)) {}
+#else
+MprisController::MprisController(QObject *parent) : QObject(parent) {}
+#endif
 
 std::optional<MprisController::Action> MprisController::actionFromString(const QString &name) {
     const QString action = name.trimmed().toLower();
@@ -64,6 +78,7 @@ QString MprisController::methodName(Action action) {
 }
 
 void MprisController::control(Action action, Done done) {
+#ifdef Q_OS_UNIX
     const QDBusMessage list = QDBusMessage::createMethodCall(u"org.freedesktop.DBus"_s, u"/org/freedesktop/DBus"_s,
                                                              u"org.freedesktop.DBus"_s, u"ListNames"_s);
     auto *watcher = new QDBusPendingCallWatcher(bus_.asyncCall(list, kTimeoutMs), this);
@@ -85,8 +100,42 @@ void MprisController::control(Action action, Done done) {
         }
         choosePlayer(players, action, done);
     });
+#elif defined(Q_OS_WIN)
+    WORD vk = 0;
+    switch (action) {
+    case Action::Play:
+    case Action::Pause:
+    case Action::Toggle:
+        vk = VK_MEDIA_PLAY_PAUSE;
+        break;
+    case Action::Next:
+        vk = VK_MEDIA_NEXT_TRACK;
+        break;
+    case Action::Previous:
+        vk = VK_MEDIA_PREV_TRACK;
+        break;
+    case Action::Stop:
+        vk = VK_MEDIA_STOP;
+        break;
+    }
+    INPUT in[2]{};
+    in[0].type = INPUT_KEYBOARD;
+    in[0].ki.wVk = vk;
+    in[0].ki.dwFlags = KEYEVENTF_EXTENDEDKEY;
+    in[1] = in[0];
+    in[1].ki.dwFlags = KEYEVENTF_EXTENDEDKEY | KEYEVENTF_KEYUP;
+    const UINT sent = ::SendInput(2, in, sizeof(INPUT));
+    if (sent != 2) {
+        done(Error{ErrorCode::Io, u"Windows refused media key input (error %1)"_s.arg(::GetLastError())});
+        return;
+    }
+    done(u"%1 Windows media playback"_s.arg(pastTense(action)));
+#else
+    done(Error{ErrorCode::NotSupported, u"Media control is not available on this platform (%1)"_s.arg(pastTense(action))});
+#endif
 }
 
+#ifdef Q_OS_UNIX
 void MprisController::choosePlayer(const QStringList &players, Action action, Done done) {
     struct Survey {
         QStringList players;
@@ -133,5 +182,6 @@ void MprisController::send(const QString &player, Action action, Done done) {
         done(u"%1 %2"_s.arg(pastTense(action), identity(player)));
     });
 }
+#endif
 
 } // namespace nexa

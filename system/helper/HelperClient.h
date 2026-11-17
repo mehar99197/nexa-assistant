@@ -10,10 +10,12 @@
 #include <map>
 #include <memory>
 
+#ifdef Q_OS_UNIX
 class HelperProxy;
 class QDBusError;
 class QDBusPendingCall;
 class QDBusServiceWatcher;
+#endif
 
 namespace nexa {
 
@@ -90,21 +92,27 @@ private:
         JobFinished finished;
     };
 
+#ifdef Q_OS_UNIX
     // The reply shapes the contract uses: nothing, a string, a flag, and RunCommand's job id.
     void awaitVoid(const QDBusPendingCall &call, Done done);
     void awaitString(const QDBusPendingCall &call, TextDone done);
     void awaitFlag(const QDBusPendingCall &call, FlagDone done);
+#endif
     void noteOutcome(bool failed, const Error &error);
 
     void onOutputChunk(qulonglong jobId, uchar stream, const QByteArray &data);
     void onFinished(qulonglong jobId, int exitCode, const QString &status);
     void onHelperGone();
+#ifdef Q_OS_UNIX
     // Turns a D-Bus failure into a Nexa error, naming the install script when nothing is there.
     Error errorFrom(const QDBusError &error) const;
+#endif
     void setReady(bool ready, const QString &reason);
 
+#ifdef Q_OS_UNIX
     std::unique_ptr<HelperProxy> proxy_;
     QDBusServiceWatcher *watcher_{nullptr};
+#endif
     std::map<quint64, Job> jobs_;
     QString unavailable_;
     bool ready_{false};

@@ -3,6 +3,7 @@
 #include "core/Logging.h"
 #include "remote/RemoteClient.h"
 
+#include <QCoreApplication>
 #include <QDateTime>
 #include <QDir>
 #include <QFile>
@@ -10,10 +11,13 @@
 #include <QProcess>
 #include <QSslCertificate>
 #include <QSslKey>
+#include "core/config/Portable.h"
 #include <QStandardPaths>
 #include <QTimer>
 
+#ifdef Q_OS_UNIX
 #include <sys/stat.h>
+#endif
 
 #include <memory>
 
@@ -35,12 +39,33 @@ QString keyPath(const QString &directory) {
     return directory + u"/key.pem"_s;
 }
 
+QString opensslProgram() {
+#ifdef Q_OS_WIN
+    const QString appDir = QCoreApplication::applicationDirPath();
+    if (!appDir.isEmpty()) {
+        if (const QString bundled = QStandardPaths::findExecutable(u"openssl"_s, {appDir}); !bundled.isEmpty()) {
+            return bundled;
+        }
+    }
+    if (const QString onPath = QStandardPaths::findExecutable(u"openssl"_s); !onPath.isEmpty()) return onPath;
+    QStringList fallbacks;
+    for (const QString &root : {qEnvironmentVariable("ProgramFiles"), qEnvironmentVariable("ProgramFiles(x86)")}) {
+        if (!root.isEmpty()) {
+            fallbacks.append({root + u"/OpenSSL-Win64/bin"_s, root + u"/Git/usr/bin"_s, root + u"/Git/mingw64/bin"_s});
+        }
+    }
+    return QStandardPaths::findExecutable(u"openssl"_s, fallbacks);
+#else
+    return QStandardPaths::findExecutable(u"openssl"_s);
+#endif
+}
+
 } // namespace
 
 TlsIdentity::TlsIdentity(QString directory, QObject *parent) : QObject(parent), directory_(std::move(directory)) {}
 
 QString TlsIdentity::defaultDirectory() {
-    return QStandardPaths::writableLocation(QStandardPaths::GenericConfigLocation) + u"/nexa/tls"_s;
+    return portable::configDir() + u"/tls"_s;
 }
 
 Result<QSslConfiguration> TlsIdentity::load() {
@@ -72,14 +97,17 @@ void TlsIdentity::ensure(const QStringList &addresses, Done done) {
         done(std::move(loaded));
         return;
     }
-    if (QStandardPaths::findExecutable(u"openssl"_s).isEmpty()) {
+    const QString openssl = opensslProgram();
+    if (openssl.isEmpty()) {
         done(Error{ErrorCode::NotSupported, u"openssl is not installed, so the web remote cannot use HTTPS"_s});
         return;
     }
 
     const QByteArray directory = QFile::encodeName(directory_);
     QDir().mkpath(directory_);
+#ifdef Q_OS_UNIX
     ::chmod(directory.constData(), 0700);
+#endif
 
     const QString host = QHostInfo::localHostName();
     QStringList names{u"DNS:localhost"_s, u"IP:127.0.0.1"_s};
@@ -97,7 +125,9 @@ void TlsIdentity::ensure(const QStringList &addresses, Done done) {
     auto *process = new QProcess(this);
     process->setProcessChannelMode(QProcess::MergedChannels);
     // The key is the user's alone from the moment it exists, not tightened afterwards.
+#ifdef Q_OS_UNIX
     process->setChildProcessModifier([] { ::umask(077); });
+#endif
     auto *timeout = new QTimer(process);
     timeout->setSingleShot(true);
     auto answered = std::make_shared<bool>(false);
@@ -120,11 +150,12 @@ void TlsIdentity::ensure(const QStringList &addresses, Done done) {
             finish(Error{ErrorCode::Io, u"openssl could not make a certificate: %1"_s.arg(output.left(300))});
             return;
         }
+        QFile::setPermissions(keyPath(directory_), QFileDevice::ReadOwner | QFileDevice::WriteOwner);
         qCInfo(lcApp) << "remote: made a new certificate";
         finish(load());
     });
     timeout->start(kOpensslTimeoutMs);
-    process->start(u"openssl"_s, arguments);
+    process->start(openssl, arguments);
 }
 
 } // namespace nexa

@@ -3,11 +3,25 @@
 #include <QCoreApplication>
 #include <QDir>
 #include <QFile>
+#include <QThread>
 #include <QHash>
 #include <QList>
 #include <QThread>
 
+#ifdef Q_OS_UNIX
 #include <unistd.h>
+#elif defined(Q_OS_WIN)
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+#include <windows.h>
+#include <psapi.h>
+#include <tlhelp32.h>
+#include <queue>
+#include <unordered_map>
+#include <unordered_set>
+#include <vector>
+#endif
 
 #include <algorithm>
 
@@ -37,6 +51,73 @@ std::optional<ProcStat> ProcessStats::parseStat(const QByteArray &line) {
 }
 
 ProcessStats::Sample ProcessStats::sample() {
+#ifdef Q_OS_WIN
+    Sample result;
+    const DWORD selfPid = ::GetCurrentProcessId();
+    std::unordered_map<DWORD, std::vector<DWORD>> children;
+    HANDLE snap = ::CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
+    if (snap != INVALID_HANDLE_VALUE) {
+        PROCESSENTRY32W entry{};
+        entry.dwSize = sizeof(entry);
+        if (::Process32FirstW(snap, &entry)) {
+            do {
+                children[entry.th32ParentProcessID].push_back(entry.th32ProcessID);
+            } while (::Process32NextW(snap, &entry));
+        }
+        ::CloseHandle(snap);
+    }
+
+    std::queue<DWORD> pending;
+    std::unordered_set<DWORD> seen;
+    pending.push(selfPid);
+    seen.insert(selfPid);
+    qint64 totalTicks = 0;
+
+    while (!pending.empty()) {
+        const DWORD pid = pending.front();
+        pending.pop();
+        ++result.processes;
+
+        HANDLE h = ::OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION | PROCESS_VM_READ, FALSE, pid);
+        if (!h) h = ::OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, FALSE, pid);
+        if (h) {
+            PROCESS_MEMORY_COUNTERS pmc{};
+            if (::GetProcessMemoryInfo(h, &pmc, sizeof(pmc))) {
+                result.residentBytes += static_cast<qint64>(pmc.WorkingSetSize);
+            }
+            FILETIME c{}, e{}, k{}, u{};
+            if (::GetProcessTimes(h, &c, &e, &k, &u)) {
+                ULARGE_INTEGER ki{}, ui{};
+                ki.LowPart = k.dwLowDateTime;
+                ki.HighPart = k.dwHighDateTime;
+                ui.LowPart = u.dwLowDateTime;
+                ui.HighPart = u.dwHighDateTime;
+                totalTicks += static_cast<qint64>(ki.QuadPart + ui.QuadPart);
+            }
+            ::CloseHandle(h);
+        }
+
+        if (const auto it = children.find(pid); it != children.end()) {
+            for (const DWORD child : it->second) {
+                if (seen.insert(child).second) pending.push(child);
+            }
+        }
+    }
+
+    if (!wall_.isValid()) {
+        wall_.start();
+        lastTicks_ = totalTicks;
+    } else {
+        const qint64 elapsedMs = wall_.restart();
+        if (lastTicks_ >= 0 && elapsedMs > 0) {
+            const qint64 delta = qMax<qint64>(0, totalTicks - lastTicks_);
+            const double capacity = double(elapsedMs) * 10'000.0 * double(qMax(1, QThread::idealThreadCount()));
+            result.cpuPercent = qBound(0.0, (double(delta) / capacity) * 100.0, 100.0);
+        }
+        lastTicks_ = totalTicks;
+    }
+    return result;
+#elif defined(Q_OS_UNIX)
     // Every process, then the ones descended from Nexa.
     QHash<int, ProcStat> all;
     QHash<int, QList<int>> children;
@@ -77,6 +158,9 @@ ProcessStats::Sample ProcessStats::sample() {
     lastTicks_ = ticks;
     wall_.start();
     return sample;
+#else
+    return {};
+#endif
 }
 
 } // namespace nexa

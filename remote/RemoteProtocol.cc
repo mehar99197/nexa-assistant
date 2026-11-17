@@ -20,6 +20,62 @@ QByteArray message(const QString &type, QJsonObject fields = {}) {
     return QJsonDocument(fields).toJson(QJsonDocument::Compact);
 }
 
+QJsonObject encodeTheme(const ThemeStyle &s) {
+    QJsonObject obj{
+        {u"themeId"_s, s.themeId},
+        {u"designId"_s, s.designId},
+        {u"ground"_s, s.ground},
+        {u"panel"_s, s.panel},
+        {u"panelRaised"_s, s.panelRaised},
+        {u"line"_s, s.line},
+        {u"text"_s, s.text},
+        {u"muted"_s, s.muted},
+        {u"idle"_s, s.idle},
+        {u"wake"_s, s.wake},
+        {u"listen"_s, s.listen},
+        {u"stt"_s, s.stt},
+        {u"think"_s, s.think},
+        {u"act"_s, s.act},
+        {u"speak"_s, s.speak},
+        {u"fast"_s, s.fast},
+        {u"error"_s, s.error},
+        {u"onAccent"_s, s.onAccent},
+        {u"fontFace"_s, s.fontFace},
+        {u"bubbleStyle"_s, s.bubbleStyle},
+        {u"radius"_s, s.radius},
+    };
+    return obj;
+}
+
+std::optional<ThemeStyle> decodeTheme(const QJsonValue &val) {
+    if (!val.isObject()) return std::nullopt;
+    const QJsonObject o = val.toObject();
+    ThemeStyle s;
+    s.themeId = o.value(u"themeId"_s).toString();
+    s.designId = o.value(u"designId"_s).toString();
+    s.ground = o.value(u"ground"_s).toString();
+    s.panel = o.value(u"panel"_s).toString();
+    s.panelRaised = o.value(u"panelRaised"_s).toString();
+    s.line = o.value(u"line"_s).toString();
+    s.text = o.value(u"text"_s).toString();
+    s.muted = o.value(u"muted"_s).toString();
+    s.idle = o.value(u"idle"_s).toString();
+    s.wake = o.value(u"wake"_s).toString();
+    s.listen = o.value(u"listen"_s).toString();
+    s.stt = o.value(u"stt"_s).toString();
+    s.think = o.value(u"think"_s).toString();
+    s.act = o.value(u"act"_s).toString();
+    s.speak = o.value(u"speak"_s).toString();
+    s.fast = o.value(u"fast"_s).toString();
+    s.error = o.value(u"error"_s).toString();
+    s.onAccent = o.value(u"onAccent"_s).toString();
+    s.fontFace = o.value(u"fontFace"_s).toString();
+    s.bubbleStyle = o.value(u"bubbleStyle"_s).toString();
+    s.radius = o.value(u"radius"_s).toInt(10);
+    if (s.isEmpty()) return std::nullopt;
+    return s;
+}
+
 } // namespace
 
 std::optional<ClientMessage> decode(QByteArrayView frame) {
@@ -62,12 +118,17 @@ std::optional<ClientMessage> decode(QByteArrayView frame) {
 }
 
 QByteArray welcome(const QString &device, bool voice, bool busy, const QString &mode, const QList<RemoteRoute> &routes,
-                   const QString &fingerprint) {
+                   const QString &fingerprint, const std::optional<ThemeStyle> &themeStyle) {
     QJsonObject fields{{u"version"_s, kVersion}, {u"device"_s, device}, {u"voice"_s, voice}, {u"busy"_s, busy}};
     if (!mode.isEmpty()) fields.insert(u"mode"_s, mode);
     if (!routes.isEmpty()) fields.insert(u"routes"_s, encodeRoutes(routes));
     if (!fingerprint.isEmpty()) fields.insert(u"fingerprint"_s, fingerprint);
+    if (themeStyle && !themeStyle->isEmpty()) fields.insert(u"theme"_s, encodeTheme(*themeStyle));
     return message(u"welcome"_s, fields);
+}
+
+QByteArray theme(const ThemeStyle &style) {
+    return message(u"theme"_s, {{u"theme"_s, encodeTheme(style)}});
 }
 
 QByteArray routes(const QList<RemoteRoute> &list) {
@@ -78,8 +139,10 @@ QByteArray state(const QString &mode, const QStringList &nodes) {
     return message(u"state"_s, {{u"mode"_s, mode}, {u"nodes"_s, QJsonArray::fromStringList(nodes)}});
 }
 
-QByteArray accepted(const QString &text, const QString &source) {
-    return message(u"accepted"_s, {{u"text"_s, text}, {u"source"_s, source}});
+QByteArray accepted(const QString &text, const QString &source, const QString &attachments) {
+    QJsonObject fields{{u"text"_s, text}, {u"source"_s, source}};
+    if (!attachments.isEmpty()) fields.insert(u"attachments"_s, attachments);
+    return message(u"accepted"_s, fields);
 }
 
 QByteArray delta(const QString &text) {
@@ -144,7 +207,7 @@ std::optional<ServerMessage> decodeServer(QByteArrayView frame) {
         {u"transcript"_s, Type::Transcript}, {u"speech"_s, Type::Speech}, {u"busy"_s, Type::Busy},
         {u"error"_s, Type::Error},       {u"pong"_s, Type::Pong},         {u"state"_s, Type::State},
         {u"lock"_s, Type::Lock},         {u"approval"_s, Type::Approval}, {u"settled"_s, Type::Settled},
-        {u"routes"_s, Type::Routes},
+        {u"routes"_s, Type::Routes},     {u"theme"_s, Type::Theme},
     };
     const auto type = types.constFind(object.value(u"t"_s).toString());
     if (type == types.cend()) return std::nullopt;
@@ -153,6 +216,7 @@ std::optional<ServerMessage> decodeServer(QByteArrayView frame) {
     parsed.type = *type;
     parsed.text = object.value(u"text"_s).toString();
     parsed.source = object.value(u"source"_s).toString();
+    parsed.attachments = object.value(u"attachments"_s).toString();
     parsed.device = object.value(u"device"_s).toString();
     parsed.reason = object.value(u"reason"_s).toString();
     parsed.url = object.value(u"url"_s).toString();
@@ -169,6 +233,7 @@ std::optional<ServerMessage> decodeServer(QByteArrayView frame) {
     parsed.allow = object.value(u"allow"_s).toBool();
     parsed.routes = decodeRoutes(object.value(u"routes"_s).toArray());
     parsed.fingerprint = object.value(u"fingerprint"_s).toString();
+    parsed.theme = decodeTheme(object.value(u"theme"_s));
     for (const QJsonValue &node : object.value(u"nodes"_s).toArray()) {
         if (node.isString()) parsed.nodes.append(node.toString());
     }

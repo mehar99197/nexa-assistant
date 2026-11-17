@@ -5,7 +5,7 @@
 
 #include <QJsonObject>
 #include <QPointer>
-#include <QStandardPaths>
+#include "core/config/Portable.h"
 
 using namespace Qt::StringLiterals;
 
@@ -20,7 +20,7 @@ constexpr int kCancelGraceMs = 1'000;
 CodexSignIn::CodexSignIn(QString program, QString workingDir, QObject *parent)
     : ISignIn(parent), program_(std::move(program)), workingDir_(std::move(workingDir)) {
     if (workingDir_.isEmpty()) {
-        workingDir_ = QStandardPaths::writableLocation(QStandardPaths::GenericCacheLocation) + u"/nexa/codex"_s;
+        workingDir_ = portable::cacheDir() + u"/codex"_s;
     }
     timer_.setSingleShot(true);
     connect(&timer_, &QTimer::timeout, this, [this] {

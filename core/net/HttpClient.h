@@ -43,8 +43,12 @@ public:
     // Best-effort human message from an error body ({"error":{"message":…}}, {"error":"…"}, …).
     static QString serverMessage(const QByteArray &body);
 
+signals:
+    void nexaRemaining(int remaining);
+
 private:
     QNetworkReply *deliver(QNetworkReply *reply, QObject *context, BodyCallback done);
+    void watchNexaHeaders(QNetworkReply *reply);
 
     QNetworkAccessManager manager_;
 };

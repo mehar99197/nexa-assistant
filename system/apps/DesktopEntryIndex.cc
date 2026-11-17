@@ -69,7 +69,7 @@ QString normalizeQuery(const QString &query) {
 }
 
 bool executableExists(const QString &program) {
-    if (program.startsWith(u'/')) return QFileInfo(program).isExecutable();
+    if (QDir::isAbsolutePath(program)) return QFileInfo(program).isExecutable();
     return !QStandardPaths::findExecutable(program).isEmpty();
 }
 
@@ -110,20 +110,30 @@ void DesktopEntryIndex::refreshNow() {
 }
 
 QStringList DesktopEntryIndex::defaultDataDirs() {
+#ifdef Q_OS_WIN
+    QStringList dirs = QStandardPaths::standardLocations(QStandardPaths::ApplicationsLocation);
+    const QString programData = qEnvironmentVariable("ProgramData");
+    if (!programData.isEmpty()) dirs.append(programData + u"/Microsoft/Windows/Start Menu/Programs"_s);
+#else
     QStringList dirs{QStandardPaths::writableLocation(QStandardPaths::GenericDataLocation)};
     QString system = qEnvironmentVariable("XDG_DATA_DIRS");
     if (system.isEmpty()) system = u"/usr/local/share:/usr/share"_s;
     dirs += system.split(u':', Qt::SkipEmptyParts);
+#endif
     QStringList cleaned;
     for (const QString &dir : std::as_const(dirs)) {
         const QString path = QDir::cleanPath(dir);
-        if (!cleaned.contains(path)) cleaned.append(path);
+        if (!path.isEmpty() && !cleaned.contains(path)) cleaned.append(path);
     }
     return cleaned;
 }
 
 QStringList DesktopEntryIndex::currentDesktops() {
+#ifdef Q_OS_WIN
+    return {u"Windows"_s};
+#else
     return qEnvironmentVariable("XDG_CURRENT_DESKTOP").split(u':', Qt::SkipEmptyParts);
+#endif
 }
 
 QList<DesktopEntry> DesktopEntryIndex::scan(const QStringList &dataDirs, const QStringList &desktops,
@@ -132,25 +142,51 @@ QList<DesktopEntry> DesktopEntryIndex::scan(const QStringList &dataDirs, const Q
     QSet<QString> seenIds;
     for (const QString &dataDir : dataDirs) {
         const QString base = dataDir + u"/applications"_s;
-        if (!QFileInfo(base).isDir()) continue;
-        QDirIterator it(base, {u"*.desktop"_s}, QDir::Files, QDirIterator::Subdirectories | QDirIterator::FollowSymlinks);
-        QStringList paths;
-        while (it.hasNext()) paths.append(it.next());
-        paths.sort();
-        for (const QString &path : std::as_const(paths)) {
-            const QString id = QDir(base).relativeFilePath(path).replace(u'/', u'-');
-            // A higher-priority directory owns the ID even when it hides the entry (Hidden=true).
-            if (seenIds.contains(id)) continue;
-            seenIds.insert(id);
+        if (QFileInfo(base).isDir()) {
+            QDirIterator it(base, {u"*.desktop"_s}, QDir::Files, QDirIterator::Subdirectories | QDirIterator::FollowSymlinks);
+            QStringList paths;
+            while (it.hasNext()) paths.append(it.next());
+            paths.sort();
+            for (const QString &path : std::as_const(paths)) {
+                const QString id = QDir(base).relativeFilePath(path).replace(u'/', u'-');
+                // A higher-priority directory owns the ID even when it hides the entry (Hidden=true).
+                if (seenIds.contains(id)) continue;
+                seenIds.insert(id);
 
-            QFile file(path);
-            if (file.size() > kMaxDesktopFileSize || !file.open(QIODevice::ReadOnly)) continue;
-            std::optional<DesktopEntry> entry = DesktopEntry::parse(file.readAll(), id, path, locales);
-            if (!entry || entry->noDisplay || !entry->isShownIn(desktops)) continue;
-            if (entry->exec.isEmpty() && !entry->dbusActivatable) continue;
-            if (!entry->tryExec.isEmpty() && !executableExists(entry->tryExec)) continue;
-            entries.append(*entry);
+                QFile file(path);
+                if (file.size() > kMaxDesktopFileSize || !file.open(QIODevice::ReadOnly)) continue;
+                std::optional<DesktopEntry> entry = DesktopEntry::parse(file.readAll(), id, path, locales);
+                if (!entry || entry->noDisplay || !entry->isShownIn(desktops)) continue;
+                if (entry->exec.isEmpty() && !entry->dbusActivatable) continue;
+                if (!entry->tryExec.isEmpty() && !executableExists(entry->tryExec)) continue;
+                entries.append(*entry);
+            }
         }
+#ifdef Q_OS_WIN
+        if (QFileInfo(dataDir).isDir()) {
+            QDirIterator it(dataDir, {u"*.lnk"_s}, QDir::Files, QDirIterator::Subdirectories);
+            QStringList links;
+            while (it.hasNext()) links.append(it.next());
+            links.sort();
+            for (const QString &path : std::as_const(links)) {
+                const QFileInfo info(path);
+                const QString name = info.completeBaseName().trimmed();
+                if (name.isEmpty() || name.contains(u"uninstall"_s, Qt::CaseInsensitive)) continue;
+                const QString target = info.symLinkTarget();
+                if (target.isEmpty() || !QFileInfo::exists(target)) continue;
+                const QString id = u"win:"_s + QDir(dataDir).relativeFilePath(path).replace(u'\\', u'/');
+                if (seenIds.contains(id)) continue;
+                seenIds.insert(id);
+
+                DesktopEntry entry;
+                entry.id = id;
+                entry.path = path;
+                entry.name = name;
+                entry.exec = u"\"%1\""_s.arg(target);
+                entries.append(entry);
+            }
+        }
+#endif
     }
     std::sort(entries.begin(), entries.end(), [](const DesktopEntry &a, const DesktopEntry &b) {
         return a.name.compare(b.name, Qt::CaseInsensitive) < 0;
