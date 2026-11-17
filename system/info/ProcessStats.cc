@@ -124,7 +124,7 @@ ProcessStats::Sample ProcessStats::sample() {
     const QStringList pids = QDir(QStringLiteral("/proc")).entryList(QDir::Dirs | QDir::NoDotAndDotDot);
     for (const QString &name : pids) {
         bool numeric = false;
-        name.toInt(&numeric);
+        static_cast<void>(name.toInt(&numeric));
         if (!numeric) continue;
         QFile file(QStringLiteral("/proc/%1/stat").arg(name));
         if (!file.open(QIODevice::ReadOnly)) continue;      // it ended meanwhile

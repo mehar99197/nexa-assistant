@@ -122,8 +122,7 @@ void TunnelProcess::onLine(const QString &line) {
 
 void TunnelProcess::onFinished() {
     if (!process_) return;
-    process_->deleteLater();
-    process_.release();
+    process_.release()->deleteLater();
     url_.clear();
     if (fatal_) {
         stopping_ = false;

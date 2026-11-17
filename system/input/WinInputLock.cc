@@ -44,7 +44,7 @@ LRESULT CALLBACK lowLevelMouseProc(int nCode, WPARAM wParam, LPARAM lParam) {
 WinInputLock::WinInputLock(QObject *parent) : IInputLock(parent) {}
 
 WinInputLock::~WinInputLock() {
-    unlock();
+    WinInputLock::unlock();
 }
 
 bool WinInputLock::canLock(QString *why) const {

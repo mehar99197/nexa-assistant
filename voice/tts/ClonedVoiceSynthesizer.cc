@@ -7,7 +7,6 @@
 
 #include <algorithm>
 #include <cmath>
-#include <cstring>
 #include <vector>
 
 using namespace Qt::StringLiterals;
@@ -55,8 +54,7 @@ public:
         paths_ = {(dir + u"/tokens.txt"_s).toUtf8(),   (dir + u"/encoder.int8.onnx"_s).toUtf8(),
                   (dir + u"/decoder.int8.onnx"_s).toUtf8(), (dir + u"/vocos_24khz.onnx"_s).toUtf8(),
                   (dir + u"/lexicon.txt"_s).toUtf8()};
-        SherpaOnnxOfflineTtsConfig config;
-        std::memset(&config, 0, sizeof(config));
+        SherpaOnnxOfflineTtsConfig config{};
         config.model.zipvoice.tokens = paths_[0].constData();
         config.model.zipvoice.encoder = paths_[1].constData();
         config.model.zipvoice.decoder = paths_[2].constData();
@@ -91,8 +89,7 @@ public:
         const int32_t lengths[2] = {int32_t(referenceTokens_.size()), int32_t(words.value().size())};
         const QByteArray textUtf8 = text.simplified().toUtf8();
 
-        SherpaOnnxGenerationConfig config;
-        std::memset(&config, 0, sizeof(config));
+        SherpaOnnxGenerationConfig config{};
         config.speed = speed_;
         config.silence_scale = 0.2f;
         config.num_steps = kFlowSteps;

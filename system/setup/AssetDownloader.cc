@@ -198,7 +198,7 @@ void AssetDownloader::verify() {
         const Result<QString> hash = sha256Of(path);
         if (!self) return;
         QMetaObject::invokeMethod(self, [self, hash, expected, generation] {
-            if (!self || generation != self->generation_) return;
+            if (generation != self->generation_) return;
             if (!hash) {
                 self->fail(hash.error());
                 return;

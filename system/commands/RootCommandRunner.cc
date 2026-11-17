@@ -161,13 +161,11 @@ void RootCommandRunner::run(const QString &command, const QString &workingDirect
                                               u"Administrator elevation was declined in the UAC prompt."_s})
                 : Result<CommandOutput>(Error{ErrorCode::Io,
                                               u"Could not launch elevated command (Win32 error %1)."_s.arg(launchErr)});
-            if (self) {
-                QMetaObject::invokeMethod(self, [self, job, res = std::move(res)]() mutable {
-                    if (!self) return;
-                    std::erase(self->winJobs_, job);
-                    if (!job->cancelled.load(std::memory_order_acquire) && job->done) job->done(std::move(res));
-                }, Qt::QueuedConnection);
-            }
+            if (!self) return;
+            QMetaObject::invokeMethod(self.data(), [self, job, res = std::move(res)]() mutable {
+                std::erase(self->winJobs_, job);
+                if (!job->cancelled.load(std::memory_order_acquire) && job->done) job->done(std::move(res));
+            }, Qt::QueuedConnection);
             return;
         }
 
@@ -178,13 +176,11 @@ void RootCommandRunner::run(const QString &command, const QString &workingDirect
                 ::TerminateProcess(sei.hProcess, 1);
                 ::CloseHandle(sei.hProcess);
             }
-            if (self) {
-                QMetaObject::invokeMethod(self, [self, job] {
-                    if (!self) return;
-                    std::erase(self->winJobs_, job);
-                    if (job->done) job->done(Error{ErrorCode::Cancelled, u"The root command was stopped."_s});
-                }, Qt::QueuedConnection);
-            }
+            if (!self) return;
+            QMetaObject::invokeMethod(self.data(), [self, job] {
+                std::erase(self->winJobs_, job);
+                if (job->done) job->done(Error{ErrorCode::Cancelled, u"The root command was stopped."_s});
+            }, Qt::QueuedConnection);
             return;
         }
 
@@ -214,13 +210,11 @@ void RootCommandRunner::run(const QString &command, const QString &workingDirect
         }
 
         if (wasCancelled) {
-            if (self) {
-                QMetaObject::invokeMethod(self, [self, job] {
-                    if (!self) return;
-                    std::erase(self->winJobs_, job);
-                    if (job->done) job->done(Error{ErrorCode::Cancelled, u"The root command was stopped."_s});
-                }, Qt::QueuedConnection);
-            }
+            if (!self) return;
+            QMetaObject::invokeMethod(self.data(), [self, job] {
+                std::erase(self->winJobs_, job);
+                if (job->done) job->done(Error{ErrorCode::Cancelled, u"The root command was stopped."_s});
+            }, Qt::QueuedConnection);
             return;
         }
 
@@ -239,13 +233,11 @@ void RootCommandRunner::run(const QString &command, const QString &workingDirect
         result.output = QString::fromUtf8(readBoundedOutput(outPath));
         result.elapsedMs = clock.elapsed();
 
-        if (self) {
-            QMetaObject::invokeMethod(self, [self, job, result = std::move(result)]() mutable {
-                if (!self) return;
-                std::erase(self->winJobs_, job);
-                if (job->done) job->done(std::move(result));
-            }, Qt::QueuedConnection);
-        }
+        if (!self) return;
+        QMetaObject::invokeMethod(self.data(), [self, job, result = std::move(result)]() mutable {
+            std::erase(self->winJobs_, job);
+            if (job->done) job->done(std::move(result));
+        }, Qt::QueuedConnection);
     });
 #else
     if (!helper_) {

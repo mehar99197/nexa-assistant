@@ -27,8 +27,7 @@ Result<std::unique_ptr<SileroVoiceDetector>> SileroVoiceDetector::create(SherpaR
         return Error{ErrorCode::NotFound, runtime ? runtime->problem() : u"No sherpa-onnx."_s};
     }
     const QByteArray model = QFile::encodeName(runtime->sileroModel());
-    SherpaOnnxVadModelConfig config;
-    std::memset(&config, 0, sizeof config);
+    SherpaOnnxVadModelConfig config{};
     config.silero_vad.model = model.constData();
     config.silero_vad.threshold = threshold;
     config.silero_vad.min_silence_duration = kSileroPauseSeconds;

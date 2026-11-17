@@ -166,7 +166,7 @@ QStringList DesktopEntry::execArguments(const QString &exec) {
     if (hasArgument) arguments.append(current);
 
     QStringList result;
-    for (QString argument : std::as_const(arguments)) {
+    for (const QString &argument : std::as_const(arguments)) {
         if (isFieldCode(argument)) continue;
         // Field codes embedded in an argument are dropped too; %% is a literal percent sign.
         QString expanded;

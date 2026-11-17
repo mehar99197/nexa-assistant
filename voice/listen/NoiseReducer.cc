@@ -22,8 +22,7 @@ Result<std::unique_ptr<NoiseReducer>> NoiseReducer::create(SherpaRuntime *runtim
         return Error{ErrorCode::NotFound, runtime ? runtime->problem() : u"No sherpa-onnx."_s};
     }
     const QByteArray model = QFile::encodeName(runtime->gtcrnModel());
-    SherpaOnnxOnlineSpeechDenoiserConfig config;
-    std::memset(&config, 0, sizeof config);
+    SherpaOnnxOnlineSpeechDenoiserConfig config{};
     config.model.gtcrn.model = model.constData();
     config.model.num_threads = 1;
     config.model.provider = "cpu";

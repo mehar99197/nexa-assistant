@@ -167,8 +167,12 @@ public:
         InputBackendSelector::Choice choice = InputBackendSelector::choose(helper_, remoteDesktop_);
         summary_ = choice.summary;
         notes_ = choice.notes;
-        current_ = choice.backend.get();
-        if (choice.backend) kept_.push_back(std::move(choice.backend));
+        if (choice.backend) {
+            kept_.push_back(std::move(choice.backend));
+            current_ = kept_.back().get();
+        } else {
+            current_ = nullptr;
+        }
     }
 
 private:

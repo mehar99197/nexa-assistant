@@ -3,7 +3,6 @@
 #include <QFile>
 
 #include <cmath>
-#include <cstring>
 #include <vector>
 
 using namespace Qt::StringLiterals;
@@ -29,8 +28,7 @@ Result<std::unique_ptr<KeywordSpotter>> KeywordSpotter::create(SherpaRuntime *ru
     const QByteArray tokens = QFile::encodeName(dir + u"/tokens.txt"_s);
     const QByteArray keywords = keywordLines.toUtf8();
 
-    SherpaOnnxKeywordSpotterConfig config;
-    std::memset(&config, 0, sizeof config);
+    SherpaOnnxKeywordSpotterConfig config{};
     config.feat_config.sample_rate = kSampleRate;
     config.feat_config.feature_dim = 80;
     config.model_config.transducer.encoder = encoder.constData();

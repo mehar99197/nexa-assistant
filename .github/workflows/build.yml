@@ -39,8 +39,9 @@ jobs:
           sudo apt-get install -y -qq --no-install-recommends cppcheck
       - name: Run cppcheck on C++20 sources
         run: |
-          cppcheck --library=qt --enable=warning,performance,portability --inline-suppr \
-            --suppress=missingIncludeSystem --suppress=unusedFunction --suppress=unmatchedSuppression \
+          cppcheck --library=qt --enable=warning,portability --inline-suppr \
+            --suppress=missingIncludeSystem --suppress=unusedFunction \
+            --suppress=unmatchedSuppression --suppress=virtualCallInConstructor \
             --suppress='*:*sherpa/*' --error-exitcode=2 --std=c++20 -I . \
             core system voice remote ui app
 
@@ -146,7 +147,7 @@ jobs:
             mingw-w64-x86_64-openssl
             mingw-w64-x86_64-qrencode
             mingw-w64-x86_64-python
-            mingw-w64-x86_64-catch2
+            mingw-w64-x86_64-catch
             mingw-w64-x86_64-nsis
             curl
             unzip

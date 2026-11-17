@@ -164,7 +164,11 @@ void McpConnectors::adoptTools(Link *link, const QList<McpClient::Tool> &tools) 
                 }
                 ToolResult result{call.value().text, std::nullopt};
                 if (!call.value().images.isEmpty()) result.image = call.value().images.constFirst();
-                done(shaping.result ? shaping.result(remoteName, std::move(result)) : std::move(result));
+                if (shaping.result) {
+                    done(shaping.result(remoteName, std::move(result)));
+                } else {
+                    done(std::move(result));
+                }
             });
         }));
         link->toolNames.append(spec.name);
