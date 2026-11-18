@@ -101,6 +101,17 @@
 #define KEY_PLAYPAUSE 164
 #define KEY_PREVIOUSSONG 165
 #define KEY_F13 183
+#define KEY_F14 184
+#define KEY_F15 185
+#define KEY_F16 186
+#define KEY_F17 187
+#define KEY_F18 188
+#define KEY_F19 189
+#define KEY_F20 190
+#define KEY_F21 191
+#define KEY_F22 192
+#define KEY_F23 193
+#define KEY_F24 194
 #define BTN_LEFT 0x110
 #define BTN_RIGHT 0x111
 #define BTN_MIDDLE 0x112

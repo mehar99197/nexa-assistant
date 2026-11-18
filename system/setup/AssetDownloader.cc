@@ -273,7 +273,15 @@ void AssetDownloader::installArchive() {
         tar->deleteLater();
         fail(Error{ErrorCode::NotSupported, u"tar is needed to unpack %1 and was not found (%2)."_s.arg(fileName(), tar_)});
     });
-    tarProcess_->start(tar_, {u"-xf"_s, partPath(), u"-C"_s, scratch->path()});
+    QString tarProgram = tar_;
+#ifdef Q_OS_WIN
+    if (tarProgram == u"tar"_s) {
+        const QString winTar =
+            QDir::fromNativeSeparators(qEnvironmentVariable("SystemRoot", u"C:/Windows"_s)) + u"/System32/tar.exe"_s;
+        if (QFileInfo::exists(winTar)) tarProgram = winTar;
+    }
+#endif
+    tarProcess_->start(tarProgram, {u"-xf"_s, partPath(), u"-C"_s, scratch->path()});
 }
 
 void AssetDownloader::fail(const Error &error) {

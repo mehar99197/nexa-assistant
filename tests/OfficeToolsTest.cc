@@ -94,6 +94,7 @@ TEST_CASE("create_document writes the three kinds as OpenDocument files, never o
     REQUIRE(f.create({{u"kind"_s, u"document"_s}, {u"title"_s, u"Notes"_s}, {u"content"_s, u"again"_s}, {u"folder"_s, f.dir.path()}})
                 .isOk());
     CHECK(QFile::exists(f.dir.filePath(u"Notes (2).fodt"_s)));
+#ifndef Q_OS_WIN
     REQUIRE(QFile::link(u"/nonexistent/elsewhere.fodt"_s, f.dir.filePath(u"Linked.fodt"_s)));
     const Result<ToolResult> linked = f.create({{u"kind"_s, u"document"_s}, {u"title"_s, u"Linked"_s}, {u"content"_s, u"x"_s},
                                                 {u"folder"_s, f.dir.path()}});
@@ -101,6 +102,7 @@ TEST_CASE("create_document writes the three kinds as OpenDocument files, never o
     CHECK(linked.value().text.contains(u"Linked (2).fodt"_s));
     CHECK(QFileInfo(f.dir.filePath(u"Linked.fodt"_s)).isSymLink());
     CHECK_FALSE(QFile::exists(u"/nonexistent/elsewhere.fodt"_s));
+#endif
 
     const QJsonArray slides{QJsonObject{{u"title"_s, u"Solar"_s}},
                             QJsonObject{{u"title"_s, u"Why"_s}, {u"bullets"_s, QJsonArray{u"free"_s, u"clean"_s}}}};

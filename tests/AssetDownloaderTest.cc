@@ -148,8 +148,14 @@ TEST_CASE("An archive unpacks and only the listed members are installed") {
         REQUIRE(file.open(QIODevice::WriteOnly));
         file.write(name);
     }
+    QString tarProgram = u"tar"_s;
+#ifdef Q_OS_WIN
+    const QString winTar =
+        QDir::fromNativeSeparators(qEnvironmentVariable("SystemRoot", u"C:/Windows"_s)) + u"/System32/tar.exe"_s;
+    if (QFile::exists(winTar)) tarProgram = winTar;
+#endif
     QProcess tar;
-    tar.start(u"tar"_s, {u"-cjf"_s, source.path() + u"/pkg.tar.bz2"_s, u"-C"_s, source.path(), u"pkg-1"_s});
+    tar.start(tarProgram, {u"-cjf"_s, source.path() + u"/pkg.tar.bz2"_s, u"-C"_s, source.path(), u"pkg-1"_s});
     REQUIRE(tar.waitForFinished(kWaitMs));
     REQUIRE(tar.exitCode() == 0);
     const QByteArray bytes = readAll(source.path() + u"/pkg.tar.bz2"_s);
