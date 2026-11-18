@@ -110,11 +110,19 @@ TEST_CASE("Writing, copying, importing and removing the user's skills") {
     writeFile(source.filePath(u"pdf/SKILL.md"_s), skillText(u"pdf"_s, u"PDF jobs."_s));
     writeFile(source.filePath(u"pdf/scripts/fill.py"_s), "print('x')\n");
     writeFile(source.filePath(u"secret.txt"_s), "do not copy");
+#ifdef Q_OS_WIN
+    REQUIRE(QFile::link(source.filePath(u"secret.txt"_s), source.filePath(u"pdf/linked.lnk"_s)));
+    const auto imported = catalog.importFolder(source.filePath(u"pdf"_s));
+    REQUIRE(imported.isOk());
+    CHECK(QFile::exists(user.filePath(u"skills/pdf/scripts/fill.py"_s)));
+    CHECK_FALSE(QFile::exists(user.filePath(u"skills/pdf/linked.lnk"_s)));
+#else
     QFile::link(source.filePath(u"secret.txt"_s), source.filePath(u"pdf/linked.txt"_s));
     const auto imported = catalog.importFolder(source.filePath(u"pdf"_s));
     REQUIRE(imported.isOk());
     CHECK(QFile::exists(user.filePath(u"skills/pdf/scripts/fill.py"_s)));
     CHECK_FALSE(QFile::exists(user.filePath(u"skills/pdf/linked.txt"_s)));
+#endif
     CHECK_FALSE(catalog.importFolder(source.filePath(u"pdf"_s)).isOk());          // already there
     CHECK(catalog.importFolder(source.filePath(u"pdf"_s), true).isOk());          // unless replacing
     CHECK_FALSE(catalog.importFolder(source.path()).isOk());                       // no SKILL.md

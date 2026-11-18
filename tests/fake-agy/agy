@@ -62,9 +62,18 @@ def parent_death_signal():
 
 def log(entry):
     path = os.environ.get("FAKE_AGY_LOG")
-    if path:
-        with open(path, "a") as f:
-            f.write(json.dumps(entry) + "\n")
+    if not path:
+        return
+    line = json.dumps(entry) + "\n"
+    for attempt in range(5):
+        try:
+            with open(path, "a") as f:
+                f.write(line)
+            return
+        except PermissionError:
+            if attempt == 4:
+                raise
+            time.sleep(0.005)
 
 
 def next_entry():
@@ -153,7 +162,7 @@ def acp_main(args, config):
     if config.get("child"):
         import subprocess
         cmd = [sys.executable, "-c", "import time; time.sleep(120)"] if os.name == "nt" else ["sleep", "120"]
-        child = subprocess.Popen(cmd)
+        child = subprocess.Popen(cmd, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         log({"child": child.pid})
     for line in sys.stdin:
         if not line.strip():

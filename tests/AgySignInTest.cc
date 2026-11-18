@@ -358,7 +358,12 @@ TEST_CASE("Cancel ends a sign-in at once, with the whole process group", "[agy-s
     AgySignIn signIn(rig.program(), rig.workingDir());
     Spies spies(signIn);
     signIn.signIn();
-    REQUIRE(logged(rig, u"authenticate"_s));
+    const bool authenticated = logged(rig, u"authenticate"_s);
+    INFO("requests=" << rig.requests().join(u","_s).toStdString()
+         << " starts=" << rig.starts()
+         << " childPid=" << rig.childPid()
+         << " ends=" << spies.ends());
+    REQUIRE(authenticated);
     REQUIRE(QTest::qWaitFor([&] { return rig.childPid() != 0; }, kWaitMs));
     const qint64 agy = rig.pid();
     const qint64 child = rig.childPid();
@@ -625,7 +630,11 @@ TEST_CASE("Destroying an AgySignIn in the middle of an operation ends agy and it
     AcpRig rig({{u"hang"_s, u"authenticate"_s}, {u"child"_s, true}});
     auto *signIn = new AgySignIn(rig.program(), rig.workingDir());
     signIn->signIn();
-    REQUIRE(logged(rig, u"authenticate"_s));
+    const bool authenticated = logged(rig, u"authenticate"_s);
+    INFO("requests=" << rig.requests().join(u","_s).toStdString()
+         << " starts=" << rig.starts()
+         << " childPid=" << rig.childPid());
+    REQUIRE(authenticated);
     REQUIRE(QTest::qWaitFor([&] { return rig.childPid() != 0; }, kWaitMs));
     const qint64 agy = rig.pid();
     const qint64 child = rig.childPid();
@@ -803,7 +812,12 @@ TEST_CASE("Cancelling while the session is being closed still ends once and ends
     AgySignIn signIn(rig.program(), rig.workingDir());
     Spies spies(signIn);
     signIn.checkStatus();
-    REQUIRE(logged(rig, u"session/close"_s));
+    const bool closed = logged(rig, u"session/close"_s);
+    INFO("requests=" << rig.requests().join(u","_s).toStdString()
+         << " starts=" << rig.starts()
+         << " childPid=" << rig.childPid()
+         << " ends=" << spies.ends());
+    REQUIRE(closed);
     signIn.cancel();
     CHECK(spies.failed.count() == 1);
     CHECK(spies.error().code == ErrorCode::Cancelled);

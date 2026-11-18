@@ -1,6 +1,7 @@
 #include "system/net/TunnelProcess.h"
 
 #include "core/Logging.h"
+#include "core/ProcessUtils.h"
 
 #include <algorithm>
 
@@ -13,6 +14,22 @@ namespace {
 // 5 s, then 10, 20, 40, and every minute after that.
 int pauseAfter(int failures) {
     return std::min(60'000, 5'000 << std::min(failures - 1, 4));
+}
+
+void endTunnelProcess(QProcess *process, bool forceNow) {
+    if (!process || process->state() == QProcess::NotRunning) return;
+#ifdef Q_OS_WIN
+    Q_UNUSED(forceNow);
+    process::killTree(process->processId());
+    process->kill();
+#else
+    if (forceNow) {
+        process::killTree(process->processId());
+        process->kill();
+    } else {
+        process->terminate();
+    }
+#endif
 }
 
 } // namespace
@@ -48,17 +65,19 @@ void TunnelProcess::stop(bool wait) {
     restart_.stop();
     if (process_) {
         process_->disconnect(this);
-        process_->terminate();
+        endTunnelProcess(process_.get(), false);
         if (wait) {
-            if (!process_->waitForFinished(3'000)) process_->kill();
-            process_->waitForFinished(1'000);
+            if (!process_->waitForFinished(3'000)) {
+                endTunnelProcess(process_.get(), true);
+                process_->waitForFinished(1'000);
+            }
             process_.reset();
         } else {
             // It ends by itself in a moment; a tunnel that does not listen is killed.
             QProcess *ending = process_.release();
             connect(ending, &QProcess::finished, ending, &QObject::deleteLater);
             QTimer::singleShot(3'000, ending, [ending] {
-                if (ending->state() != QProcess::NotRunning) ending->kill();
+                if (ending->state() != QProcess::NotRunning) endTunnelProcess(ending, true);
             });
         }
     }
@@ -69,6 +88,7 @@ void TunnelProcess::stop(bool wait) {
 void TunnelProcess::launch() {
     process_ = std::make_unique<QProcess>();
     process_->setProcessChannelMode(QProcess::MergedChannels);
+    process::configureChild(*process_);
     connect(process_.get(), &QProcess::readyRead, this, [this] {
         pending_ += process_->readAll();
         qsizetype end = -1;
@@ -100,7 +120,7 @@ void TunnelProcess::onLine(const QString &line) {
         qCInfo(lcApp).noquote() << "tunnel:" << name_ << "cannot look its servers up on this network's DNS";
         fallback_ = true;
         stopping_ = true;
-        process_->terminate();
+        endTunnelProcess(process_.get(), false);
         return;
     }
     if (!event.error.isEmpty()) {
@@ -109,7 +129,7 @@ void TunnelProcess::onLine(const QString &line) {
             fatal_ = true;
             qCWarning(lcApp).noquote() << "tunnel:" << name_ << "cannot work:" << event.error;
             stopping_ = true;           // it is ended here; its exit is not a failure to retry
-            process_->terminate();
+            endTunnelProcess(process_.get(), false);
         }
     }
     if (event.connected && !url_.isEmpty() && !fatal_) {

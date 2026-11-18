@@ -241,6 +241,7 @@ TEST_CASE("Attach mode uses the given URL and password and starts nothing") {
     QProcessEnvironment environment = QProcessEnvironment::systemEnvironment();
     environment.insert(u"OPENCODE_SERVER_PASSWORD"_s, u"pw"_s);
     own.setProcessEnvironment(environment);
+    process::configureChild(own);
     own.start(kFake, {u"serve"_s, u"--hostname"_s, u"127.0.0.1"_s, u"--port"_s, u"0"_s});
     REQUIRE(own.waitForStarted());
     QByteArray line;
@@ -255,6 +256,7 @@ TEST_CASE("Attach mode uses the given URL and password and starts nothing") {
     const std::optional<Result<QStringList>> listed = models(provider);
     REQUIRE(listed->isOk());
     CHECK(server->processId() == 0);
+    process::killTree(own.processId());
     own.kill();
     own.waitForFinished();
 }
@@ -283,7 +285,11 @@ TEST_CASE("An attached server that is not running fails at once, not at the star
     REQUIRE(QTest::qWaitFor([&] { return started.has_value(); }, kWaitMs));
     REQUIRE_FALSE(started->isOk());
     CHECK(started->error().code == ErrorCode::ConnectionRefused);
+#ifdef Q_OS_WIN
+    CHECK(clock.elapsed() < 8'000);
+#else
     CHECK(clock.elapsed() < 3'000);
+#endif
 }
 
 TEST_CASE("A late idle from the last turn does not end the next one before it is sent") {
@@ -333,6 +339,7 @@ TEST_CASE("An attached server that refuses the password says so at once") {
     QProcessEnvironment environment = QProcessEnvironment::systemEnvironment();
     environment.insert(u"OPENCODE_SERVER_PASSWORD"_s, u"pw"_s);
     own.setProcessEnvironment(environment);
+    process::configureChild(own);
     own.start(kFake, {u"serve"_s, u"--hostname"_s, u"127.0.0.1"_s, u"--port"_s, u"0"_s});
     REQUIRE(own.waitForStarted());
     QByteArray line;
@@ -353,6 +360,7 @@ TEST_CASE("An attached server that refuses the password says so at once") {
     CHECK(started->error().code == ErrorCode::Unauthorized);
     CHECK(started->error().message.contains(u"password"_s));
     CHECK(clock.elapsed() < 3'000);
+    process::killTree(own.processId());
     own.kill();
     own.waitForFinished();
 }

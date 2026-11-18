@@ -12,6 +12,8 @@
 #endif
 #include <windows.h>
 #include <tlhelp32.h>
+#include <memory>
+#include <mutex>
 #include <queue>
 #include <unordered_map>
 #include <unordered_set>
@@ -19,6 +21,91 @@
 #endif
 
 namespace nexa::process {
+
+#ifdef Q_OS_WIN
+namespace {
+
+struct WinJobEntry {
+    qint64 pid = 0;
+    HANDLE handle = nullptr;
+};
+
+std::mutex &jobMutex() {
+    static std::mutex mutex;
+    return mutex;
+}
+
+std::unordered_map<qint64, std::shared_ptr<WinJobEntry>> &jobRegistry() {
+    static std::unordered_map<qint64, std::shared_ptr<WinJobEntry>> registry;
+    return registry;
+}
+
+void releaseWinJob(const std::shared_ptr<WinJobEntry> &entry, bool terminateFirst) {
+    if (!entry) return;
+    HANDLE handle = nullptr;
+    {
+        std::lock_guard lock(jobMutex());
+        if (entry->pid > 0) {
+            auto &reg = jobRegistry();
+            if (const auto it = reg.find(entry->pid); it != reg.end() && it->second == entry) {
+                reg.erase(it);
+            }
+            entry->pid = 0;
+        }
+        handle = entry->handle;
+        entry->handle = nullptr;
+    }
+    if (handle) {
+        if (terminateFirst) ::TerminateJobObject(handle, 1);
+        ::CloseHandle(handle);
+    }
+}
+
+class WinJobGuard final : public QObject {
+public:
+    explicit WinJobGuard(QProcess &process) : QObject(&process), process_(process) {
+        setObjectName(QStringLiteral("_nexaWinJobGuard"));
+        connect(&process_, &QProcess::started, this, &WinJobGuard::attachJob);
+    }
+    ~WinJobGuard() override { releaseWinJob(entry_, false); }
+
+private:
+    void attachJob() {
+        releaseWinJob(entry_, false);
+        const qint64 pid = process_.processId();
+        if (pid <= 0) return;
+        HANDLE job = ::CreateJobObjectW(nullptr, nullptr);
+        if (!job) return;
+        JOBOBJECT_EXTENDED_LIMIT_INFORMATION limits{};
+        limits.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
+        ::SetInformationJobObject(job, JobObjectExtendedLimitInformation, &limits, sizeof(limits));
+        HANDLE proc = ::OpenProcess(PROCESS_SET_QUOTA | PROCESS_TERMINATE, FALSE, static_cast<DWORD>(pid));
+        if (!proc) {
+            ::CloseHandle(job);
+            return;
+        }
+        const BOOL assigned = ::AssignProcessToJobObject(job, proc);
+        ::CloseHandle(proc);
+        if (!assigned) {
+            ::CloseHandle(job);
+            return;
+        }
+        auto entry = std::make_shared<WinJobEntry>();
+        entry->pid = pid;
+        entry->handle = job;
+        {
+            std::lock_guard lock(jobMutex());
+            jobRegistry()[pid] = entry;
+        }
+        entry_ = std::move(entry);
+    }
+
+    QProcess &process_;
+    std::shared_ptr<WinJobEntry> entry_;
+};
+
+} // namespace
+#endif
 
 void configureChild(QProcess &process) {
 #ifdef Q_OS_UNIX
@@ -35,6 +122,9 @@ void configureChild(QProcess &process) {
             args->flags |= CREATE_NO_WINDOW;
         }
     });
+    if (!process.findChild<QObject *>(QStringLiteral("_nexaWinJobGuard"), Qt::FindDirectChildrenOnly)) {
+        new WinJobGuard(process);
+    }
 #else
     Q_UNUSED(process);
 #endif
@@ -47,6 +137,17 @@ void killTree(qint64 pid, bool force, bool includeRoot) {
     if (::kill(pid_t(-pid), sig) != 0 && includeRoot) ::kill(pid_t(pid), sig);
 #elif defined(Q_OS_WIN)
     Q_UNUSED(force);
+    std::shared_ptr<WinJobEntry> jobEntry;
+    {
+        std::lock_guard lock(jobMutex());
+        if (const auto it = jobRegistry().find(pid); it != jobRegistry().end()) {
+            jobEntry = it->second;
+        }
+    }
+    if (jobEntry) {
+        releaseWinJob(jobEntry, true);
+        return;
+    }
     HANDLE snap = ::CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
     std::vector<DWORD> order;
     if (snap != INVALID_HANDLE_VALUE) {

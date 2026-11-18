@@ -378,7 +378,7 @@ TEST_CASE("The session's command line and environment are what the design says (
     qunsetenv("CLAUDE_CODE_ENTRYPOINT");
     CHECK_FALSE(environment.contains(u"CLAUDECODE"_s));
     CHECK_FALSE(environment.contains(u"CLAUDE_CODE_ENTRYPOINT"_s));
-    CHECK(environment.value(u"PATH"_s).startsWith(QFileInfo(kFake).absolutePath() + u':'));
+    CHECK(environment.value(u"PATH"_s).startsWith(QFileInfo(kFake).absolutePath() + QDir::listSeparator()));
     // Never a config folder of Nexa's: the sign-in is the owner's own.
     CHECK(environment.value(u"CLAUDE_CONFIG_DIR"_s) == qEnvironmentVariable("CLAUDE_CONFIG_DIR"));
 }

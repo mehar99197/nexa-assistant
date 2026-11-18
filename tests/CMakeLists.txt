@@ -166,7 +166,7 @@ if(UNIX AND NOT ANDROID AND NOT APPLE)
     )
     target_link_libraries(nexa_tests PRIVATE Qt6::DBus)
 elseif(WIN32)
-    target_link_libraries(nexa_tests PRIVATE user32)
+    target_link_libraries(nexa_tests PRIVATE user32 shell32)
 endif()
 
 # Standalone obfuscated Guard binary: proves identical truth-table behaviour under NEXA_OBFUSCATE_LICENSE.
@@ -181,6 +181,9 @@ target_link_libraries(nexa_guard_obf_test PRIVATE
     Qt6::Widgets
     Catch2::Catch2
 )
+if(WIN32)
+    target_link_libraries(nexa_guard_obf_test PRIVATE shell32)
+endif()
 target_compile_definitions(nexa_guard_obf_test PRIVATE
     NEXA_OBFUSCATE_LICENSE=1
     NEXA_CHECK_ROTATION_SEED=${NEXA_CHECK_ROTATION_SEED}

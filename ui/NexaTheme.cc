@@ -117,7 +117,7 @@ QString NexaTheme::styleSheet(const ThemeTokens &t, CoreStyle style) {
 QString NexaTheme::styleSheet(const ThemeTokens &t, CoreStyle style, const DesignSpec &design,
                               const ThemeChrome &chrome) {
     QFile file(u":/nexa/ui/theme.qss"_s);
-    if (!file.open(QIODevice::ReadOnly)) return {};
+    if (!file.open(QIODevice::ReadOnly | QIODevice::Text)) return {};
     QString sheet = QString::fromUtf8(file.readAll());
     const int basePoints = QFontDatabase::systemFont(QFontDatabase::GeneralFont).pointSize();
     const QString chatFont = design.font == FontFace::Mono ? monoFamily() : NexaDesigns::fontFamily(design.font);

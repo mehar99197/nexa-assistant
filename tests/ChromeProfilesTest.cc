@@ -44,7 +44,20 @@ TEST_CASE("Local State gives the profiles by name, Chrome's own folder names onl
 
 TEST_CASE("Browsers are found by their program, with their profiles and where the extension is") {
     QTemporaryDir home;
-    const QString chrome = home.filePath(u"google-chrome"_s);
+#ifdef Q_OS_WIN
+    const QString kChromeFolder = u"Google/Chrome/User Data"_s;
+    const QString kChromeProgram = u"chrome.exe"_s;
+    const QString kChromePath = u"C:/Program Files/Google/Chrome/Application/chrome.exe"_s;
+    const QString kChromiumProgram = u"chromium.exe"_s;
+    const QString kChromiumPath = u"C:/Program Files/Chromium/Application/chromium.exe"_s;
+#else
+    const QString kChromeFolder = u"google-chrome"_s;
+    const QString kChromeProgram = u"google-chrome-stable"_s;
+    const QString kChromePath = u"/usr/bin/google-chrome-stable"_s;
+    const QString kChromiumProgram = u"chromium"_s;
+    const QString kChromiumPath = u"/usr/bin/chromium"_s;
+#endif
+    const QString chrome = home.filePath(kChromeFolder);
     writeFile(chrome + u"/Local State"_s, kLocalState);
     // Profile 3: the extension's folder. Profile 12: only its preferences know it. Default: neither.
     QDir().mkpath(chrome + u"/Profile 3/Extensions/"_s + QString(ChromeProfiles::kExtensionId));
@@ -53,9 +66,9 @@ TEST_CASE("Browsers are found by their program, with their profiles and where th
                   {QString(ChromeProfiles::kExtensionId), QJsonObject{}}}}}}}).toJson());
     writeFile(chrome + u"/Default/Preferences"_s, R"({"extensions":{"settings":{"someotherextension":{}}}})");
 
-    const auto find = [](const QString &program) {
-        if (program == u"google-chrome-stable"_s) return u"/usr/bin/google-chrome-stable"_s;
-        if (program == u"chromium"_s) return u"/usr/bin/chromium"_s;
+    const auto find = [&](const QString &program) {
+        if (program == kChromeProgram) return kChromePath;
+        if (program == kChromiumProgram) return kChromiumPath;
         return QString();
     };
     const QList<BrowserInstall> installs = ChromeProfiles::detect(home.path(), find);
@@ -63,7 +76,7 @@ TEST_CASE("Browsers are found by their program, with their profiles and where th
     const BrowserInstall &google = installs.first();
     CHECK(google.id == u"chrome"_s);
     CHECK(google.displayName == u"Google Chrome"_s);
-    CHECK(google.executable == u"/usr/bin/google-chrome-stable"_s);
+    CHECK(google.executable == kChromePath);
     CHECK(google.supportsExtension);
     CHECK(google.lastUsed == u"Profile 3"_s);
     CHECK_FALSE(google.profile(u"Default"_s)->extension);
