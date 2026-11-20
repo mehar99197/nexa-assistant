@@ -2,6 +2,7 @@
 
 #include "core/Logging.h"
 
+#ifdef Q_OS_UNIX
 #include <QDBusArgument>
 #include <QDBusConnection>
 #include <QDBusMessage>
@@ -9,6 +10,15 @@
 #include <QDBusPendingCallWatcher>
 #include <QDBusPendingReply>
 #include <QRandomGenerator>
+#elif defined(Q_OS_WIN)
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+#include <QAbstractEventDispatcher>
+#include <QAbstractNativeEventFilter>
+#include <QTimer>
+#include <windows.h>
+#endif
 
 #include <utility>
 
@@ -16,6 +26,7 @@ using namespace Qt::StringLiterals;
 
 namespace nexa {
 
+#ifdef Q_OS_UNIX
 // One entry of the portal's a(sa{sv}) shortcut list.
 struct PortalShortcut {
     QString id;
@@ -249,5 +260,200 @@ void GlobalShortcuts::giveUp(const QString &reason) {
     triggers_.clear();
     emit unavailable(reason);
 }
+#elif defined(Q_OS_WIN)
+namespace {
+
+constexpr int kBaseHotkeyId = 0x4E00;
+constexpr int kReleasePollMs = 25;
+
+bool parseWinTrigger(const QString &trigger, uint *modsOut, uint *vkOut, QString *labelOut) {
+    const QStringList parts = trigger.split(u'+', Qt::SkipEmptyParts);
+    if (parts.isEmpty()) return false;
+    uint mods = 0;
+    uint vk = 0;
+    QStringList pretty;
+    for (const QString &raw : parts) {
+        const QString token = raw.trimmed().toLower();
+        if (token == u"ctrl"_s || token == u"control"_s) {
+            mods |= MOD_CONTROL;
+            if (!pretty.contains(u"Ctrl"_s)) pretty.append(u"Ctrl"_s);
+        } else if (token == u"alt"_s) {
+            mods |= MOD_ALT;
+            if (!pretty.contains(u"Alt"_s)) pretty.append(u"Alt"_s);
+        } else if (token == u"shift"_s) {
+            mods |= MOD_SHIFT;
+            if (!pretty.contains(u"Shift"_s)) pretty.append(u"Shift"_s);
+        } else if (token == u"super"_s || token == u"meta"_s || token == u"win"_s) {
+            mods |= MOD_WIN;
+            if (!pretty.contains(u"Win"_s)) pretty.append(u"Win"_s);
+        } else if (token == u"space"_s) {
+            vk = VK_SPACE;
+            pretty.append(u"Space"_s);
+        } else if (token == u"escape"_s || token == u"esc"_s) {
+            vk = VK_ESCAPE;
+            pretty.append(u"Esc"_s);
+        } else if (token == u"return"_s || token == u"enter"_s) {
+            vk = VK_RETURN;
+            pretty.append(u"Enter"_s);
+        } else if (token == u"tab"_s) {
+            vk = VK_TAB;
+            pretty.append(u"Tab"_s);
+        } else if (token == u"backspace"_s) {
+            vk = VK_BACK;
+            pretty.append(u"Backspace"_s);
+        } else if (token.size() == 1 && token.at(0) >= u'a' && token.at(0) <= u'z') {
+            vk = uint(token.at(0).toUpper().unicode());
+            pretty.append(token.toUpper());
+        } else if (token.size() == 1 && token.at(0) >= u'0' && token.at(0) <= u'9') {
+            vk = uint(token.at(0).unicode());
+            pretty.append(token);
+        } else if (token.startsWith(u'f')) {
+            bool ok = false;
+            const int f = token.mid(1).toInt(&ok);
+            if (!ok || f < 1 || f > 24) return false;
+            vk = uint(VK_F1 + f - 1);
+            pretty.append(u"F%1"_s.arg(f));
+        } else {
+            return false;
+        }
+    }
+    if (vk == 0) return false;
+    *modsOut = mods;
+    *vkOut = vk;
+    *labelOut = pretty.join(u'+');
+    return true;
+}
+
+bool winModifiersHeld(uint mods) {
+    if ((mods & MOD_CONTROL) && (::GetAsyncKeyState(VK_CONTROL) & 0x8000) == 0) return false;
+    if ((mods & MOD_ALT) && (::GetAsyncKeyState(VK_MENU) & 0x8000) == 0) return false;
+    if ((mods & MOD_SHIFT) && (::GetAsyncKeyState(VK_SHIFT) & 0x8000) == 0) return false;
+    if ((mods & MOD_WIN)
+        && ((::GetAsyncKeyState(VK_LWIN) & 0x8000) == 0 && (::GetAsyncKeyState(VK_RWIN) & 0x8000) == 0)) {
+        return false;
+    }
+    return true;
+}
+
+} // namespace
+
+class GlobalShortcuts::NativeFilter : public QAbstractNativeEventFilter {
+public:
+    explicit NativeFilter(GlobalShortcuts *owner) : owner_(owner) {}
+
+    bool nativeEventFilter(const QByteArray &eventType, void *message, qintptr *) override {
+        if (!owner_ || (eventType != "windows_generic_MSG" && eventType != "windows_dispatcher_MSG")) return false;
+        const auto *msg = static_cast<const MSG *>(message);
+        if (!msg || msg->message != WM_HOTKEY) return false;
+        const int hotkeyId = static_cast<int>(msg->wParam);
+        for (WinHotkey &hotkey : owner_->winHotkeys_) {
+            if (hotkey.hotkeyId != hotkeyId) continue;
+            if (!hotkey.held) {
+                hotkey.held = true;
+                emit owner_->pressed(hotkey.id);
+                owner_->pollWinReleases();
+            }
+            break;
+        }
+        return false;
+    }
+
+private:
+    GlobalShortcuts *owner_;
+};
+
+GlobalShortcuts::GlobalShortcuts(QString appId, QObject *parent)
+    : QObject(parent), appId_(std::move(appId)), filter_(std::make_unique<NativeFilter>(this)) {
+    if (QAbstractEventDispatcher *dispatcher = QAbstractEventDispatcher::instance()) {
+        dispatcher->installNativeEventFilter(filter_.get());
+    }
+}
+
+GlobalShortcuts::~GlobalShortcuts() {
+    clearWinHotkeys();
+    if (QAbstractEventDispatcher *dispatcher = QAbstractEventDispatcher::instance(); dispatcher && filter_) {
+        dispatcher->removeNativeEventFilter(filter_.get());
+    }
+}
+
+void GlobalShortcuts::clearWinHotkeys() {
+    for (const WinHotkey &hotkey : winHotkeys_) ::UnregisterHotKey(nullptr, hotkey.hotkeyId);
+    winHotkeys_.clear();
+}
+
+void GlobalShortcuts::pollWinReleases() {
+    bool anyHeld = false;
+    for (WinHotkey &hotkey : winHotkeys_) {
+        if (!hotkey.held) continue;
+        const bool keyDown = (::GetAsyncKeyState(static_cast<int>(hotkey.vk)) & 0x8000) != 0;
+        if (!keyDown || !winModifiersHeld(hotkey.mods)) {
+            hotkey.held = false;
+            emit released(hotkey.id);
+        } else {
+            anyHeld = true;
+        }
+    }
+    if (anyHeld) QTimer::singleShot(kReleasePollMs, this, &GlobalShortcuts::pollWinReleases);
+}
+
+void GlobalShortcuts::bind(QList<Shortcut> shortcuts) {
+    clearWinHotkeys();
+    triggers_.clear();
+    wanted_ = std::move(shortcuts);
+    if (wanted_.isEmpty()) return;
+
+    int nextId = kBaseHotkeyId;
+    QStringList failedIds;
+    for (const Shortcut &shortcut : wanted_) {
+        uint mods = 0;
+        uint vk = 0;
+        QString label;
+        if (!parseWinTrigger(shortcut.preferredTrigger, &mods, &vk, &label)) {
+            failedIds.append(shortcut.id);
+            continue;
+        }
+        const int idNum = nextId++;
+        if (!::RegisterHotKey(nullptr, idNum, mods | MOD_NOREPEAT, vk)) {
+            failedIds.append(shortcut.id);
+            continue;
+        }
+        winHotkeys_.append(WinHotkey{idNum, shortcut.id, mods, vk, label, false});
+        triggers_.insert(shortcut.id, label);
+    }
+
+    if (winHotkeys_.isEmpty()) {
+        giveUp(tr("Windows could not register the global hotkeys (another app may already hold them)"));
+        return;
+    }
+    registered_ = true;
+    qCInfo(lcApp) << "windows global hotkeys registered:" << triggers_
+                  << (failedIds.isEmpty() ? QString() : u"failed: "_s + failedIds.join(u", "_s));
+    emit registered();
+}
+
+void GlobalShortcuts::giveUp(const QString &reason) {
+    qCInfo(lcApp) << "no global hotkeys:" << reason;
+    registered_ = false;
+    triggers_.clear();
+    emit unavailable(reason);
+}
+#else
+GlobalShortcuts::GlobalShortcuts(QString appId, QObject *parent)
+    : QObject(parent), appId_(std::move(appId)) {}
+
+GlobalShortcuts::~GlobalShortcuts() = default;
+
+void GlobalShortcuts::bind(QList<Shortcut> shortcuts) {
+    wanted_ = std::move(shortcuts);
+    giveUp(tr("portal global shortcuts are only used on Linux"));
+}
+
+void GlobalShortcuts::giveUp(const QString &reason) {
+    qCInfo(lcApp) << "no global hotkeys:" << reason;
+    registered_ = false;
+    triggers_.clear();
+    emit unavailable(reason);
+}
+#endif
 
 } // namespace nexa

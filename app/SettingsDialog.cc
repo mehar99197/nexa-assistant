@@ -1,14 +1,27 @@
 #include "app/SettingsDialog.h"
 
+#include "app/AccountSettingsPage.h"
+#include "app/RemoteAccess.h"
+
 #include "app/BrowserSettingsPage.h"
 #include "app/MemorySettingsPage.h"
+#include "app/MissionSettingsPage.h"
+#include "app/ProviderGalleryDialog.h"
+#include "app/ProviderSignInBlock.h"
 #include "app/SkillsSettingsPage.h"
+#include "app/VoiceEnrolmentDialog.h"
+#include "app/VoiceSampleDialog.h"
 
+#include "core/account/AccountManager.h"
 #include "core/ai/IAiProvider.h"
 #include "app/GlobalShortcuts.h"
 #include "remote/PairingManager.h"
 #include "remote/QrCode.h"
 #include "remote/RemoteServer.h"
+#include "system/a11y/AtspiBus.h"
+#include "voice/EngineLocator.h"
+#include "system/setup/EngineAssets.h"
+#include "system/setup/AssetDownloader.h"
 #include "system/android/AdbDiscovery.h"
 #include "system/android/AndroidDevice.h"
 #include "app/PhoneLink.h"
@@ -16,30 +29,52 @@
 #include "system/helper/HelperClient.h"
 #include "ui/NexaCoreWidget.h"
 #include "ui/NexaDesigns.h"
+#include "ui/NexaChrome.h"
 #include "ui/NexaThemes.h"
 #include "voice/VoiceBackends.h"
+#include "voice/tts/VoiceSample.h"
+#include "voice/tts/SynthesizedSpeech.h"
+#include "voice/tts/Phonemizer.h"
+#include "voice/listen/SpeakerGate.h"
+#include "voice/listen/VoiceProfile.h"
+#include "voice/tts/CloudVoices.h"
 #include "voice/tts/ITextToSpeech.h"
 #include "voice/tts/SpeechdTtsBackend.h"
+#include "voice/wake/SherpaRuntime.h"
+#include "voice/wake/WakePhrases.h"
 
+#include <QButtonGroup>
 #include <QCheckBox>
 #include <QComboBox>
 #include <QDialogButtonBox>
+#include <QUrl>
+#include <QGroupBox>
+#include <QDesktopServices>
 #include <QFormLayout>
+#include <QGridLayout>
 #include <QHBoxLayout>
 #include <QLabel>
 #include <QLineEdit>
 #include <QListWidget>
+#include <QLocale>
 #include <QMenu>
 #include <QMessageBox>
 #include <QPainter>
+#include <QPainterPath>
 #include <QPlainTextEdit>
 #include <QProcess>
 #include <QPointer>
 #include <QRegularExpression>
 #include <QDir>
+#include <QElapsedTimer>
+#include <QThread>
 #include <QFileInfo>
+#include <QProgressBar>
 #include <QPushButton>
 #include <QSignalBlocker>
+#include <QScreen>
+#include <QScrollArea>
+#include <QStandardItemModel>
 #include <QPixmap>
 #include <QSlider>
 #include <QSpinBox>
@@ -49,6 +84,7 @@
 #include <QVBoxLayout>
 
 #include <algorithm>
+#include <functional>
 
 using namespace Qt::StringLiterals;
 
@@ -80,23 +116,32 @@ SettingsDialog::SettingsDialog(Config config, ProviderRegistry *registry, HttpCl
       http_(http),
       status_(std::move(status)) {
     setWindowTitle(tr("Settings"));
-    resize(960, 600);
 
     tabs_ = new QTabWidget(this);
-    tabs_->addTab(buildProvidersTab(), tr("Providers"));
-    tabs_->addTab(buildVoiceTab(), tr("Voice"));
-    tabs_->addTab(buildHelperTab(), tr("Helper"));
-    tabs_->addTab(buildAndroidTab(), tr("Android"));
-    tabs_->addTab(buildRemoteTab(), tr("Remote"));
-    tabs_->addTab(buildConnectorsTab(), tr("Connectors"));
+    addPage(buildProvidersTab(), tr("Providers"));
+    missionPage_ = new MissionSettingsPage(config_, this);
+    addPage(missionPage_, tr("Mission"));
+    voicePage_ = buildVoiceTab();
+    addPage(voicePage_, tr("Voice"));
+    addPage(buildHelperTab(), tr("Helper"));
+    addPage(buildAndroidTab(), tr("Android"));
+    addPage(buildRemoteTab(), tr("Remote"));
+    addPage(buildConnectorsTab(), tr("Connectors"));
     browserPage_ = new BrowserSettingsPage(config_.browser, status_.browser, this);
     memoryPage_ = new MemorySettingsPage(config_.memory, status_.memory, this);
     skillsPage_ = new SkillsSettingsPage(config_.skills, status_.skills, this);
-    tabs_->addTab(browserPage_, tr("Browser"));
-    tabs_->addTab(memoryPage_, tr("Memory"));
-    tabs_->addTab(skillsPage_, tr("Skills"));
-    tabs_->addTab(buildPolicyTab(), tr("Policy"));
-    tabs_->addTab(buildGeneralTab(), tr("General"));
+    addPage(browserPage_, tr("Browser"));
+    addPage(memoryPage_, tr("Memory"));
+    addPage(skillsPage_, tr("Skills"));
+    addPage(buildPolicyTab(), tr("Policy"));
+    addPage(buildGeneralTab(), tr("General"));
+    accountPage_ = new AccountSettingsPage(config_.localApi, status_.account, status_.updater, this);
+    addPage(accountPage_, tr("Account"));
+
+    // Back on Providers: the sign-in shown there is looked at again (not within 20 s of the last look).
+    connect(tabs_, &QTabWidget::currentChanged, this, [this](int index) {
+        if (tabs_->widget(index) == tabOf(providersPage_)) checkSignIn();
+    });
 
     auto *buttons = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel, this);
     connect(buttons, &QDialogButtonBox::accepted, this, &SettingsDialog::accept);
@@ -107,6 +152,41 @@ SettingsDialog::SettingsDialog(Config config, ProviderRegistry *registry, HttpCl
     layout->addWidget(buttons);
 
     populateProviders();
+    fitToScreen();
+}
+
+void SettingsDialog::addPage(QWidget *page, const QString &title) {
+    // Every page scrolls: the dialog is never taller than its screen because one page is (on a laptop at 125 %, the
+    // tallest pushed OK and Cancel below the bottom edge). The Voice tab is a scroll area already.
+    if (qobject_cast<QScrollArea *>(page)) {
+        tabs_->addTab(page, title);
+        return;
+    }
+    auto *scroll = new QScrollArea(this);
+    scroll->setWidget(page);
+    scroll->setWidgetResizable(true);
+    scroll->setFrameShape(QFrame::NoFrame);
+    scroll->setHorizontalScrollBarPolicy(Qt::ScrollBarAsNeeded);
+    tabs_->addTab(scroll, title);
+}
+
+QWidget *SettingsDialog::tabOf(QWidget *page) const {
+    for (int i = 0; i < tabs_->count(); ++i) {
+        QWidget *tab = tabs_->widget(i);
+        if (tab == page) return tab;
+        if (auto *scroll = qobject_cast<QScrollArea *>(tab); scroll && scroll->widget() == page) return tab;
+    }
+    return page;
+}
+
+void SettingsDialog::fitToScreen() {
+    // As big as the pages like (every tab name in view), never bigger than the screen it opens on, with room for
+    // the window's title bar.
+    const QScreen *screen = parentWidget() ? parentWidget()->screen() : this->screen();
+    const QRect room = screen ? screen->availableGeometry() : QRect(0, 0, 1280, 800);
+    const int width = std::min(1240, room.width() - 48);
+    const int height = std::min(780, room.height() - 72);
+    resize(std::max(width, 480), std::max(height, 360));
 }
 
 void SettingsDialog::showTab(const QString &title) {
@@ -115,7 +195,44 @@ void SettingsDialog::showTab(const QString &title) {
     }
 }
 
+namespace {
+
+// Lets the event loop run until `done` or `ms` pass: the pictures wait for a program's answer this way.
+void waitUntil(const std::function<bool()> &done, int ms) {
+    QElapsedTimer timer;
+    timer.start();
+    while (!done() && timer.elapsed() < ms) {
+        QCoreApplication::processEvents(QEventLoop::AllEvents, 50);
+        QThread::msleep(10);
+    }
+    QCoreApplication::processEvents();
+}
+
+} // namespace
+
 void SettingsDialog::snapshotTabs(const QString &directory) {
+    // Pictures change nothing outside the dialog: no login link is opened, the controller is told nothing.
+    snapshotting_ = true;
+    if (signIn_) signIn_->setOpensBrowser(false);
+    const auto programRows = [this] {
+        QList<int> rows;
+        for (int row = 0; row < config_.providers.size(); ++row) {
+            if (ProviderRegistry::isProgramKind(config_.providers.at(row).kind)) rows.append(row);
+        }
+        return rows;
+    };
+    const auto showRow = [this](int row) {
+        tabs_->setCurrentWidget(tabOf(providersPage_));
+        providerList_->setCurrentRow(row);
+        if (signIn_) signIn_->setOpensBrowser(false);
+        // The check starts on the next turn of the event loop; wait for its answer.
+        QCoreApplication::processEvents();
+        waitUntil([this] { return !signIn_ || !signIn_->busy(); }, 8000);
+    };
+    // The Providers tab is taken with a program's form in it, its sign-in status read.
+    const QList<int> programs = programRows();
+    if (!programs.isEmpty()) showRow(programs.first());
+
     for (int i = 0; i < tabs_->count(); ++i) {
         tabs_->setCurrentIndex(i);
         QCoreApplication::processEvents();
@@ -123,6 +240,44 @@ void SettingsDialog::snapshotTabs(const QString &directory) {
         const QString name = tabs_->tabText(i).toLower().remove(u' ');
         grab().save(u"%1/settings-%2.png"_s.arg(directory, name));
     }
+
+    // Each program's form, and — only when NEXA_SNAPSHOT_SIGN_IN is set — a sign-in under way. Starting one is not
+    // harmless: agy opens the browser itself and any program's link would be written into the picture. So a picture
+    // taken with the owner's own config (status checks only read) never starts one; the pictures of a sign-in are
+    // taken against the fake programs (tests/fake-agy, fake-opencode, fake-codex) on a private config.
+    const bool signInPictures = qEnvironmentVariableIsSet("NEXA_SNAPSHOT_SIGN_IN");
+    for (const int row : programs) {
+        const QString kind = config_.providers.at(row).kind;
+        showRow(row);
+        grab().save(u"%1/settings-providers-%2.png"_s.arg(directory, kind));
+        if (!signInPictures || !signIn_ || !signIn_->view().canSignIn) continue;
+        signIn_->startSignIn();
+        // Several ways to sign in (agy, opencode): the menu that asks which is a picture too, and its first entry is taken.
+        waitUntil([this] { return !signIn_->busy() || signIn_->findChild<QMenu *>() != nullptr; }, 8000);
+        if (QMenu *menu = signIn_->findChild<QMenu *>(); menu && !menu->actions().isEmpty()) {
+            QCoreApplication::processEvents();
+            menu->grab().save(u"%1/settings-providers-%2-methods.png"_s.arg(directory, kind));
+            menu->actions().first()->trigger();
+        }
+        waitUntil([this] { return !signIn_->busy() || !signIn_->view().link.isEmpty() || signIn_->view().showCode; },
+                  8000);
+        if (signIn_->busy()) {
+            grab().save(u"%1/settings-providers-%2-signing-in.png"_s.arg(directory, kind));
+            signIn_->cancelSignIn();
+            waitUntil([this] { return !signIn_->busy(); }, 4000);
+        }
+    }
+
+    // The gallery of every preset, as it opens and searched.
+    ProviderGalleryDialog gallery(registry_->availablePresets(), ProviderRegistry::presetCategories(), this);
+    gallery.show();
+    QCoreApplication::processEvents();
+    QCoreApplication::processEvents();
+    gallery.grab().save(u"%1/provider-gallery.png"_s.arg(directory));
+    gallery.setQuery(u"free"_s);
+    QCoreApplication::processEvents();
+    gallery.grab().save(u"%1/provider-gallery-free.png"_s.arg(directory));
+    gallery.close();
 }
 
 SettingsDialog::~SettingsDialog() {
@@ -132,24 +287,55 @@ SettingsDialog::~SettingsDialog() {
     if (status_.pairing) status_.pairing->stopPairing();
 }
 
+void SettingsDialog::done(int result) {
+    // A sign-in under way ends with the dialog; the program is let go of.
+    dropSignIn();
+    QDialog::done(result);
+}
+
 void SettingsDialog::accept() {
     storeProvider();
     config_.activeProvider = activeCombo_->currentData().toString();
     config_.systemPrompt = systemPromptEdit_->toPlainText().trimmed();
     config_.policyMode = policyCombo_->currentData().toString();
-    if (const QListWidgetItem *theme = themeGallery_->currentItem()) config_.ui.theme = theme->data(Qt::UserRole).toString();
+    if (!themeChoice_.isEmpty()) config_.ui.theme = themeChoice_;
     if (const QListWidgetItem *design = designGallery_->currentItem()) config_.ui.design = design->data(Qt::UserRole).toString();
     storeConnector();
+    if (const QString name = wakeNameEdit_->text().trimmed(); !name.isEmpty()) {
+        if (const Result<void> checked = WakePhrases::check(name); !checked) {
+            tabs_->setCurrentWidget(voicePage_);
+            wakeNameError_->setText(checked.error().message);
+            wakeNameError_->show();
+            wakeNameEdit_->setFocus();
+            return;
+        }
+    }
     storeVoice();
     config_.android.autoReconnect = phoneReconnect_->isChecked();
+    // GNOME's switch, not Nexa's config: changed only here, only when the box was moved.
+    if (status_.a11y && exposeContentsCheck_->isEnabled() && exposeContentsCheck_->isChecked() != exposeContentsWas_) {
+        if (const Result<void> set = status_.a11y->setAppsExposeContents(exposeContentsCheck_->isChecked()); !set) {
+            QMessageBox::warning(this, tr("Screen as text"), set.error().message);
+        } else {
+            exposeContentsWas_ = exposeContentsCheck_->isChecked();
+        }
+    }
     config_.remote.enabled = remoteEnabled_->isChecked();
     config_.remote.port = remotePort_->value();
+    config_.remote.announceMessages = remoteAnnounce_->isChecked();
+    config_.remote.tailscale = tailscaleCheck_->isChecked();
+    config_.remote.cloudflare = cloudflareMode_->currentData().toString();
+    config_.remote.cloudflareHostname = cloudflareHostname_->text().trimmed().toLower();
+    config_.remote.ngrok = ngrokCheck_->isChecked();
+    config_.remote.ngrokDomain = ngrokDomain_->text().trimmed().toLower();
     browserPage_->store(config_.browser);
     memoryPage_->store(config_.memory);
+    missionPage_->store(config_.mission);
     skillsPage_->store(config_.skills);
+    if (accountPage_) accountPage_->store(config_.localApi);
     // The memory's own file, not the config: what the page changed, applied to the memory as it is now.
     if (const Result<void> edited = memoryPage_->applyEdits(); !edited) {
-        tabs_->setCurrentWidget(memoryPage_);
+        tabs_->setCurrentWidget(tabOf(memoryPage_));
         QMessageBox::warning(this, tr("Memory"), edited.error().message);
         return;
     }
@@ -158,29 +344,52 @@ void SettingsDialog::accept() {
 
 QWidget *SettingsDialog::buildProvidersTab() {
     auto *page = new QWidget(this);
+    providersPage_ = page;
 
     activeCombo_ = new QComboBox(page);
     auto *activeRow = new QFormLayout;
-    activeRow->addRow(tr("Active provider:"), activeCombo_);
+    activeRow->addRow(tr("First choice:"), activeCombo_);
+    activeCombo_->setToolTip(tr("Nexa asks this provider first. When it cannot answer — not running, not signed in, "
+                                "out of quota — the others that allow it take over, in the order of the list."));
 
     providerList_ = new QListWidget(page);
+    providerList_->setObjectName(u"providerList"_s);
     providerList_->setMinimumWidth(210);
     connect(providerList_, &QListWidget::currentRowChanged, this, &SettingsDialog::showProvider);
 
     auto *addButton = new QToolButton(page);
+    addButton->setObjectName(u"providerAdd"_s);
     addButton->setText(tr("&Add"));
     addButton->setPopupMode(QToolButton::InstantPopup);
     auto *presetMenu = new QMenu(addButton);
-    for (const ProviderPreset &preset : registry_->availablePresets()) {
-        presetMenu->addAction(preset.name, this, [this, preset] { addProvider(preset); });
-    }
+    fillAddMenu(presetMenu);
     addButton->setMenu(presetMenu);
     auto *removeButton = new QPushButton(tr("&Remove"), page);
+    removeButton->setObjectName(u"providerRemove"_s);
+    // Not pressed by Enter: it keeps the focus and moves to the next row, so Enter removed provider after provider.
+    removeButton->setAutoDefault(false);
     connect(removeButton, &QPushButton::clicked, this, &SettingsDialog::removeProvider);
+    auto *upButton = new QToolButton(page);
+    upButton->setText(u"▲"_s);
+    upButton->setToolTip(tr("Ask this provider earlier when the first choice cannot answer"));
+    connect(upButton, &QToolButton::clicked, this, [this] { moveProvider(-1); });
+    auto *downButton = new QToolButton(page);
+    downButton->setText(u"▼"_s);
+    downButton->setToolTip(tr("Ask this provider later when the first choice cannot answer"));
+    connect(downButton, &QToolButton::clicked, this, [this] { moveProvider(1); });
+
+    auto *nexaAiButton = new QPushButton(tr("Nexa AI"), page);
+    nexaAiButton->setObjectName(u"providerAddNexaAi"_s);
+    nexaAiButton->setAutoDefault(false);
+    nexaAiButton->setToolTip(tr("Add Nexa AI managed relay (Pro / Team — uses your signed Nexa account)"));
+    connect(nexaAiButton, &QPushButton::clicked, this, [this] { addProvider(ProviderRegistry::nexaAiPreset()); });
 
     auto *listButtons = new QHBoxLayout;
     listButtons->addWidget(addButton);
+    listButtons->addWidget(nexaAiButton);
     listButtons->addWidget(removeButton);
+    listButtons->addWidget(upButton);
+    listButtons->addWidget(downButton);
     listButtons->addStretch();
 
     auto *left = new QVBoxLayout;
@@ -191,7 +400,8 @@ QWidget *SettingsDialog::buildProvidersTab() {
     kindLabel_ = new QLabel(providerForm_);
     nameEdit_ = new QLineEdit(providerForm_);
     baseUrlEdit_ = new QLineEdit(providerForm_);
-    baseUrlEdit_->setPlaceholderText(u"http://localhost:20128/v1"_s);
+    baseUrlEdit_->setObjectName(u"providerBaseUrl"_s);
+    baseUrlEdit_->setPlaceholderText(u"https://api.example.com/v1"_s);
     apiKeyEdit_ = new QLineEdit(providerForm_);
     apiKeyEdit_->setEchoMode(QLineEdit::Password);
     apiKeyEdit_->setPlaceholderText(tr("not set"));
@@ -200,38 +410,49 @@ QWidget *SettingsDialog::buildProvidersTab() {
         apiKeyEdit_->setEchoMode(show ? QLineEdit::Normal : QLineEdit::Password);
     });
     auto *keyRow = new QHBoxLayout;
+    keyRow_ = keyRow;
     keyRow->addWidget(apiKeyEdit_, 1);
     keyRow->addWidget(showKeyCheck_);
     modelEdit_ = new QLineEdit(providerForm_);
     modelEdit_->setPlaceholderText(tr("pick it from the model list in the toolbar"));
-    sttModelEdit_ = new QLineEdit(providerForm_);
-    sttModelEdit_->setPlaceholderText(tr("none — e.g. whisper-1, or an audio-capable chat model"));
-    sttModelEdit_->setToolTip(tr("Transcription models (whisper…) use /audio/transcriptions; any other model gets "
-                                 "the recording as chat input."));
-    ttsModelEdit_ = new QLineEdit(providerForm_);
-    ttsModelEdit_->setPlaceholderText(tr("none — e.g. tts-1"));
-    ttsVoiceEdit_ = new QLineEdit(providerForm_);
-    ttsVoiceEdit_->setPlaceholderText(tr("e.g. alloy (a language code such as en for gtts/default)"));
     textToolsCheck_ = new QCheckBox(tr("This model cannot call tools — describe them in the prompt instead"),
                                     providerForm_);
     textToolsCheck_->setToolTip(tr("For models without function calling, such as many small local ones: Nexa "
                                    "lists the tools in the system prompt and reads the calls out of the reply."));
+    fallbackCheck_ = new QCheckBox(tr("Use when the providers above cannot answer"), providerForm_);
+    fallbackCheck_->setToolTip(tr("When the first choice is not running, not signed in or out of quota, Nexa asks "
+                                  "the next provider in the list that allows it, with that provider's own model."));
     testButton_ = new QPushButton(tr("&Test connection"), providerForm_);
     connect(testButton_, &QPushButton::clicked, this, &SettingsDialog::testConnection);
     testResult_ = new QLabel(providerForm_);
     testResult_->setWordWrap(true);
 
     auto *form = new QFormLayout(providerForm_);
+    providerFormLayout_ = form;
     form->addRow(tr("Type:"), kindLabel_);
     form->addRow(tr("Name:"), nameEdit_);
     form->addRow(tr("Base URL:"), baseUrlEdit_);
     form->addRow(tr("API key:"), keyRow);
     form->addRow(tr("Model:"), modelEdit_);
-    form->addRow(tr("Speech recognition:"), sttModelEdit_);
-    form->addRow(tr("Speech output:"), ttsModelEdit_);
-    form->addRow(tr("Voice:"), ttsVoiceEdit_);
     form->addRow(QString(), textToolsCheck_);
+    form->addRow(QString(), fallbackCheck_);
     form->addRow(testButton_, testResult_);
+    // The program's own sign-in, under the other rows; a row of its own that only a program fills.
+    signInHolder_ = new QWidget(providerForm_);
+    signInLayout_ = new QVBoxLayout(signInHolder_);
+    signInLayout_->setContentsMargins(0, 0, 0, 0);
+    form->addRow(tr("Sign-in:"), signInHolder_);
+    form->setRowVisible(signInHolder_, false);
+    // A program named in another place: its sign-in is looked up there.
+    // (editingFinished also comes when focus merely passes through the field: only a change starts it afresh.)
+    const auto programChanged = [this] {
+        if (!signIn_ || signIn_->busy() || currentRow_ < 0 || currentRow_ >= config_.providers.size()) return;
+        if (baseUrlEdit_->text().trimmed() + u'\n' + apiKeyEdit_->text().trimmed() == signInSource_) return;
+        storeProvider();
+        showSignIn(config_.providers.at(currentRow_));
+    };
+    connect(baseUrlEdit_, &QLineEdit::editingFinished, this, programChanged);
+    connect(apiKeyEdit_, &QLineEdit::editingFinished, this, programChanged);
 
     connect(nameEdit_, &QLineEdit::textEdited, this, [this](const QString &name) {
         if (QListWidgetItem *item = providerList_->currentItem()) item->setText(name);
@@ -253,11 +474,19 @@ QWidget *SettingsDialog::buildVoiceTab() {
     auto *page = new QWidget(this);
     const VoiceConfig &voice = config_.voice;
 
+    // Recognition: the mode, then the cloud part — a provider that has it, its model.
     sttCombo_ = new QComboBox(page);
-    sttCombo_->addItem(tr("Automatic — the provider's model, local whisper.cpp if it fails"), u"auto"_s);
-    sttCombo_->addItem(tr("Cloud only — the active provider's speech recognition model"), u"cloud"_s);
+    sttCombo_->addItem(tr("Automatic — the cloud provider below, local whisper.cpp if it fails"), u"auto"_s);
+    sttCombo_->addItem(tr("Cloud only — the cloud provider below"), u"cloud"_s);
     sttCombo_->addItem(tr("Local only — whisper.cpp, offline"), u"whisper"_s);
     selectData(sttCombo_, voice.sttBackend);
+    sttProviderCombo_ = new QComboBox(page);
+    sttModelCombo_ = new QComboBox(page);
+    sttModelCombo_->setEditable(true);
+    sttModelCombo_->setToolTip(tr("Transcription models (whisper…) use /audio/transcriptions; any other model gets "
+                                  "the recording as chat input."));
+    sttUsing_ = new QLabel(page);
+    sttUsing_->setWordWrap(true);
     whisperCombo_ = new QComboBox(page);
     whisperCombo_->setEditable(true);
     QStringList models = installedWhisperModels();
@@ -271,15 +500,31 @@ QWidget *SettingsDialog::buildVoiceTab() {
     whisperStatus_->setWordWrap(true);
     whisperStatus_->setTextInteractionFlags(Qt::TextSelectableByMouse);
     languageEdit_ = new QLineEdit(voice.language, page);
-    languageEdit_->setPlaceholderText(tr("en, de, ur, … or auto"));
+    languageEdit_->setPlaceholderText(tr("en, ur, … or auto (Urdu and English)"));
 
+    // Speech output: the mode, the cloud provider, its model and voice, and the local voices.
     ttsCombo_ = new QComboBox(page);
-    ttsCombo_->addItem(tr("Automatic — the provider's voice, Piper if it fails"), u"auto"_s);
-    ttsCombo_->addItem(tr("Cloud only — the active provider's speech model"), u"cloud"_s);
+    ttsCombo_->addItem(tr("Automatic — the cloud voice below, Piper if it fails"), u"auto"_s);
+    ttsCombo_->addItem(tr("Cloud only — the cloud voice below"), u"cloud"_s);
     ttsCombo_->addItem(tr("Piper — local neural voice"), u"piper"_s);
     ttsCombo_->addItem(tr("Speech Dispatcher — local, robotic"), u"speechd"_s);
     ttsCombo_->addItem(tr("Off — never speak"), u"off"_s);
     selectData(ttsCombo_, voice.ttsBackend);
+    ttsProviderCombo_ = new QComboBox(page);
+    ttsModelCombo_ = new QComboBox(page);
+    ttsModelCombo_->setEditable(true);
+    ttsVoiceCombo_ = new QComboBox(page);
+    ttsVoiceCombo_->setEditable(true);
+    ttsVoiceCombo_->setToolTip(tr("The voice's name; for gtts/default a language code such as en"));
+    ttsUsing_ = new QLabel(page);
+    ttsUsing_->setWordWrap(true);
+    connect(ttsModelCombo_, &QComboBox::currentTextChanged, this, [this](const QString &model) {
+        const QString voiceName = ttsVoiceCombo_->currentText();
+        const QSignalBlocker blocker(ttsVoiceCombo_);
+        ttsVoiceCombo_->clear();
+        ttsVoiceCombo_->addItems(CloudVoices::voicesFor(model));
+        ttsVoiceCombo_->setEditText(voiceName);
+    });
     piperCombo_ = new QComboBox(page);
     piperCombo_->addItems(VoiceBackends::piperVoices());
     if (!voice.piperVoice.isEmpty()) piperCombo_->setCurrentText(voice.piperVoice);
@@ -301,42 +546,406 @@ QWidget *SettingsDialog::buildVoiceTab() {
     voiceTestResult_ = new QLabel(page);
     voiceTestResult_->setWordWrap(true);
 
-    wakeCheck_ = new QCheckBox(tr("Listen for “Hey Nexa” — the microphone stays on; only local recognition hears it"),
-                               page);
+    // The wake name and how Nexa listens.
+    wakeCheck_ = new QCheckBox(tr("Listen for my wake name — the microphone stays on; only offline recognition hears "
+                                  "the room"), page);
     wakeCheck_->setChecked(voice.wakeWord);
-    bargeInCheck_ = new QCheckBox(tr("Stop speaking when I start talking (use headphones, or Nexa hears itself)"), page);
-    bargeInCheck_->setChecked(voice.bargeIn);
+    wakeNameEdit_ = new QLineEdit(voice.wakeName, page);
+    wakeNameEdit_->setPlaceholderText(u"Nexa"_s);
+    wakeNameEdit_->setMaxLength(24);
+    auto *wakeNameHint = new QLabel(tr("A distinctive name of two or three syllables is heard best."), page);
+    wakeNameHint->setWordWrap(true);
+    wakeNameError_ = new QLabel(page);
+    wakeNameError_->setObjectName(u"settingsError"_s);
+    wakeNameError_->setStyleSheet(u"color: #e5534b;"_s);
+    wakeNameError_->hide();
+    connect(wakeNameEdit_, &QLineEdit::textEdited, wakeNameError_, &QLabel::hide);
+    sensitivityCombo_ = new QComboBox(page);
+    sensitivityCombo_->addItem(tr("Low — wakes only when sure"), u"low"_s);
+    sensitivityCombo_->addItem(tr("Normal"), u"normal"_s);
+    sensitivityCombo_->addItem(tr("High — wakes more easily"), u"high"_s);
+    selectData(sensitivityCombo_, voice.wakeSensitivity);
+    endPauseCombo_ = new QComboBox(page);
+    endPauseCombo_->addItem(tr("Short — 0.9 s"), u"short"_s);
+    endPauseCombo_->addItem(tr("Normal — 1.4 s"), u"normal"_s);
+    endPauseCombo_->addItem(tr("Long — 2 s"), u"long"_s);
+    selectData(endPauseCombo_, voice.endPause);
+    followUpsCheck_ = new QCheckBox(tr("Keep listening for a follow-up after a spoken reply"), page);
+    followUpsCheck_->setChecked(voice.followUps);
+    noiseCheck_ = new QCheckBox(tr("Reduce background noise (uses about a fifth of one CPU core while listening)"), page);
+    noiseCheck_->setChecked(voice.noiseReduction);
+    spotterStatus_ = new QLabel(page);
+    spotterStatus_->setWordWrap(true);
+    spotterStatus_->setTextInteractionFlags(Qt::TextSelectableByMouse);
+    if (status_.sherpa && status_.sherpa->load()) {
+        spotterStatus_->setText(status_.sherpa->libraryDir() == SherpaRuntime::defaultDir()
+                                    ? tr("Instant spotting: installed (your copy)")
+                                    : tr("Instant spotting: installed (from the package)"));
+    } else {
+        spotterStatus_->setText(tr("Instant spotting: not installed — download the speech models above"));
+        if (status_.sherpa) spotterStatus_->setToolTip(status_.sherpa->problem());
+    }
+    micStatus_ = new QLabel(page);
+    micStatus_->setWordWrap(true);
+    micStatus_->setText(tr("Microphone: %1").arg(status_.microphoneSummary ? status_.microphoneSummary() : tr("fine")));
+    auto *lowerMicButton = new QPushButton(tr("Lower it"), page);
+    lowerMicButton->setToolTip(tr("Lower the microphone's input volume until its sound is no longer clipped"));
+    lowerMicButton->setEnabled(bool(status_.lowerMicrophone));
+    connect(lowerMicButton, &QPushButton::clicked, this, [this] {
+        if (status_.lowerMicrophone) status_.lowerMicrophone();
+        micStatus_->setText(tr("Microphone: lowering its input volume — the result appears in the status bar."));
+    });
+    bargeInCombo_ = new QComboBox(page);
+    bargeInCombo_->setObjectName(u"bargeIn"_s);
+    bargeInCombo_->addItem(tr("When I say its name"), u"name"_s);
+    bargeInCombo_->addItem(tr("When I start talking (with headphones only, or Nexa hears itself)"), u"speech"_s);
+    bargeInCombo_->addItem(tr("Never — Esc or Talk stops it"), u"off"_s);
+    selectData(bargeInCombo_, voice.bargeIn);
+    conversationCheck_ = new QCheckBox(tr("Keep the conversation going: after each spoken reply, listen to me again "
+                                          "without the name, until I say \"that's all\""), page);
+    conversationCheck_->setObjectName(u"conversation"_s);
+    conversationCheck_->setChecked(voice.conversation);
+    announceCombo_ = new QComboBox(page);
+    announceCombo_->setObjectName(u"announceTasks"_s);
+    announceCombo_->addItem(tr("Tasks I asked for by voice"), u"voice"_s);
+    announceCombo_->addItem(tr("Every task"), u"all"_s);
+    announceCombo_->addItem(tr("Never"), u"off"_s);
+    selectData(announceCombo_, voice.announceTasks);
+    listenToCombo_ = new QComboBox(page);
+    listenToCombo_->setObjectName(u"listenTo"_s);
+    listenToCombo_->addItem(tr("Only my voice (once it is enrolled below)"), u"owner"_s);
+    listenToCombo_->addItem(tr("Anyone"), u"anyone"_s);
+    selectData(listenToCombo_, voice.listenTo);
+    strictnessCombo_ = new QComboBox(page);
+    strictnessCombo_->setObjectName(u"ownerStrictness"_s);
+    strictnessCombo_->addItem(tr("Low — lets a cold or a far microphone through"), u"low"_s);
+    strictnessCombo_->addItem(tr("Normal"), u"normal"_s);
+    strictnessCombo_->addItem(tr("High — someone with a voice like mine is turned away too"), u"high"_s);
+    selectData(strictnessCombo_, voice.ownerStrictness);
+    myVoiceStatus_ = new QLabel(page);
+    myVoiceStatus_->setObjectName(u"myVoiceStatus"_s);
+    myVoiceStatus_->setWordWrap(true);
+    enrolButton_ = new QPushButton(tr("Enrol my voice…"), page);
+    enrolButton_->setObjectName(u"enrolVoice"_s);
+    enrolButton_->setAutoDefault(false);
+    forgetVoiceButton_ = new QPushButton(tr("Forget my voice"), page);
+    forgetVoiceButton_->setObjectName(u"forgetVoice"_s);
+    forgetVoiceButton_->setAutoDefault(false);
+    connect(enrolButton_, &QPushButton::clicked, this, [this] {
+        if (!status_.voice || !status_.speakerGate) return;
+        const QString name = wakeNameEdit_->text().trimmed().isEmpty() ? VoiceConfig{}.wakeName : wakeNameEdit_->text().trimmed();
+        VoiceEnrolmentDialog dialog(status_.voice, status_.speakerGate, name, this);
+        if (dialog.exec() != QDialog::Accepted || !dialog.profile()) return;
+        if (const Result<void> saved = dialog.profile()->save(); !saved) {
+            QMessageBox::warning(this, tr("My voice"), saved.error().message);
+            return;
+        }
+        status_.speakerGate->setProfile(dialog.profile());
+        refreshMyVoice();
+    });
+    connect(forgetVoiceButton_, &QPushButton::clicked, this, [this] {
+        if (QMessageBox::question(this, tr("Forget my voice"),
+                                  tr("Forget your voice? Nexa then answers anyone hands-free until you enrol again."),
+                                  QMessageBox::Yes | QMessageBox::No, QMessageBox::No)
+            != QMessageBox::Yes) {
+            return;
+        }
+        if (const Result<void> forgotten = VoiceProfile::forget(); !forgotten) {
+            QMessageBox::warning(this, tr("My voice"), forgotten.error().message);
+            return;
+        }
+        if (status_.speakerGate) status_.speakerGate->setProfile(std::nullopt);
+        refreshMyVoice();
+    });
 
     auto *listening = new QFormLayout;
     listening->addRow(tr("Speech recognition:"), sttCombo_);
+    listening->addRow(tr("Cloud provider:"), sttProviderCombo_);
+    listening->addRow(tr("Model:"), sttModelCombo_);
+    listening->addRow(QString(), sttUsing_);
     listening->addRow(tr("Local model:"), whisperCombo_);
     listening->addRow(QString(), whisperStatus_);
     listening->addRow(tr("Language:"), languageEdit_);
     auto *speaking = new QFormLayout;
     speaking->addRow(tr("Speech output:"), ttsCombo_);
+    speaking->addRow(tr("Cloud provider:"), ttsProviderCombo_);
+    speaking->addRow(tr("Model:"), ttsModelCombo_);
+    speaking->addRow(tr("Voice:"), ttsVoiceCombo_);
+    speaking->addRow(QString(), ttsUsing_);
     speaking->addRow(tr("Piper voice:"), piperCombo_);
     speaking->addRow(tr("Speech Dispatcher voice:"), speechdCombo_);
     speaking->addRow(tr("Rate:"), rateSlider_);
     speaking->addRow(tr("Speak:"), speakCombo_);
     speaking->addRow(testVoiceButton, voiceTestResult_);
+    auto *micRow = new QHBoxLayout;
+    micRow->addWidget(micStatus_);
+    micRow->addSpacing(12);
+    micRow->addWidget(lowerMicButton);
+    micRow->addStretch(1);
+    auto *waking = new QFormLayout;
+    waking->addRow(QString(), wakeCheck_);
+    waking->addRow(tr("Wake name:"), wakeNameEdit_);
+    waking->addRow(QString(), wakeNameError_);
+    waking->addRow(QString(), wakeNameHint);
+    waking->addRow(tr("Sensitivity:"), sensitivityCombo_);
+    waking->addRow(tr("Pause before I'm done:"), endPauseCombo_);
+    waking->addRow(QString(), followUpsCheck_);
+    waking->addRow(QString(), noiseCheck_);
+    waking->addRow(QString(), spotterStatus_);
+    waking->addRow(micRow);
+    waking->addRow(tr("Stop speaking:"), bargeInCombo_);
+    waking->addRow(QString(), conversationCheck_);
+    waking->addRow(tr("Say when a task ends:"), announceCombo_);
+    waking->addRow(tr("Listen to:"), listenToCombo_);
+    waking->addRow(tr("How sure it is me:"), strictnessCombo_);
+    auto *myVoiceRow = new QHBoxLayout;
+    myVoiceRow->addWidget(myVoiceStatus_, 1);
+    myVoiceRow->addWidget(enrolButton_);
+    myVoiceRow->addWidget(forgetVoiceButton_);
+    waking->addRow(tr("My voice:"), myVoiceRow);
+    refreshMyVoice();
+
+    // Speak in my voice: a sample the owner records, and ZipVoice speaking from it — first in the chain when on.
+    ownVoiceCheck_ = new QCheckBox(tr("Speak in my voice — Nexa's replies in the voice of the sample below"), page);
+    ownVoiceCheck_->setObjectName(u"ownVoice"_s);
+    ownVoiceCheck_->setChecked(voice.ownVoice);
+    ownVoiceStatus_ = new QLabel(page);
+    ownVoiceStatus_->setObjectName(u"ownVoiceStatus"_s);
+    ownVoiceStatus_->setWordWrap(true);
+    recordSampleButton_ = new QPushButton(tr("Record my voice…"), page);
+    recordSampleButton_->setObjectName(u"recordSample"_s);
+    recordSampleButton_->setAutoDefault(false);
+    hearSampleButton_ = new QPushButton(tr("Hear it"), page);
+    hearSampleButton_->setObjectName(u"hearSample"_s);
+    hearSampleButton_->setAutoDefault(false);
+    forgetSampleButton_ = new QPushButton(tr("Forget the sample"), page);
+    forgetSampleButton_->setObjectName(u"forgetSample"_s);
+    forgetSampleButton_->setAutoDefault(false);
+    connect(recordSampleButton_, &QPushButton::clicked, this, [this] {
+        if (!status_.voice) return;
+        VoiceSampleDialog dialog(status_.voice, this);
+        if (dialog.exec() != QDialog::Accepted || !dialog.sample()) return;
+        if (const Result<void> saved = dialog.sample()->save(); !saved) {
+            QMessageBox::warning(this, tr("My voice"), saved.error().message);
+            return;
+        }
+        ownVoiceCheck_->setChecked(true);
+        refreshOwnVoice();
+    });
+    connect(hearSampleButton_, &QPushButton::clicked, this, &SettingsDialog::hearOwnVoice);
+    connect(forgetSampleButton_, &QPushButton::clicked, this, [this] {
+        if (QMessageBox::question(this, tr("Forget the sample"),
+                                  tr("Remove the recording of your voice? Nexa then speaks with its other voices."),
+                                  QMessageBox::Yes | QMessageBox::No, QMessageBox::No)
+            != QMessageBox::Yes) {
+            return;
+        }
+        if (const Result<void> forgotten = VoiceSample::forget(); !forgotten) {
+            QMessageBox::warning(this, tr("My voice"), forgotten.error().message);
+            return;
+        }
+        ownVoiceCheck_->setChecked(false);
+        refreshOwnVoice();
+    });
+    auto *ownVoiceRow = new QHBoxLayout;
+    ownVoiceRow->addWidget(ownVoiceStatus_, 1);
+    ownVoiceRow->addWidget(recordSampleButton_);
+    ownVoiceRow->addWidget(hearSampleButton_);
+    ownVoiceRow->addWidget(forgetSampleButton_);
+    waking->addRow(QString(), ownVoiceCheck_);
+    waking->addRow(tr("Speak as me:"), ownVoiceRow);
+    refreshOwnVoice();
 
     auto *note = new QLabel(tr("Talk: click the Talk button (the request ends when you pause), hold it to talk, or "
-                               "press Ctrl+M. Esc stops the speech. Cloud models are set per provider on the "
-                               "Providers tab."),
+                               "press Ctrl+M. Esc stops the speech. The cloud voice can be any provider with an "
+                               "OpenAI-style audio API and its key."),
                             page);
     note->setWordWrap(true);
 
+    // Speech models (M28): the engines ship with the package or the scripts; the models are the user's and come
+    // from here, one download with resume and a checksum on each file.
+    auto *modelsGroup = new QGroupBox(tr("Speech models"), page);
+    auto *modelsLayout = new QVBoxLayout(modelsGroup);
+    modelsStatus_ = new QLabel(modelsGroup);
+    modelsStatus_->setObjectName(u"modelsStatus"_s);
+    modelsStatus_->setWordWrap(true);
+    modelsStatus_->setTextInteractionFlags(Qt::TextSelectableByMouse);
+    modelsProgress_ = new QProgressBar(modelsGroup);
+    modelsProgress_->setObjectName(u"modelsProgress"_s);
+    modelsProgress_->setTextVisible(true);
+    modelsProgress_->hide();
+    modelsButton_ = new QPushButton(modelsGroup);
+    modelsButton_->setObjectName(u"modelsDownload"_s);
+    connect(modelsButton_, &QPushButton::clicked, this, [this] {
+        if (!status_.assets) return;
+        if (status_.assets->isRunning()) {
+            status_.assets->cancel();
+        } else {
+            status_.assets->start(engineassets::missing(status_.assets->dataDir()));
+        }
+        refreshModels();
+    });
+    if (status_.assets) {
+        connect(status_.assets, &AssetDownloader::progress, this, [this](const QString &id, qint64 received, qint64 total) {
+            modelsProgress_->show();
+            modelsProgress_->setRange(0, int(std::max<qint64>(1, total / 1024)));
+            modelsProgress_->setValue(int(received / 1024));
+            modelsProgress_->setFormat(tr("%1 — %p%").arg(id));
+        });
+#ifdef Q_OS_WIN
+        const auto refreshVoiceEngines = [this] {
+            refreshModels();
+            if (status_.sherpa && status_.sherpa->load()) {
+                spotterStatus_->setText(status_.sherpa->libraryDir() == SherpaRuntime::defaultDir()
+                                            ? tr("Instant spotting: installed (your copy)")
+                                            : tr("Instant spotting: installed (from the package)"));
+                spotterStatus_->setToolTip({});
+            }
+            refreshMyVoice();
+            refreshOwnVoice();
+        };
+        connect(status_.assets, &AssetDownloader::assetInstalled, this, refreshVoiceEngines);
+        connect(status_.assets, &AssetDownloader::finished, this, refreshVoiceEngines);
+#else
+        connect(status_.assets, &AssetDownloader::assetInstalled, this, &SettingsDialog::refreshModels);
+        connect(status_.assets, &AssetDownloader::finished, this, &SettingsDialog::refreshModels);
+#endif
+        connect(status_.assets, &AssetDownloader::failed, this, [this](const QString &id, const Error &error) {
+            refreshModels();
+            modelsStatus_->setText(modelsStatus_->text() + u"\n"_s + tr("%1: %2").arg(id, error.message));
+        });
+    }
+    auto *modelsRow = new QHBoxLayout;
+    modelsRow->addWidget(modelsButton_);
+    modelsRow->addWidget(modelsProgress_, 1);
+    modelsLayout->addWidget(modelsStatus_);
+    modelsLayout->addLayout(modelsRow);
+    refreshModels();
+
     auto *layout = new QVBoxLayout(page);
+    layout->addWidget(modelsGroup);
+    layout->addLayout(waking);
+    layout->addSpacing(8);
     layout->addLayout(listening);
     layout->addSpacing(8);
     layout->addLayout(speaking);
-    layout->addSpacing(8);
-    layout->addWidget(wakeCheck_);
-    layout->addWidget(bargeInCheck_);
     layout->addStretch();
     layout->addWidget(note);
+
+    connect(sttProviderCombo_, &QComboBox::currentIndexChanged, this, [this] { showCloudProvider(true); });
+    connect(ttsProviderCombo_, &QComboBox::currentIndexChanged, this, [this] { showCloudProvider(false); });
+    connect(sttModelCombo_, &QComboBox::currentTextChanged, this, &SettingsDialog::updateUsingLines);
+    connect(ttsModelCombo_, &QComboBox::currentTextChanged, this, &SettingsDialog::updateUsingLines);
+    connect(tabs_, &QTabWidget::currentChanged, this, [this](int index) {
+        if (tabs_->widget(index) == voicePage_) refreshVoiceProviders();
+    });
+    refreshVoiceProviders();
     updateVoiceStatus();
-    return page;
+
+    // The tab is taller than the dialog: it scrolls.
+    auto *scroll = new QScrollArea(this);
+    scroll->setWidget(page);
+    scroll->setWidgetResizable(true);
+    scroll->setFrameShape(QFrame::NoFrame);
+    return scroll;
+}
+
+void SettingsDialog::refreshVoiceProviders() {
+    keepCloudModels();
+    const auto fill = [](QComboBox *combo, const QList<VoiceProviderChoice> &choices, const QString &selected) {
+        const QSignalBlocker blocker(combo);
+        combo->clear();
+        combo->addItem(tr("Automatic — the first provider that has it"), QString());
+        auto *items = qobject_cast<QStandardItemModel *>(combo->model());
+        for (const VoiceProviderChoice &choice : choices) {
+            combo->addItem(choice.usable ? choice.name : tr("%1 — %2").arg(choice.name, choice.reason), choice.id);
+            if (!choice.usable && items) items->item(combo->count() - 1)->setEnabled(false);
+        }
+        const int index = combo->findData(selected);
+        combo->setCurrentIndex(index >= 0 ? index : 0);
+    };
+    const QString stt = sttProviderCombo_->count() > 0 ? sttProviderCombo_->currentData().toString() : config_.voice.sttProvider;
+    const QString tts = ttsProviderCombo_->count() > 0 ? ttsProviderCombo_->currentData().toString() : config_.voice.ttsProvider;
+    fill(sttProviderCombo_, VoiceBackends::recognitionChoices(config_), stt);
+    fill(ttsProviderCombo_, VoiceBackends::speechChoices(config_), tts);
+    sttShownFor_.clear();
+    ttsShownFor_.clear();
+    showCloudProvider(true);
+    showCloudProvider(false);
+}
+
+void SettingsDialog::showCloudProvider(bool recognition) {
+    keepCloudModels();
+    QComboBox *providers = recognition ? sttProviderCombo_ : ttsProviderCombo_;
+    QComboBox *models = recognition ? sttModelCombo_ : ttsModelCombo_;
+    const QString id = providers->currentData().toString();
+    (recognition ? sttShownFor_ : ttsShownFor_) = id;
+    const ProviderConfig *provider = config_.provider(id);
+    // Automatic shows what it picks below instead.
+    models->setEnabled(provider != nullptr);
+    if (!recognition) ttsVoiceCombo_->setEnabled(provider != nullptr);
+    {
+        const QSignalBlocker blocker(models);
+        models->clear();
+        models->setEditText(provider ? (recognition ? provider->sttModel : provider->ttsModel) : QString());
+    }
+    if (!recognition) {
+        const QSignalBlocker blocker(ttsVoiceCombo_);
+        ttsVoiceCombo_->clear();
+        ttsVoiceCombo_->addItems(CloudVoices::voicesFor(ttsModelCombo_->currentText()));
+        ttsVoiceCombo_->setEditText(provider ? provider->ttsVoice : QString());
+    }
+    if (provider) listCloudModels(recognition);
+    updateUsingLines();
+}
+
+void SettingsDialog::keepCloudModels() {
+    if (ProviderConfig *provider = config_.provider(sttShownFor_)) provider->sttModel = sttModelCombo_->currentText().trimmed();
+    if (ProviderConfig *provider = config_.provider(ttsShownFor_)) {
+        provider->ttsModel = ttsModelCombo_->currentText().trimmed();
+        provider->ttsVoice = ttsVoiceCombo_->currentText().trimmed();
+    }
+}
+
+void SettingsDialog::listCloudModels(bool recognition) {
+    const QString id = (recognition ? sttProviderCombo_ : ttsProviderCombo_)->currentData().toString();
+    const ProviderConfig *provider = config_.provider(id);
+    if (!provider) return;
+    Result<std::unique_ptr<IAiProvider>> created = registry_->create(*provider);
+    if (!created) return;
+    std::unique_ptr<IAiProvider> &lister = recognition ? sttLister_ : ttsLister_;
+    lister = std::move(created).value();
+    // Dropped if the dialog or this lister goes away first.
+    lister->listModels([this, recognition, id](Result<QStringList> listed) {
+        if (!listed || (recognition ? sttShownFor_ : ttsShownFor_) != id) return;
+        QComboBox *models = recognition ? sttModelCombo_ : ttsModelCombo_;
+        const QString chosen = models->currentText();
+        const QSignalBlocker blocker(models);
+        models->clear();
+        for (const QString &model : listed.value()) {
+            if (recognition ? CloudVoices::isRecognitionModel(model) : CloudVoices::isSpeechModel(model)) models->addItem(model);
+        }
+        models->setEditText(chosen);
+    });
+}
+
+void SettingsDialog::updateUsingLines() {
+    // What Automatic picks with the dialog as it stands.
+    Config trial = config_;
+    trial.activeProvider = activeCombo_ ? activeCombo_->currentData().toString() : config_.activeProvider;
+    if (ProviderConfig *provider = trial.provider(sttShownFor_)) provider->sttModel = sttModelCombo_->currentText().trimmed();
+    if (ProviderConfig *provider = trial.provider(ttsShownFor_)) provider->ttsModel = ttsModelCombo_->currentText().trimmed();
+    trial.voice.sttProvider.clear();
+    trial.voice.ttsProvider.clear();
+    const QList<const ProviderConfig *> recognisers = VoiceBackends::recognitionProviders(trial);
+    sttUsing_->setText(recognisers.isEmpty()
+                           ? tr("No provider has a recognition model: local whisper.cpp is used.")
+                           : tr("Using %1 — %2").arg(recognisers.first()->name, recognisers.first()->sttModel));
+    sttUsing_->setVisible(sttProviderCombo_->currentData().toString().isEmpty());
+    const ProviderConfig *voice = VoiceBackends::speechProvider(trial);
+    ttsUsing_->setText(voice ? tr("Using %1 — %2").arg(voice->name, voice->ttsModel)
+                             : tr("No provider has a speech model: Piper speaks."));
+    ttsUsing_->setVisible(ttsProviderCombo_->currentData().toString().isEmpty());
 }
 
 void SettingsDialog::updateVoiceStatus() {
@@ -349,31 +958,151 @@ void SettingsDialog::updateVoiceStatus() {
     if (QFileInfo::exists(VoiceBackends::whisperModelPath(model))) {
         whisperStatus_->setText(tr("Installed."));
     } else {
-        whisperStatus_->setText(tr("Not installed — run: scripts/download-whisper-model.sh %1").arg(model));
+        whisperStatus_->setText(model == u"base.en"_s
+                                    ? tr("Not installed — download the speech models above.")
+                                    : tr("Not installed — run: scripts/download-whisper-model.sh %1").arg(model));
     }
+}
+
+void SettingsDialog::refreshModels() {
+    const QString dataDir = status_.assets ? status_.assets->dataDir() : EngineLocator::defaultUserDataDir();
+    const QList<engineassets::Asset> missing = engineassets::missing(dataDir);
+    QStringList lines;
+    for (const QString &group : engineassets::groups()) {
+        qint64 bytes = 0;
+        for (const engineassets::Asset &asset : missing) {
+            if (asset.group == group) bytes += asset.bytes;
+        }
+        lines.append(bytes == 0 ? tr("%1: installed").arg(engineassets::groupTitle(group))
+                                : tr("%1: missing, %2").arg(engineassets::groupTitle(group), engineassets::sizeText(bytes)));
+    }
+    const bool running = status_.assets && status_.assets->isRunning();
+    if (running) {
+        lines.append(tr("Downloading into %1 — the rest of Nexa keeps working meanwhile.").arg(dataDir));
+    } else if (missing.isEmpty()) {
+        lines.append(tr("Everything is in %1.").arg(dataDir));
+        modelsProgress_->hide();
+    } else {
+        lines.append(tr("They download into %1; a download that stops picks up where it was.").arg(dataDir));
+        modelsProgress_->hide();
+    }
+    modelsStatus_->setText(lines.join(u'\n'));
+    modelsButton_->setEnabled(status_.assets && (running || !missing.isEmpty()));
+    modelsButton_->setText(running ? tr("Cancel")
+                           : missing.isEmpty() ? tr("Everything installed")
+                                               : tr("Download (%1)").arg(engineassets::sizeText(engineassets::totalBytes(missing))));
+}
+
+void SettingsDialog::refreshMyVoice() {
+    SpeakerGate *gate = status_.speakerGate;
+    const bool canTell = gate && gate->canTell();
+    const Result<VoiceProfile> profile = VoiceProfile::load();
+    const bool enrolled = canTell && profile && profile.value().model == gate->modelName();
+    enrolButton_->setEnabled(canTell && status_.voice);
+    enrolButton_->setText(enrolled ? tr("Enrol again…") : tr("Enrol my voice…"));
+    forgetVoiceButton_->setEnabled(profile.isOk());
+    if (!canTell) {
+        myVoiceStatus_->setText(tr("Telling your voice from others needs the speaker model — download the speech "
+                                   "models above, then reopen Settings."));
+    } else if (!enrolled) {
+        myVoiceStatus_->setText(tr("Not enrolled: hands-free, Nexa answers anyone."));
+    } else {
+        myVoiceStatus_->setText(tr("Enrolled %1 from %n recording(s); %2 other voice(s) ignored since Nexa started.", nullptr,
+                                   profile.value().samples)
+                                    .arg(QLocale().toString(profile.value().enrolled.toLocalTime().date(), QLocale::ShortFormat))
+                                    .arg(gate->turnedAway()));
+    }
+}
+
+void SettingsDialog::refreshOwnVoice() {
+    const Result<VoiceSample> sample = VoiceSample::load();
+    SherpaRuntime *sherpa = status_.sherpa;
+    const bool engine = sherpa && sherpa->load() && sherpa->canCloneVoice();
+    const Phonemizer phonemizer(VoiceBackends::piperDir());
+    const bool entitled = !status_.account || status_.account->verifiedFeatures().ownVoice;
+    ownVoiceCheck_->setEnabled(entitled);
+    recordSampleButton_->setEnabled(entitled && status_.voice != nullptr);
+    recordSampleButton_->setText(sample ? tr("Record again…") : tr("Record my voice…"));
+    hearSampleButton_->setEnabled(entitled && sample.isOk() && engine && phonemizer.available());
+    forgetSampleButton_->setEnabled(sample.isOk());
+    QStringList notes;
+    if (!entitled) {
+        notes.append(tr("Speak in my voice requires a Pro or Team plan (Settings → Account)."));
+    }
+    if (sample) {
+        notes.append(tr("Recorded %1, %2 s.")
+                         .arg(QLocale().toString(sample.value().recorded.toLocalTime().date(), QLocale::ShortFormat))
+                         .arg(sample.value().durationMs() / 1000.0, 0, 'f', 1));
+    } else if (entitled) {
+        notes.append(tr("No sample yet: record the passage once, and Nexa can speak in your voice."));
+    }
+#ifdef Q_OS_WIN
+    if (!engine) notes.append(tr("ZipVoice is not installed — download the speech models above, then reopen Settings."));
+#else
+    if (!engine) notes.append(tr("ZipVoice is not installed — run scripts/download-sherpa.sh, then reopen Settings."));
+#endif
+    if (!phonemizer.available()) notes.append(phonemizer.problem());
+    ownVoiceStatus_->setText(notes.join(u' '));
+}
+
+void SettingsDialog::hearOwnVoice() {
+    if (status_.account && !status_.account->verifiedFeatures().ownVoice) {
+        ownVoiceStatus_->setText(tr("Speak in my voice requires a Pro or Team plan (Settings → Account)."));
+        return;
+    }
+    if (testSpeech_) testSpeech_->stop();
+    Result<std::unique_ptr<ISpeechSynthesizer>> own = VoiceBackends::createOwnVoice(config_.voice, status_.sherpa);
+    if (!own) {
+        ownVoiceStatus_->setText(own.error().message);
+        return;
+    }
+    std::vector<std::unique_ptr<ISpeechSynthesizer>> chain;
+    chain.push_back(std::move(own).value());
+    testSpeech_ = std::make_unique<SynthesizedSpeech>(std::move(chain));
+    connect(testSpeech_.get(), &ITextToSpeech::failed, this, [this](const Error &error) {
+        ownVoiceStatus_->setText(error.message);
+    });
+    connect(testSpeech_.get(), &ITextToSpeech::finished, this, [this] { refreshOwnVoice(); });
+    ownVoiceStatus_->setText(tr("Making the sentence in your voice (a few seconds the first time)…"));
+    testSpeech_->speak(tr("Hello! This is Nexa, speaking in your voice."));
 }
 
 void SettingsDialog::storeVoice() {
     VoiceConfig &voice = config_.voice;
+    keepCloudModels();
     voice.sttBackend = sttCombo_->currentData().toString();
+    voice.sttProvider = sttProviderCombo_->currentData().toString();
     voice.whisperModel = whisperCombo_->currentText().trimmed().isEmpty() ? VoiceConfig{}.whisperModel
                                                                          : whisperCombo_->currentText().trimmed();
     voice.language = languageEdit_->text().trimmed().isEmpty() ? u"auto"_s : languageEdit_->text().trimmed();
     voice.ttsBackend = ttsCombo_->currentData().toString();
+    voice.ttsProvider = ttsProviderCombo_->currentData().toString();
     voice.piperVoice = piperCombo_->currentText();
     voice.speechdVoice = speechdCombo_->currentData().toString();
     voice.ttsRate = rateSlider_->value() / 100.0;
     voice.speakReplies = speakCombo_->currentData().toString();
     voice.wakeWord = wakeCheck_->isChecked();
-    voice.bargeIn = bargeInCheck_->isChecked();
+    voice.bargeIn = bargeInCombo_->currentData().toString();
+    voice.conversation = conversationCheck_->isChecked();
+    voice.announceTasks = announceCombo_->currentData().toString();
+    voice.listenTo = listenToCombo_->currentData().toString();
+    voice.ownerStrictness = strictnessCombo_->currentData().toString();
+    voice.ownVoice = ownVoiceCheck_->isChecked();
+    voice.wakeName = wakeNameEdit_->text().trimmed().isEmpty() ? VoiceConfig{}.wakeName : wakeNameEdit_->text().trimmed();
+    voice.wakeSensitivity = sensitivityCombo_->currentData().toString();
+    voice.endPause = endPauseCombo_->currentData().toString();
+    voice.followUps = followUpsCheck_->isChecked();
+    voice.noiseReduction = noiseCheck_->isChecked();
 }
 
 void SettingsDialog::testVoice() {
     storeProvider();
     storeVoice();
     if (testSpeech_) testSpeech_->stop();
-    const ProviderConfig *active = config_.provider(activeCombo_->currentData().toString());
-    Result<std::unique_ptr<ITextToSpeech>> speech = VoiceBackends::createTextToSpeech(config_.voice, active, http_);
+    // As the dialog stands now, the first choice included.
+    Config trial = config_;
+    trial.activeProvider = activeCombo_->currentData().toString();
+    Result<std::unique_ptr<ITextToSpeech>> speech = VoiceBackends::createTextToSpeech(trial, http_, status_.sherpa);
     if (!speech || !speech.value()) {
         voiceTestResult_->setText(speech ? tr("Speech output is off.") : speech.error().message);
         return;
@@ -403,6 +1132,30 @@ QWidget *SettingsDialog::buildHelperTab() {
     authState_->setWordWrap(true);
     authState_->setTextInteractionFlags(Qt::TextSelectableByMouse);
 
+#ifdef Q_OS_WIN
+    helperTestButton_ = new QPushButton(tr("&Test Windows control"), page);
+    helperTestButton_->setToolTip(tr("Checks Windows SendInput and UI Automation readiness."));
+    connect(helperTestButton_, &QPushButton::clicked, this, &SettingsDialog::testHelper);
+
+    helperForgetButton_ = new QPushButton(tr("&Forget my password"), page);
+    helperForgetButton_->hide();
+
+    auto *explanation = new QLabel(
+        tr("On Windows, Nexa does not need a separate root helper service.\n\n"
+           "Typing and clicking use Windows SendInput directly, screen reading uses Windows UI Automation, "
+           "and administrator commands use Windows User Account Control (UAC) when needed.\n\n"
+           "Note: Windows UIPI prevents a standard process from typing or clicking inside elevated "
+           "(Run as Administrator) windows unless Nexa itself is started as Administrator.\n\n"
+           "Every action is written to the Actions panel and to %LOCALAPPDATA%\\nexa\\audit.jsonl."),
+        page);
+    explanation->setWordWrap(true);
+    explanation->setTextInteractionFlags(Qt::TextSelectableByMouse);
+
+    auto *form = new QFormLayout;
+    form->addRow(tr("System control:"), helperState_);
+    form->addRow(tr("Typing and clicking:"), inputState_);
+    form->addRow(tr("Elevation:"), authState_);
+#else
     helperTestButton_ = new QPushButton(tr("&Test the helper"), page);
     helperTestButton_->setToolTip(tr("Starts the helper and asks for its version. This needs no password."));
     connect(helperTestButton_, &QPushButton::clicked, this, &SettingsDialog::testHelper);
@@ -431,6 +1184,7 @@ QWidget *SettingsDialog::buildHelperTab() {
     form->addRow(tr("Root helper:"), helperState_);
     form->addRow(tr("Typing and clicking:"), inputState_);
     form->addRow(tr("Password:"), authState_);
+#endif
 
     auto *buttons = new QHBoxLayout;
     buttons->addWidget(helperTestButton_);
@@ -448,6 +1202,10 @@ QWidget *SettingsDialog::buildHelperTab() {
 }
 
 void SettingsDialog::showHelperStatus() {
+#ifdef Q_OS_WIN
+    helperState_->setText(tr("Built-in (Windows SendInput & UAC) — no separate helper needed."));
+    helperState_->setStyleSheet(u"color: #2bb3a0;"_s);
+#else
     if (HelperClient::isInstalled()) {
         helperState_->setText(tr("Installed."));
         helperState_->setStyleSheet(u"color: #2bb3a0;"_s);
@@ -456,6 +1214,7 @@ void SettingsDialog::showHelperStatus() {
                                  "type or click."));
         helperState_->setStyleSheet(u"color: #e09b2d;"_s);
     }
+#endif
     QStringList lines;
     if (status_.inputSummary) lines.append(status_.inputSummary());
     if (status_.inputNotes) lines += status_.inputNotes();
@@ -466,6 +1225,11 @@ void SettingsDialog::showHelperStatus() {
 // Whether the password has already been given for this login. Only asked of a helper that is
 // already running: opening this tab is no reason to start root-privileged code.
 void SettingsDialog::showAuthorizationState() {
+#ifdef Q_OS_WIN
+    helperForgetButton_->setEnabled(false);
+    authState_->setText(tr("Windows UAC prompts when an administrator action is requested."));
+    return;
+#else
     const bool installed = HelperClient::isInstalled();
     helperForgetButton_->setEnabled(installed && status_.helper != nullptr);
     if (!installed) {
@@ -488,9 +1252,20 @@ void SettingsDialog::showAuthorizationState() {
                                       ? tr("Given for this login — nothing will ask again until you log out.")
                                       : tr("Asked for once, the next time Nexa needs the helper."));
     });
+#endif
 }
 
 void SettingsDialog::testHelper() {
+#ifdef Q_OS_WIN
+    QStringList parts;
+    if (status_.inputSummary) parts.append(status_.inputSummary());
+    if (status_.a11y && status_.a11y->isAvailable()) parts.append(tr("UI Automation ready"));
+    helperState_->setText(parts.isEmpty()
+                              ? tr("Working — built-in Windows control is active.")
+                              : tr("Working — %1.").arg(parts.join(u" · "_s)));
+    helperState_->setStyleSheet(u"color: #2bb3a0;"_s);
+    return;
+#else
     if (!status_.helper) return;
     helperTestButton_->setEnabled(false);
     helperState_->setStyleSheet({});
@@ -508,6 +1283,7 @@ void SettingsDialog::testHelper() {
         }
         if (self->status_.inputSummary) self->showHelperStatus();
     });
+#endif
 }
 
 void SettingsDialog::forgetAuthorization() {
@@ -674,7 +1450,11 @@ void SettingsDialog::showPhone() {
         return;
     }
     if (!AdbClient::isInstalled()) {
+#ifdef Q_OS_WIN
+        phoneState_->setText(tr("adb is not installed. Install Android Platform Tools with: winget install Google.PlatformTools"));
+#else
         phoneState_->setText(tr("adb is not installed. Install it with: sudo apt install adb"));
+#endif
         phoneState_->setStyleSheet(u"color: #e09b2d;"_s);
         return;
     }
@@ -828,6 +1608,10 @@ QWidget *SettingsDialog::buildRemoteTab() {
     remotePort_->setRange(1024, 65534);
     remotePort_->setValue(config_.remote.port);
     remotePort_->setToolTip(tr("HTTPS on the network; the next port up serves the phone over adb"));
+    remoteAnnounce_ = new QCheckBox(tr("Say on the PC when a message comes from the phone"), page);
+    remoteAnnounce_->setObjectName(u"remoteAnnounce"_s);
+    remoteAnnounce_->setToolTip(tr("“Message received from your phone: …” — read aloud, and shown as a notification"));
+    remoteAnnounce_->setChecked(config_.remote.announceMessages);
 
     remoteState_ = new QLabel(page);
     remoteState_->setWordWrap(true);
@@ -886,14 +1670,98 @@ QWidget *SettingsDialog::buildRemoteTab() {
     form->addRow(tr("Certificate:"), remoteFingerprint_);
     form->addRow(tr("Paired phones:"), pairedRow);
 
+    // Away from home: the phone reaches this PC from anywhere — privately over Tailscale, or through a public
+    // tunnel (Cloudflare on the owner's domain, ngrok). Each program keeps its own sign-in; Nexa only starts it.
+    auto *away = new QGroupBox(tr("Away from home"), page);
+    auto *awayForm = new QFormLayout(away);
+    const auto stateLabel = [away] {
+        auto *label = new QLabel(away);
+        label->setWordWrap(true);
+        label->setTextInteractionFlags(Qt::TextSelectableByMouse);
+        label->setObjectName(u"sectionNote"_s);
+        return label;
+    };
+    tailscaleCheck_ = new QCheckBox(tr("Offer this PC's Tailscale address to the phone"), away);
+    tailscaleCheck_->setObjectName(u"tailscaleCheck"_s);
+    tailscaleCheck_->setChecked(config_.remote.tailscale);
+    tailscaleCheck_->setToolTip(tr("Private: only your own devices, signed in to your Tailscale account, can reach it."));
+    tailscaleSignIn_ = new QPushButton(tr("Sign in…"), away);
+    tailscaleSignIn_->setObjectName(u"tailscaleSignIn"_s);
+    tailscaleSignIn_->setAutoDefault(false);
+    connect(tailscaleSignIn_, &QPushButton::clicked, this, [this] {
+        if (!status_.remoteAccess) return;
+        tailscaleSignIn_->setEnabled(false);
+        tailscaleState_->setText(tr("Asking Tailscale for a sign-in link…"));
+        status_.remoteAccess->signInTailscale([this](Result<QString> link) {
+            tailscaleSignIn_->setEnabled(true);
+            if (!link) {
+                tailscaleState_->setText(link.error().message);
+                return;
+            }
+            if (link.value().isEmpty()) {
+                showAwayFromHome();
+                return;
+            }
+            QDesktopServices::openUrl(QUrl(link.value()));
+            tailscaleState_->setText(tr("Sign in in the browser that opened (or open %1).").arg(link.value()));
+        });
+    });
+    auto *tailscaleRow = new QHBoxLayout;
+    tailscaleRow->addWidget(tailscaleCheck_, 1);
+    tailscaleRow->addWidget(tailscaleSignIn_);
+    tailscaleState_ = stateLabel();
+    awayForm->addRow(tr("Tailscale:"), tailscaleRow);
+    awayForm->addRow(QString(), tailscaleState_);
+
+    cloudflareMode_ = new QComboBox(away);
+    cloudflareMode_->setObjectName(u"cloudflareMode"_s);
+    cloudflareMode_->addItem(tr("Off"), u"off"_s);
+    cloudflareMode_->addItem(tr("Quick tunnel — a trycloudflare.com address, new at every start"), u"quick"_s);
+    cloudflareMode_->addItem(tr("My domain — a fixed address (cloudflared tunnel login, once)"), u"named"_s);
+    cloudflareMode_->setCurrentIndex(std::max(0, cloudflareMode_->findData(config_.remote.cloudflare)));
+    cloudflareHostname_ = new QLineEdit(config_.remote.cloudflareHostname, away);
+    cloudflareHostname_->setObjectName(u"cloudflareHostname"_s);
+    cloudflareHostname_->setPlaceholderText(tr("nexa.yourdomain.com"));
+    const auto followMode = [this] { cloudflareHostname_->setEnabled(cloudflareMode_->currentData() == u"named"_s); };
+    connect(cloudflareMode_, &QComboBox::currentIndexChanged, this, followMode);
+    followMode();
+    cloudflareState_ = stateLabel();
+    awayForm->addRow(tr("Cloudflare:"), cloudflareMode_);
+    awayForm->addRow(tr("Address:"), cloudflareHostname_);
+    awayForm->addRow(QString(), cloudflareState_);
+
+    ngrokCheck_ = new QCheckBox(tr("Use ngrok"), away);
+    ngrokCheck_->setObjectName(u"ngrokCheck"_s);
+    ngrokCheck_->setChecked(config_.remote.ngrok);
+    ngrokCheck_->setToolTip(tr("Set ngrok's authtoken once in a terminal: ngrok config add-authtoken <token>. Nexa never "
+                               "sees it."));
+    ngrokDomain_ = new QLineEdit(config_.remote.ngrokDomain, away);
+    ngrokDomain_->setObjectName(u"ngrokDomain"_s);
+    ngrokDomain_->setPlaceholderText(tr("your-name.ngrok-free.app (your free fixed domain)"));
+    ngrokState_ = stateLabel();
+    awayForm->addRow(tr("ngrok:"), ngrokCheck_);
+    awayForm->addRow(tr("Domain:"), ngrokDomain_);
+    awayForm->addRow(QString(), ngrokState_);
+    auto *awayNote = new QLabel(tr("Tailscale is private to your devices. Cloudflare and ngrok put the web remote on "
+                                   "the internet: only a paired phone gets past it, but the tunnel's company can read "
+                                   "the traffic. The laptop must be awake for any of them."),
+                                away);
+    awayNote->setWordWrap(true);
+    awayNote->setObjectName(u"sectionNote"_s);
+    awayForm->addRow(awayNote);
+    if (status_.remoteAccess) connect(status_.remoteAccess, &RemoteAccess::changed, this, &SettingsDialog::showAwayFromHome);
+
     auto *layout = new QVBoxLayout(page);
     layout->addLayout(enableRow);
+    layout->addWidget(remoteAnnounce_);
     layout->addLayout(form);
     layout->addWidget(pairButton_, 0, Qt::AlignLeft);
     layout->addLayout(pairRow);
+    layout->addWidget(away);
     layout->addSpacing(8);
     layout->addWidget(help);
     layout->addStretch();
+    showAwayFromHome();
 
     if (status_.remote) {
         connect(status_.remote, &RemoteServer::runningChanged, this, &SettingsDialog::showRemote);
@@ -933,6 +1801,37 @@ void SettingsDialog::showRemote() {
     remoteFingerprint_->setText(fingerprint.isEmpty() ? tr("none — HTTPS is not running") : u"SHA-256 "_s + fingerprint);
 }
 
+void SettingsDialog::showAwayFromHome() {
+    const bool entitled = !status_.account || status_.account->verifiedFeatures().awayFromHome;
+    tailscaleCheck_->setEnabled(entitled);
+    cloudflareMode_->setEnabled(entitled);
+    cloudflareHostname_->setEnabled(entitled && cloudflareMode_->currentData() == u"named"_s);
+    ngrokCheck_->setEnabled(entitled);
+    ngrokDomain_->setEnabled(entitled);
+
+    RemoteAccess *access = status_.remoteAccess;
+    if (!access) {
+        for (QLabel *label : {tailscaleState_, cloudflareState_, ngrokState_}) {
+            label->setText(entitled ? tr("Not available here.")
+                                    : tr("Requires a Pro or Team plan (Settings → Account)."));
+        }
+        tailscaleSignIn_->setEnabled(false);
+        return;
+    }
+    if (!entitled) {
+        tailscaleSignIn_->setEnabled(false);
+        for (QLabel *label : {tailscaleState_, cloudflareState_, ngrokState_}) {
+            label->setText(tr("Requires a Pro or Team plan (Settings → Account)."));
+        }
+        return;
+    }
+    tailscaleSignIn_->setEnabled(true);
+    tailscaleState_->setText(access->describe(RemoteRoute::Kind::Tailscale));
+    tailscaleSignIn_->setVisible(access->tailscale()->installed() && !access->tailscale()->state().signedIn);
+    cloudflareState_->setText(access->describe(RemoteRoute::Kind::Cloudflare));
+    ngrokState_->setText(access->describe(RemoteRoute::Kind::Ngrok));
+}
+
 void SettingsDialog::startPairing() {
     if (!status_.pairing) return;
     status_.pairing->startPairing();
@@ -965,7 +1864,7 @@ void SettingsDialog::showPairing() {
                                "%2 %3\n\nThe code works once, for %4:%5 more.")
                                 .arg(base, code.left(3), code.mid(3))
                                 .arg(left / 60)
-                                .arg(left % 60, 2, 10, u'0'));
+                                .arg(left % 60, 2, 10, QLatin1Char('0')));
 }
 
 void SettingsDialog::showPairedDevices() {
@@ -996,10 +1895,17 @@ QWidget *SettingsDialog::buildPolicyTab() {
     policyCombo_->setCurrentIndex(index >= 0 ? index : 0);
 
     auto *explanation = new QLabel(
+#ifdef Q_OS_WIN
+        tr("Every action is recorded in %LOCALAPPDATA%\\nexa\\audit.jsonl and shown in the Actions panel. "
+           "Destructive commands (del /s, rmdir /s, format, shutdown, git reset --hard, …) are flagged there in "
+           "every mode.\n\nStop everything at any time with Esc (current reply) or Ctrl+Alt+Esc / "
+           "Ctrl+Shift+Esc (panic: replies, tools and the processes they started)."),
+#else
         tr("Every action is recorded in ~/.local/share/nexa/audit.jsonl and shown in the Actions panel. "
            "Destructive commands (rm -r, mkfs, dd of=, shutdown, git reset --hard, …) are flagged there in "
            "every mode.\n\nStop everything at any time with Esc (current reply) or Ctrl+Alt+Esc / "
            "Ctrl+Shift+Esc (panic: replies, tools and the processes they started)."),
+#endif
         page);
     explanation->setWordWrap(true);
 
@@ -1030,18 +1936,96 @@ QWidget *SettingsDialog::buildGeneralTab() {
     } else {
         hotkeys = tr("not available — the desktop did not grant global hotkeys");
     }
+    // The screen as text (M27): read over the desktop's accessibility bus while Share screen is on. GTK apps are on
+    // it always; Chrome, Electron and Qt apps only with GNOME's own switch, which this box sets (from their next start).
+    auto *screenGroup = new QGroupBox(tr("Screen as text"), page);
+    auto *screenLayout = new QVBoxLayout(screenGroup);
+    const bool haveBus = status_.a11y && status_.a11y->isAvailable();
+#ifdef Q_OS_WIN
+    auto *screenNote = new QLabel(haveBus ? tr("While Share screen is on, Nexa reads desktop windows as text through "
+                                               "Windows UI Automation — so a model that cannot see images still works "
+                                               "with them. A picture is taken only when the text is not enough.")
+                                          : tr("Windows UI Automation is not available on this session, so windows cannot "
+                                               "be read as text; the screen is a picture only."),
+                                  screenGroup);
+    screenNote->setWordWrap(true);
+    exposeContentsCheck_ = new QCheckBox(tr("Windows UI Automation exposes app contents automatically (always enabled by Windows)"),
+                                         screenGroup);
+    exposeContentsCheck_->setObjectName(u"exposeContents"_s);
+    exposeContentsCheck_->setEnabled(false);
+    if (haveBus) {
+        if (const Result<bool> on = status_.a11y->appsExposeContents()) exposeContentsWas_ = on.value();
+    }
+    exposeContentsCheck_->setChecked(exposeContentsWas_);
+    screenLayout->addWidget(screenNote);
+    screenLayout->addWidget(exposeContentsCheck_);
+
+    auto *hotkeyLabel = new QLabel(
+        tr("Hotkeys that work from any window: %1.\nInside Nexa: Ctrl+M talks, Esc stops the reply, "
+           "Ctrl+Alt+Esc stops everything.")
+            .arg(hotkeys),
+        page);
+#else
+    auto *screenNote = new QLabel(haveBus ? tr("While Share screen is on, Nexa reads the window in front as text through the "
+                                               "desktop's accessibility bus — so a model that cannot see images still works "
+                                               "with it. A picture is taken only when the text is not enough.")
+                                          : tr("The accessibility bus is not running on this desktop, so windows cannot be read "
+                                               "as text; the screen is a picture only."),
+                                  screenGroup);
+    screenNote->setWordWrap(true);
+    exposeContentsCheck_ = new QCheckBox(tr("Let apps expose their contents to Nexa (GNOME's accessibility switch; Chrome, "
+                                            "Electron and Qt apps need it, from their next start — GTK apps always do)"),
+                                         screenGroup);
+    exposeContentsCheck_->setObjectName(u"exposeContents"_s);
+    exposeContentsCheck_->setEnabled(haveBus);
+    if (haveBus) {
+        if (const Result<bool> on = status_.a11y->appsExposeContents()) exposeContentsWas_ = on.value();
+    }
+    exposeContentsCheck_->setChecked(exposeContentsWas_);
+    screenLayout->addWidget(screenNote);
+    screenLayout->addWidget(exposeContentsCheck_);
+
     auto *hotkeyLabel = new QLabel(
         tr("Hotkeys that work from any window: %1.\nChange them in GNOME Settings → Keyboard → Keyboard Shortcuts "
            "→ Nexa Assistant. Inside Nexa: Ctrl+M talks, Esc stops the reply, Ctrl+Alt+Esc stops everything.")
             .arg(hotkeys),
         page);
+#endif
     hotkeyLabel->setWordWrap(true);
     hotkeyLabel->setTextInteractionFlags(Qt::TextSelectableByMouse);
 
-    // The theme gallery: Nexa's own pair following the desktop, and every other pack — a colour
-    // family in dark or light, each with its motion style. The toolbar's sun/moon button swaps
-    // the scheme within the family.
+    // The theme gallery: every pack is dark; the chips above it are the categories, and the tile names
+    // the pack and its motion style. The toolbar's palette button steps through the category of the
+    // theme on. The choice is kept apart from the tiles, so a chip that hides it does not lose it.
+    themeChoice_ = NexaThemes::resolve(config_.ui.theme).id;
+    auto *chipRow = new QWidget(page);
+    auto *chipGrid = new QGridLayout(chipRow);
+    chipGrid->setContentsMargins(0, 0, 0, 0);
+    chipGrid->setHorizontalSpacing(6);
+    chipGrid->setVerticalSpacing(4);
+    themeChips_ = new QButtonGroup(chipRow);
+    themeChips_->setExclusive(true);
+    const QStringList categories = QStringList{QString()} + NexaThemes::categories();
+    constexpr int kChipColumns = 6;
+    for (int i = 0; i < categories.size(); ++i) {
+        // "Fire & Ember": a button reads a lone & as a shortcut mark, so it is doubled.
+        const QString label = categories.at(i).isEmpty() ? tr("All") : QString(categories.at(i)).replace(u'&', u"&&"_s);
+        auto *chip = new QPushButton(label, chipRow);
+        chip->setObjectName(u"galleryChip"_s);
+        chip->setCheckable(true);
+        chip->setFocusPolicy(Qt::TabFocus);
+        chip->setProperty("category", categories.at(i));
+        themeChips_->addButton(chip, i);
+        chipGrid->addWidget(chip, i / kChipColumns, i % kChipColumns);
+        if (i == 0) chip->setChecked(true);
+    }
+    chipGrid->setColumnStretch(kChipColumns, 1);
+    connect(themeChips_, &QButtonGroup::buttonClicked, this, [this](QAbstractButton *chip) {
+        themeCategory_ = chip->property("category").toString();
+        fillThemeGallery();
+    });
     themeGallery_ = new QListWidget(page);
+    themeGallery_->setObjectName(u"themeGallery"_s);
     themeGallery_->setViewMode(QListView::IconMode);
     themeGallery_->setIconSize(QSize(96, 64));
     themeGallery_->setGridSize(QSize(142, 112));
@@ -1052,6 +2036,9 @@ QWidget *SettingsDialog::buildGeneralTab() {
     themeGallery_->setUniformItemSizes(true);
     themeGallery_->setMinimumHeight(240);
     themeGallery_->setToolTip(tr("Every theme is the same design in other colours; its motion style is named under it."));
+    connect(themeGallery_, &QListWidget::currentItemChanged, this, [this](QListWidgetItem *current, QListWidgetItem *) {
+        if (current) themeChoice_ = current->data(Qt::UserRole).toString();
+    });
     fillThemeGallery();
 
     // The designs: each a different arrangement, core and type; choosing one brings the palette
@@ -1070,23 +2057,23 @@ QWidget *SettingsDialog::buildGeneralTab() {
     fillDesignGallery();
     connect(designGallery_, &QListWidget::currentItemChanged, this, [this](QListWidgetItem *current, QListWidgetItem *) {
         if (!current) return;
-        const DesignSpec design = NexaDesigns::resolve(current->data(Qt::UserRole).toString());
-        for (int i = 0; i < themeGallery_->count(); ++i) {
-            if (themeGallery_->item(i)->data(Qt::UserRole).toString() == design.palette) themeGallery_->setCurrentRow(i);
-        }
+        showTheme(NexaDesigns::resolve(current->data(Qt::UserRole).toString()).palette);
     });
 
     auto *layout = new QVBoxLayout(page);
     layout->addWidget(new QLabel(tr("Design (%n, each its own arrangement and core):", nullptr, int(NexaDesigns::all().size())), page));
     layout->addWidget(designGallery_);
     layout->addSpacing(6);
-    layout->addWidget(new QLabel(tr("Palette (%n of them, in eight motion styles):", nullptr, int(NexaThemes::all().size()) + 1), page));
+    layout->addWidget(new QLabel(tr("Theme (%n of them, all dark, in %1 categories, each with its own motion):", nullptr,
+                                    int(NexaThemes::all().size())).arg(NexaThemes::categories().size()), page));
+    layout->addWidget(chipRow);
     layout->addWidget(themeGallery_, 2);
     layout->addSpacing(8);
     layout->addWidget(new QLabel(tr("System prompt (sent at the start of every conversation):"), page));
     layout->addWidget(systemPromptEdit_, 1);
     layout->addWidget(restore, 0, Qt::AlignRight);
     layout->addSpacing(8);
+    layout->addWidget(screenGroup);
     layout->addWidget(hotkeyLabel);
     return page;
 }
@@ -1127,11 +2114,15 @@ void SettingsDialog::showProvider(int row) {
     baseUrlEdit_->setText(provider.baseUrl);
     apiKeyEdit_->setText(provider.apiKey);
     modelEdit_->setText(provider.defaultModel);
-    sttModelEdit_->setText(provider.sttModel);
-    ttsModelEdit_->setText(provider.ttsModel);
-    ttsVoiceEdit_->setText(provider.ttsVoice);
     textToolsCheck_->setChecked(provider.textTools);
+    fallbackCheck_->setChecked(provider.fallback);
     showKeyCheck_->setChecked(false);
+    showRowsFor(provider.kind, ProviderRegistry::isNexaManaged(provider));
+    if (valid) {
+        showSignIn(provider);
+    } else {
+        dropSignIn();
+    }
 }
 
 void SettingsDialog::storeProvider() {
@@ -1142,10 +2133,90 @@ void SettingsDialog::storeProvider() {
     provider.baseUrl = baseUrlEdit_->text().trimmed();
     provider.apiKey = apiKeyEdit_->text().trimmed();
     provider.defaultModel = modelEdit_->text().trimmed();
-    provider.sttModel = sttModelEdit_->text().trimmed();
-    provider.ttsModel = ttsModelEdit_->text().trimmed();
-    provider.ttsVoice = ttsVoiceEdit_->text().trimmed();
     provider.textTools = textToolsCheck_->isChecked();
+    provider.fallback = fallbackCheck_->isChecked();
+}
+
+void SettingsDialog::showRowsFor(const QString &kind, bool nexaManaged) {
+    const bool http = ProviderRegistry::isHttpKind(kind) || kind.isEmpty();
+    const bool agy = kind == kKindAgy;
+    const bool codex = kind == kKindCodex;
+    const bool claude = kind == kKindClaudeCode;
+    const bool program = agy || codex || claude;
+    QFormLayout *form = providerFormLayout_;
+    if (auto *label = qobject_cast<QLabel *>(form->labelForField(baseUrlEdit_))) {
+        label->setText(http ? tr("Base URL:") : program ? tr("Program:") : tr("Server:"));
+    }
+#ifdef Q_OS_WIN
+    baseUrlEdit_->setPlaceholderText(http    ? u"https://api.example.com/v1"_s
+                                     : agy    ? tr("agy on PATH or in %LOCALAPPDATA%\\Programs")
+                                     : codex  ? tr("codex on PATH or in %APPDATA%\\npm")
+                                     : claude ? tr("claude on PATH or in %USERPROFILE%\\.local\\bin")
+                                              : tr("Nexa starts its own"));
+#else
+    baseUrlEdit_->setPlaceholderText(http    ? u"https://api.example.com/v1"_s
+                                     : agy    ? tr("agy on PATH or in ~/.local/bin")
+                                     : codex  ? tr("codex on PATH or in ~/.npm-global/bin")
+                                     : claude ? tr("claude on PATH or in ~/.local/bin")
+                                              : tr("Nexa starts its own"));
+#endif
+    // agy, Codex and Claude Code sign in by themselves (Sign-in below); Nexa AI uses Settings → Account's
+    // signed licence token (never stored in config.json); an opencode server has a password.
+    form->setRowVisible(keyRow_, !program && !nexaManaged);
+    if (auto *label = qobject_cast<QLabel *>(form->labelForField(keyRow_))) {
+        label->setText(http ? tr("API key:") : tr("Server password:"));
+    }
+    apiKeyEdit_->setPlaceholderText(http ? tr("not set") : tr("only for a server you run yourself"));
+    // The programs take Nexa's tools as text whatever the box says.
+    form->setRowVisible(textToolsCheck_, http);
+    if (!ProviderRegistry::isProgramKind(kind)) form->setRowVisible(signInHolder_, false);
+}
+
+void SettingsDialog::dropSignIn() {
+    if (!signIn_) return;
+    signInLayout_->removeWidget(signIn_);
+    signIn_->shutdown();    // cancels what runs, lets go of the program, deletes itself later
+    signIn_ = nullptr;
+}
+
+void SettingsDialog::showSignIn(const ProviderConfig &provider) {
+    dropSignIn();
+    signInSource_ = provider.baseUrl.trimmed() + u'\n' + provider.apiKey.trimmed();
+    std::unique_ptr<ISignIn> signIn = registry_->createSignIn(provider);
+    providerFormLayout_->setRowVisible(signInHolder_, signIn != nullptr);
+    if (!signIn) return;
+    signIn_ = new ProviderSignInBlock(provider.kind, std::move(signIn), status_.replyRunning, signInHolder_);
+    signIn_->setOpensBrowser(!snapshotting_);
+    signInLayout_->addWidget(signIn_);
+    // After a sign-in or sign-out the chat takes up the new state: the providers are built again.
+    connect(signIn_, &ProviderSignInBlock::providersChanged, this, [this] {
+        if (!snapshotting_ && status_.providersChanged) status_.providersChanged();
+    });
+    // Not inside the constructor or a row change: the tab in front is known by then.
+    QPointer<ProviderSignInBlock> shown = signIn_;
+    QTimer::singleShot(0, this, [this, shown] {
+        if (shown && shown == signIn_) checkSignIn();
+    });
+}
+
+void SettingsDialog::checkSignIn() {
+    if (signIn_ && tabs_ && tabs_->currentWidget() == tabOf(providersPage_)) signIn_->requestCheck();
+}
+
+void SettingsDialog::moveProvider(int by) {
+    const int row = providerList_->currentRow();
+    const int target = row + by;
+    if (row < 0 || target < 0 || target >= config_.providers.size()) return;
+    storeProvider();
+    config_.providers.move(row, target);
+    {
+        const QSignalBlocker blocker(providerList_);
+        QListWidgetItem *item = providerList_->takeItem(row);
+        providerList_->insertItem(target, item);
+        providerList_->setCurrentRow(target);
+    }
+    currentRow_ = target;
+    refreshActiveCombo();
 }
 
 void SettingsDialog::addProvider(const ProviderPreset &preset) {
@@ -1162,9 +2233,41 @@ void SettingsDialog::addProvider(const ProviderPreset &preset) {
     providerList_->setCurrentRow(int(config_.providers.size()) - 1);
 }
 
+void SettingsDialog::fillAddMenu(QMenu *menu) {
+    // By category, the programs first; a category none of whose presets is available is left out, and a preset
+    // of a category nobody listed goes under "Other" at the end (the grouping is ProviderRegistry's, tested).
+    const QList<ProviderPreset> available = registry_->availablePresets();
+    for (const PresetGroup &group : ProviderRegistry::groupPresets(available, ProviderRegistry::presetCategories())) {
+        QMenu *submenu = menu->addMenu(group.title == u"Other" ? tr("Other") : group.title);
+        for (const int index : group.indices) {
+            const ProviderPreset &preset = available.at(index);
+            submenu->addAction(preset.name, this, [this, preset] { addProvider(preset); });
+        }
+    }
+    menu->addSeparator();
+    menu->addAction(tr("Browse all…"), this, &SettingsDialog::browseProviders);
+}
+
+void SettingsDialog::browseProviders() {
+    ProviderGalleryDialog gallery(registry_->availablePresets(), ProviderRegistry::presetCategories(), this);
+    if (gallery.exec() != QDialog::Accepted) return;
+    if (const std::optional<ProviderPreset> chosen = gallery.selectedPreset()) addProvider(*chosen);
+}
+
 void SettingsDialog::removeProvider() {
     const int row = providerList_->currentRow();
     if (row < 0 || row >= config_.providers.size()) return;
+    const ProviderConfig &provider = config_.providers.at(row);
+    QString question = tr("Remove %1 from Nexa?").arg(provider.name);
+    if (ProviderRegistry::isProgramKind(provider.kind)) {
+        question += u"\n\n"_s + tr("%1 itself stays installed and signed in; Add → Programs puts it back.").arg(provider.name);
+    } else if (!provider.apiKey.isEmpty()) {
+        question += u"\n\n"_s + tr("Its API key is removed with it.");
+    }
+    if (QMessageBox::question(this, tr("Remove provider"), question, QMessageBox::Yes | QMessageBox::No, QMessageBox::No)
+        != QMessageBox::Yes) {
+        return;
+    }
     currentRow_ = -1;  // the form shows the provider being removed: do not store it back
     config_.providers.removeAt(row);
     const int next = std::min(row, int(config_.providers.size()) - 1);
@@ -1190,7 +2293,18 @@ void SettingsDialog::refreshActiveCombo() {
 void SettingsDialog::testConnection() {
     storeProvider();
     if (currentRow_ < 0 || currentRow_ >= config_.providers.size()) return;
-    Result<std::unique_ptr<IAiProvider>> created = registry_->create(config_.providers.at(currentRow_));
+    ProviderConfig tested = config_.providers.at(currentRow_);
+    if (ProviderRegistry::isNexaManaged(tested) && status_.account) {
+        if (!status_.account->verifiedFeatures().nexaAi) {
+            showTestResult(tr("Nexa AI requires a Pro or Team plan (Settings → Account)."), false);
+            return;
+        }
+        tested.apiKey = status_.account->licenseToken();
+        if (tested.baseUrl.isEmpty() || tested.baseUrl == u"https://nexadownloadmanager.com/api/assistant/v1"_s) {
+            tested.baseUrl = status_.account->nexaAiBaseUrl();
+        }
+    }
+    Result<std::unique_ptr<IAiProvider>> created = registry_->create(tested);
     if (!created) {
         showTestResult(created.error().message, false);
         return;
@@ -1233,7 +2347,8 @@ QStringList lines(const QString &text) {
     return kept;
 }
 
-// A theme as a picture: its core at rest on its ground, with four of its state colours beside.
+// A theme as a picture: its core at rest on its ground — the backdrop behind it — with a small panel in its chrome
+// beside, holding four of its state colours.
 QPixmap themeSwatch(const ThemePack &pack) {
     constexpr int kWidth = 96;
     constexpr int kHeight = 64;
@@ -1243,9 +2358,19 @@ QPixmap themeSwatch(const ThemePack &pack) {
     pixmap.fill(Qt::transparent);
     QPainter painter(&pixmap);
     painter.setRenderHint(QPainter::Antialiasing, true);
+    const QRectF frame(0.5, 0.5, kWidth - 1, kHeight - 1);
     painter.setPen(QPen(pack.tokens.line, 1));
     painter.setBrush(pack.tokens.ground);
-    painter.drawRoundedRect(QRectF(0.5, 0.5, kWidth - 1, kHeight - 1), 10, 10);
+    painter.drawRoundedRect(frame, 10, 10);
+    const ChromeColours colours{pack.tokens.ground, pack.tokens.panel, pack.tokens.line, pack.tokens.idle, pack.tokens.text};
+    {
+        QPainterPath clip;
+        clip.addRoundedRect(frame, 10, 10);
+        painter.save();
+        painter.setClipPath(clip);
+        paintBackdrop(painter, frame, pack.chrome.backdrop, colours);
+        painter.restore();
+    }
 
     NexaCoreWidget core;
     core.setAnimated(false);
@@ -1266,14 +2391,21 @@ QPixmap themeSwatch(const ThemePack &pack) {
     core.setGroundColor(pack.tokens.ground);
     painter.drawPixmap(QRectF(6, 6, 52, 52), core.snapshot(CoreMode::Idle, 52, true, ratio), QRectF(0, 0, 52 * ratio, 52 * ratio));
 
+    // The panel beside the core, in the pack's chrome (the sheet's rounded panel when Flat).
+    const QRectF panel(64, 6, 26, 52);
+    if (pack.chrome.panels == PanelChrome::Flat) {
+        painter.setPen(QPen(pack.tokens.line, 1));
+        painter.setBrush(pack.tokens.panel);
+        painter.drawRoundedRect(panel, 4, 4);
+    } else {
+        paintPanelChrome(painter, panel, pack.chrome.panels, 6, colours);
+    }
     painter.setPen(Qt::NoPen);
     const QColor states[] = {pack.tokens.listen, pack.tokens.think, pack.tokens.act, pack.tokens.error};
     for (int i = 0; i < 4; ++i) {
         painter.setBrush(states[i]);
-        painter.drawEllipse(QRectF(72, 10 + i * 12, 9, 9));
+        painter.drawEllipse(QRectF(72.5, 11 + i * 11, 9, 9));
     }
-    painter.setBrush(pack.tokens.text);
-    painter.drawRoundedRect(QRectF(66, 54, 22, 3), 1.5, 1.5);
     return pixmap;
 }
 
@@ -1363,6 +2495,18 @@ QPixmap designSwatch(const DesignSpec &design) {
         corePlace = QPointF(14, 11);
         coreSize = 12;
         break;
+    case WindowLayout::MissionControl:
+        // The agents' rail, the core and the board in the middle, the live activity on the right.
+        panel(QRectF(4, 4, 24, 64));
+        lines(QRectF(4, 6, 24, 60), 6);
+        panel(QRectF(32, 4, 48, 20));
+        panel(QRectF(32, 28, 48, 40));
+        lines(QRectF(32, 30, 48, 36), 6);
+        panel(QRectF(84, 4, 24, 64));
+        lines(QRectF(84, 18, 24, 50), 7);
+        corePlace = QPointF(42, 14);
+        coreSize = 14;
+        break;
     }
 
     NexaCoreWidget core;
@@ -1405,23 +2549,36 @@ void SettingsDialog::fillDesignGallery() {
 }
 
 void SettingsDialog::fillThemeGallery() {
+    // Clearing and refilling must not count as a choice: the chosen pack stays what it was, with its
+    // tile current again if the chip pressed shows it.
+    const QSignalBlocker blocker(themeGallery_);
     themeGallery_->clear();
-    const QString current = config_.ui.theme;
-    auto *system = new QListWidgetItem(tr("Follow the system\nNexa · Classic"));
-    system->setData(Qt::UserRole, u"system"_s);
-    system->setToolTip(tr("Nexa's own dark or light look, as the desktop is set."));
-    system->setIcon(themeSwatch(NexaThemes::resolve(u"system"_s)));
-    themeGallery_->addItem(system);
-    if (current == u"system"_s) themeGallery_->setCurrentItem(system);
     for (const ThemePack &pack : NexaThemes::all()) {
-        auto *item = new QListWidgetItem(u"%1\n%2"_s.arg(pack.name, coreStyleName(pack.style)));
+        if (!themeCategory_.isEmpty() && pack.category != themeCategory_) continue;
+        const QString look = pack.chrome.panels == PanelChrome::Flat
+                                 ? coreStyleName(pack.style)
+                                 : u"%1 · %2"_s.arg(coreStyleName(pack.style), panelChromeName(pack.chrome.panels));
+        auto *item = new QListWidgetItem(u"%1\n%2"_s.arg(pack.name, look));
         item->setData(Qt::UserRole, NexaThemes::settingFor(pack));
-        item->setToolTip(coreStyleBlurb(pack.style));
+        QString tip = u"%1 · %2"_s.arg(pack.category, coreStyleBlurb(pack.style));
+        if (pack.chrome.panels != PanelChrome::Flat) tip += u' ' + panelChromeBlurb(pack.chrome.panels);
+        if (pack.chrome.backdrop != Backdrop::Plain) tip += u" Behind the panels: %1."_s.arg(backdropName(pack.chrome.backdrop).toLower());
+        item->setToolTip(tip);
         item->setIcon(themeSwatch(pack));
         themeGallery_->addItem(item);
-        if (NexaThemes::settingFor(pack) == current) themeGallery_->setCurrentItem(item);
+        if (pack.id == themeChoice_) themeGallery_->setCurrentItem(item);
     }
-    if (!themeGallery_->currentItem()) themeGallery_->setCurrentRow(0);
+    if (QListWidgetItem *current = themeGallery_->currentItem()) themeGallery_->scrollToItem(current);
+}
+
+void SettingsDialog::showTheme(const QString &setting) {
+    const ThemePack pack = NexaThemes::resolve(setting);
+    themeChoice_ = pack.id;
+    if (!themeCategory_.isEmpty() && pack.category != themeCategory_) {
+        themeCategory_.clear();
+        if (QAbstractButton *all = themeChips_->button(0)) all->setChecked(true);
+    }
+    fillThemeGallery();
 }
 
 // Settings → Connectors: MCP servers whose tools the model may call. The form edits config_.mcp
@@ -1436,6 +2593,8 @@ QWidget *SettingsDialog::buildConnectorsTab() {
     }
     auto *addButton = new QPushButton(tr("&Add"), page);
     auto *removeButton = new QPushButton(tr("Re&move"), page);
+    removeButton->setObjectName(u"connectorRemove"_s);
+    removeButton->setAutoDefault(false);    // Enter is OK, never Remove (it moves on to the next connector)
     connect(addButton, &QPushButton::clicked, this, &SettingsDialog::addConnector);
     connect(removeButton, &QPushButton::clicked, this, &SettingsDialog::removeConnector);
 
@@ -1576,6 +2735,13 @@ void SettingsDialog::addConnector() {
 void SettingsDialog::removeConnector() {
     const int row = mcpList_->currentRow();
     if (row < 0 || row >= config_.mcp.servers.size()) return;
+    const McpServerConfig &server = config_.mcp.servers.at(row);
+    if (QMessageBox::question(this, tr("Remove connector"),
+                              tr("Remove the connector %1?").arg(server.name.isEmpty() ? server.id : server.name),
+                              QMessageBox::Yes | QMessageBox::No, QMessageBox::No)
+        != QMessageBox::Yes) {
+        return;
+    }
     mcpRow_ = -1;
     config_.mcp.servers.removeAt(row);
     delete mcpList_->takeItem(row);

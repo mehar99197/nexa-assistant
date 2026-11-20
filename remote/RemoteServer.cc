@@ -7,17 +7,21 @@
 #include "remote/RemoteSession.h"
 #include "remote/TlsIdentity.h"
 
+#include <QDir>
 #include <QFile>
+#include <QFileInfo>
 #include <QHttpHeaders>
 #include <QHttpServer>
 #include <QHttpServerRequest>
 #include <QHttpServerResponse>
 #include <QHttpServerWebSocketUpgradeResponse>
+#include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QNetworkInterface>
 #include <QRandomGenerator>
 #include <QSslServer>
+#include <QStandardPaths>
 #include <QTcpServer>
 #include <QUrl>
 #include <QWebSocket>
@@ -33,6 +37,9 @@ constexpr qsizetype kMaxSpeeches = 16;
 // Pairing attempts per minute: from one address, and from everywhere together.
 constexpr qsizetype kPairingAttemptsPerAddress = 5;
 constexpr qsizetype kPairingAttemptsTotal = 20;
+constexpr qsizetype kMaxUploadBodyBytes = 12 * 1024 * 1024;
+constexpr qsizetype kMaxUploadFileBytes = 8 * 1024 * 1024;
+constexpr int kMaxUploadFiles = 8;
 
 // The page may load only itself: no scripts, styles or connections anywhere else.
 constexpr auto kContentSecurityPolicy =
@@ -151,6 +158,12 @@ bool RemoteServer::listen(const std::optional<QSslConfiguration> &tls) {
         failures.append(tr("port %1 on this PC: %2").arg(localPort()).arg(local->errorString()));
         delete local;
     }
+    // Loopback only, and only for tunnels: what comes in here is from the internet.
+    auto *tunnel = new QTcpServer(http_.get());
+    if (!(tunnel->listen(QHostAddress::LocalHost, quint16(tunnelPort())) && http_->bind(tunnel))) {
+        failures.append(tr("port %1 for tunnels: %2").arg(tunnelPort()).arg(tunnel->errorString()));
+        delete tunnel;
+    }
 
     if (!tlsRunning_ && !localRunning) {
         problem_ = tr("The web remote could not listen — %1.").arg(failures.join(u"; "_s));
@@ -254,6 +267,8 @@ void RemoteServer::setUpRoutes() {
     http->route(u"/"_s, QHttpServerRequest::Method::Get, [this] { return staticFile(u"index.html"_s); });
     http->route(u"/api/pair"_s, QHttpServerRequest::Method::Post,
                 [this](const QHttpServerRequest &request) { return pairRoute(request); });
+    http->route(u"/api/upload"_s, QHttpServerRequest::Method::Post,
+                [this](const QHttpServerRequest &request) { return uploadRoute(request); });
     http->route(u"/speech/<arg>"_s, QHttpServerRequest::Method::Get,
                 [this](const QString &file) { return speechRoute(file); });
     http->route(u"/<arg>"_s, QHttpServerRequest::Method::Get, [this](const QString &name) { return staticFile(name); });
@@ -303,6 +318,7 @@ QHttpServerResponse RemoteServer::pairRoute(const QHttpServerRequest &request) {
         return noStore(QHttpServerResponse(QJsonObject{{u"error"_s, tr("Enter the pairing code.")}},
                                            QHttpServerResponse::StatusCode::BadRequest));
     }
+    if (request.localPort() == tunnelPort()) qCInfo(lcApp) << "remote: a pairing attempt through a tunnel";
     const Result<PairingManager::Paired> paired = pairing_->pair(code, body.value(u"name"_s).toString());
     if (!paired) {
         qCInfo(lcApp).noquote() << "remote: a pairing attempt from" << request.remoteAddress().toString() << "failed";
@@ -311,6 +327,90 @@ QHttpServerResponse RemoteServer::pairRoute(const QHttpServerRequest &request) {
     }
     return noStore(QHttpServerResponse(
         QJsonObject{{u"token"_s, paired.value().token}, {u"device"_s, paired.value().device.name}}));
+}
+
+QHttpServerResponse RemoteServer::uploadRoute(const QHttpServerRequest &request) {
+    const QByteArray auth = QByteArray(request.headers().value("Authorization")).trimmed();
+    QString token;
+    if (auth.size() > 7 && auth.left(7).compare("bearer ", Qt::CaseInsensitive) == 0) {
+        token = QString::fromUtf8(auth.mid(7).trimmed());
+    }
+    if (token.isEmpty() || !pairing_->authenticate(token)) {
+        return noStore(QHttpServerResponse(QJsonObject{{u"error"_s, tr("Invalid or missing device token.")}},
+                                           QHttpServerResponse::StatusCode::Unauthorized));
+    }
+    if (request.body().size() > kMaxUploadBodyBytes) {
+        return noStore(QHttpServerResponse(QJsonObject{{u"error"_s, tr("Attached files are too large (max 12 MB).")}},
+                                           QHttpServerResponse::StatusCode::PayloadTooLarge));
+    }
+    if (host_->isBusy()) {
+        return noStore(QHttpServerResponse(QJsonObject{{u"error"_s, tr("Nexa is busy with another request.")}},
+                                           QHttpServerResponse::StatusCode::Conflict));
+    }
+    const QJsonDocument doc = QJsonDocument::fromJson(request.body());
+    if (!doc.isObject()) {
+        return noStore(QHttpServerResponse(QJsonObject{{u"error"_s, tr("Upload must be a JSON object.")}},
+                                           QHttpServerResponse::StatusCode::BadRequest));
+    }
+    const QJsonObject obj = doc.object();
+    const QString text = obj.value(u"text"_s).toString().trimmed();
+    const QJsonArray rawFiles = obj.value(u"files"_s).toArray();
+    if (text.isEmpty() && rawFiles.isEmpty()) {
+        return noStore(QHttpServerResponse(QJsonObject{{u"error"_s, tr("Nothing to send.")}},
+                                           QHttpServerResponse::StatusCode::BadRequest));
+    }
+    if (rawFiles.size() > kMaxUploadFiles) {
+        return noStore(QHttpServerResponse(QJsonObject{{u"error"_s, tr("At most %1 files may be uploaded at once.").arg(kMaxUploadFiles)}},
+                                           QHttpServerResponse::StatusCode::BadRequest));
+    }
+
+    QStringList savedPaths;
+    if (!rawFiles.isEmpty()) {
+        QString baseDir = host_->attachmentDir();
+        if (baseDir.isEmpty()) {
+            baseDir = QStandardPaths::writableLocation(QStandardPaths::TempLocation) + u"/nexa-remote-uploads"_s;
+        }
+        const QString uploadDir = baseDir + u'/' + randomId();
+        if (!QDir().mkpath(uploadDir)) {
+            return noStore(QHttpServerResponse(QJsonObject{{u"error"_s, tr("Could not create upload folder.")}},
+                                               QHttpServerResponse::StatusCode::InternalServerError));
+        }
+        for (int i = 0; i < rawFiles.size(); ++i) {
+            const QJsonObject entry = rawFiles.at(i).toObject();
+            const QByteArray b64 = entry.contains(u"data"_s) ? entry.value(u"data"_s).toString().toLatin1()
+                                                             : entry.value(u"dataBase64"_s).toString().toLatin1();
+            const QByteArray raw = QByteArray::fromBase64(b64);
+            if (raw.isEmpty() && !b64.isEmpty()) continue;
+            if (raw.size() > kMaxUploadFileBytes) {
+                return noStore(QHttpServerResponse(QJsonObject{{u"error"_s, tr("File exceeds 8 MB limit.")}},
+                                                   QHttpServerResponse::StatusCode::PayloadTooLarge));
+            }
+            QString safeName = QFileInfo(entry.value(u"name"_s).toString()).fileName().trimmed();
+            safeName.replace(u'/', u'_');
+            safeName.replace(u'\\', u'_');
+            safeName.remove(QChar(0));
+            if (safeName.isEmpty() || safeName == u"."_s || safeName == u".."_s) {
+                safeName = u"file-%1.bin"_s.arg(i + 1);
+            }
+            const QString destPath = uploadDir + u'/' + safeName;
+            QFile out(destPath);
+            if (!out.open(QIODevice::WriteOnly | QIODevice::Truncate)) {
+                return noStore(QHttpServerResponse(QJsonObject{{u"error"_s, tr("Could not store uploaded file.")}},
+                                                   QHttpServerResponse::StatusCode::InternalServerError));
+            }
+            out.setPermissions(QFileDevice::ReadOwner | QFileDevice::WriteOwner);
+            if (out.write(raw) != raw.size()) {
+                return noStore(QHttpServerResponse(QJsonObject{{u"error"_s, tr("Short write while saving file.")}},
+                                                   QHttpServerResponse::StatusCode::InternalServerError));
+            }
+            savedPaths.append(destPath);
+        }
+    }
+
+    pendingSource_ = u"phone"_s;
+    host_->submitWithAttachments(text, u"phone"_s, savedPaths);
+    pendingSource_.clear();
+    return noStore(QHttpServerResponse(QJsonObject{{u"ok"_s, true}, {u"saved"_s, int(savedPaths.size())}}));
 }
 
 bool RemoteServer::allowPairingAttempt(const QHostAddress &from) {
@@ -361,11 +461,20 @@ void RemoteServer::acceptSockets() {
             refused->deleteLater();
             continue;
         }
+        const bool viaTunnel = socket->localPort() == tunnelPort();
         auto *session = new RemoteSession(std::move(socket), pairing_, this);
+        session->setViaTunnel(viaTunnel);
         sessions_.append(session);
         connect(session, &RemoteSession::authenticated, this, [this, session] {
-            session->send(remote::welcome(session->deviceName(), host_->canTranscribe(), busy_ || host_->isBusy(), mode_));
+            session->send(remote::welcome(session->deviceName(), host_->canTranscribe(), busy_ || host_->isBusy(), mode_,
+                                          routes_, fingerprint(),
+                                          theme_.isEmpty() ? std::nullopt : std::optional<remote::ThemeStyle>(theme_)));
+            if (session->viaTunnel()) qCInfo(lcApp).noquote() << "remote:" << session->deviceName() << "came through a tunnel";
             if (!litNodes_.isEmpty()) session->send(remote::state(mode_, litNodes_));
+            if (host_->isLocked()) session->send(remote::lock(true, host_->lockText()));
+            for (const RemoteApproval &waiting : host_->approvals()) {
+                session->send(remote::approval(waiting.id, waiting.agent, waiting.tool, waiting.question));
+            }
             emit clientsChanged(clientCount());
         });
         connect(session, &RemoteSession::textRequest, this,
@@ -373,6 +482,8 @@ void RemoteServer::acceptSockets() {
         connect(session, &RemoteSession::audioRequest, this,
                 [this, session](const QByteArray &pcm) { handleAudio(session, pcm); });
         connect(session, &RemoteSession::cancelRequested, this, [this] { host_->cancel(); });
+        connect(session, &RemoteSession::unlockRequested, this, [this] { host_->unlock(); });
+        connect(session, &RemoteSession::answered, this, [this](quint64 id, bool allow) { host_->answer(id, allow); });
         connect(session, &RemoteSession::closed, this, [this, session] {
             sessions_.removeOne(session);
             session->deleteLater();
@@ -430,8 +541,20 @@ void RemoteServer::handleAudio(RemoteSession *session, const QByteArray &pcm) {
     });
 }
 
-void RemoteServer::onUserMessage(const QString &text) {
-    broadcast(remote::accepted(text, pendingSource_.isEmpty() ? u"pc"_s : pendingSource_));
+void RemoteServer::onUserMessage(const QString &text, const QString &attachments) {
+    broadcast(remote::accepted(text, pendingSource_.isEmpty() ? u"pc"_s : pendingSource_, attachments));
+}
+
+void RemoteServer::onUserMessageFrom(const QString &text, const QString &source, const QString &attachments) {
+    const QString wireSource = !source.isEmpty() ? source
+                                                 : (pendingSource_.isEmpty() ? u"pc"_s : pendingSource_);
+    broadcast(remote::accepted(text, wireSource, attachments));
+}
+
+void RemoteServer::setTheme(const remote::ThemeStyle &theme) {
+    if (theme_ == theme) return;
+    theme_ = theme;
+    if (running_ && !theme_.isEmpty()) broadcast(remote::theme(theme_));
 }
 
 void RemoteServer::onReplyStarted(const QString &source) {
@@ -491,6 +614,34 @@ void RemoteServer::onCoreChanged(const QString &mode, const QStringList &nodes) 
     mode_ = mode;
     litNodes_ = nodes;
     broadcast(remote::state(mode, nodes));
+}
+
+void RemoteServer::onLockChanged(bool locked, const QString &text) {
+    broadcast(remote::lock(locked, text));
+}
+
+void RemoteServer::onApprovalAsked(quint64 id, const QString &agent, const QString &tool, const QString &question) {
+    broadcast(remote::approval(id, agent, tool, question));
+}
+
+void RemoteServer::onApprovalSettled(quint64 id, bool allowed) {
+    broadcast(remote::settled(id, allowed));
+}
+
+void RemoteServer::setRoutes(const QList<RemoteRoute> &routes) {
+    const QList<RemoteRoute> ordered = orderedRoutes(routes);
+    if (ordered == routes_) return;
+    routes_ = ordered;
+    QStringList kinds;
+    for (const RemoteRoute &route : routes_) kinds.append(routeKey(route.kind));
+    qCInfo(lcApp).noquote() << "remote: reachable by" << kinds.join(u", "_s);
+    broadcast(remote::routes(routes_));
+}
+
+int RemoteServer::tunnelClientCount() const {
+    return int(std::count_if(sessions_.cbegin(), sessions_.cend(), [](const RemoteSession *session) {
+        return session->isAuthenticated() && session->viaTunnel();
+    }));
 }
 
 } // namespace nexa

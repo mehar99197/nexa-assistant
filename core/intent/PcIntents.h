@@ -9,7 +9,8 @@ namespace nexa {
 // Fast-path handlers for the PC, in the order the router should try them.
 // (Small classes kept in one file; each is one link of the IntentRouter chain.)
 
-// "stop", "cancel", "never mind" → panic.
+// "stop everything" → panic; "stop talking", "be quiet" → the voice stops; "stop", "cancel", "never mind" → the task in
+// view stops (Control).
 class ControlIntent : public IIntentHandler {
 public:
     std::optional<IntentMatch> match(const IntentInput &input) const override;

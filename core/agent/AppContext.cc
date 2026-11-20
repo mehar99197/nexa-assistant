@@ -64,17 +64,39 @@ AppKind AppContext::kindOf(const OpenedApp &app) {
     if (hasCategory(app.categories, "TerminalEmulator"_L1)
         || isOneOf(executable, {"gnome-terminal"_L1, "kgx"_L1, "ptyxis"_L1, "konsole"_L1, "xterm"_L1, "alacritty"_L1,
                                 "kitty"_L1, "foot"_L1, "tilix"_L1, "terminator"_L1, "wezterm"_L1, "xfce4-terminal"_L1,
-                                "qterminal"_L1, "mate-terminal"_L1, "lxterminal"_L1, "urxvt"_L1, "st"_L1})) {
+                                "qterminal"_L1, "mate-terminal"_L1, "lxterminal"_L1, "urxvt"_L1, "st"_L1
+#ifdef Q_OS_WIN
+                                , "cmd"_L1, "cmd.exe"_L1, "powershell"_L1, "powershell.exe"_L1, "pwsh"_L1, "pwsh.exe"_L1,
+                                "wt"_L1, "wt.exe"_L1, "windowsterminal"_L1, "windowsterminal.exe"_L1
+#endif
+                                })) {
         return AppKind::Terminal;
     }
     if (hasCategory(app.categories, "Office"_L1) || hasCategory(app.categories, "WordProcessor"_L1)
         || hasCategory(app.categories, "Presentation"_L1) || hasCategory(app.categories, "Spreadsheet"_L1)
         || isOneOf(executable, {"libreoffice"_L1, "soffice"_L1, "lowriter"_L1, "localc"_L1, "loimpress"_L1,
-                                "onlyoffice-desktopeditors"_L1})) {
+                                "onlyoffice-desktopeditors"_L1
+#ifdef Q_OS_WIN
+                                , "soffice.exe"_L1, "swriter.exe"_L1, "scalc.exe"_L1, "simpress.exe"_L1,
+                                "winword"_L1, "winword.exe"_L1, "excel"_L1, "excel.exe"_L1,
+                                "powerpnt"_L1, "powerpnt.exe"_L1
+#endif
+                                })) {
         return AppKind::Office;
     }
-    if (hasCategory(app.categories, "WebBrowser"_L1)) return AppKind::Browser;
-    if (hasCategory(app.categories, "TextEditor"_L1) || hasCategory(app.categories, "IDE"_L1)) return AppKind::Editor;
+    if (hasCategory(app.categories, "WebBrowser"_L1)
+#ifdef Q_OS_WIN
+        || isOneOf(executable, {"chrome"_L1, "chrome.exe"_L1, "msedge"_L1, "msedge.exe"_L1, "firefox"_L1,
+                                "firefox.exe"_L1, "brave"_L1, "brave.exe"_L1, "opera"_L1, "opera.exe"_L1,
+                                "vivaldi"_L1, "vivaldi.exe"_L1})
+#endif
+    ) return AppKind::Browser;
+    if (hasCategory(app.categories, "TextEditor"_L1) || hasCategory(app.categories, "IDE"_L1)
+#ifdef Q_OS_WIN
+        || isOneOf(executable, {"notepad"_L1, "notepad.exe"_L1, "notepad++"_L1, "notepad++.exe"_L1,
+                                "code"_L1, "code.exe"_L1, "cursor.exe"_L1, "windsurf.exe"_L1})
+#endif
+    ) return AppKind::Editor;
     return AppKind::Other;
 }
 
@@ -144,8 +166,13 @@ QString AppContext::promptSentence(const Situation &situation) const {
             sentence += u" Pages and searches they ask for open with the browser_* tools (browser_navigate, then "
                         "browser_snapshot to read the page), which work in %1."_s.arg(situation.browserTarget);
         } else {
+#ifdef Q_OS_WIN
+            sentence += u" A page or a search they ask for opens there with run_command \"start \\\"\\\" \\\"<url>\\\"\" "
+                        "(for a search, https://duckduckgo.com/?q=<words>) with background=true."_s;
+#else
             sentence += u" A page or a search they ask for opens there with run_command \"xdg-open <url>\" (for a "
                         "search, https://duckduckgo.com/?q=<words>)."_s;
+#endif
         }
         break;
     case AppKind::Other:

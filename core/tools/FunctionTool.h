@@ -5,6 +5,8 @@
 #include <functional>
 #include <memory>
 
+#include <QJsonObject>
+
 namespace nexa {
 
 // Adapter: turns a spec plus a function into an ITool, so services expose tools without a class each.

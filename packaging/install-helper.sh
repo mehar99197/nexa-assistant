@@ -36,12 +36,18 @@ fi
 
 echo "Installing the helper from $BINARY"
 install -D -m 0755 "$BINARY" "$LIBEXEC/nexa-helper"
-install -D -m 0644 "$ROOT/packaging/org.nexa.Helper.service" \
+# The service and unit are templates (the .deb writes its own path into them); here the helper lives in /usr/local.
+GENERATED="$(mktemp -d)"
+trap 'rm -rf "$GENERATED"' EXIT
+for template in org.nexa.Helper.service nexa-helper.service; do
+    sed "s|@NEXA_HELPER_PATH@|$LIBEXEC/nexa-helper|g" "$ROOT/packaging/$template.in" > "$GENERATED/$template"
+done
+install -D -m 0644 "$GENERATED/org.nexa.Helper.service" \
     /usr/share/dbus-1/system-services/org.nexa.Helper.service
 install -D -m 0644 "$ROOT/packaging/org.nexa.Helper.conf" /etc/dbus-1/system.d/org.nexa.Helper.conf
 install -D -m 0644 "$ROOT/packaging/org.nexa.helper.policy" \
     /usr/share/polkit-1/actions/org.nexa.helper.policy
-install -D -m 0644 "$ROOT/packaging/nexa-helper.service" /etc/systemd/system/nexa-helper.service
+install -D -m 0644 "$GENERATED/nexa-helper.service" /etc/systemd/system/nexa-helper.service
 
 systemctl daemon-reload
 # The bus rereads /etc/dbus-1/system.d on a reload; without this the first call is refused.
@@ -84,6 +90,13 @@ else
     ok=1
 fi
 
+if grep -q -- "--release-input" /etc/systemd/system/nexa-helper.service; then
+    echo "  a stopped or crashed helper gives the keyboard and mouse back (hardcore mode)"
+else
+    echo "  the unit lacks ExecStopPost=--release-input — hardcore mode would not be safe" >&2
+    ok=1
+fi
+
 if [[ -e /dev/uinput ]]; then
     echo "  /dev/uinput is present, so typing and clicking will work"
 else
@@ -92,9 +105,10 @@ fi
 
 echo
 if [[ "$ok" -eq 0 ]]; then
-    echo "Done. Nexa can now run commands as root and type for you. It asks for your password once"
-    echo "per login — the desktop's own prompt, never Nexa's — and the helper exits on its own after"
-    echo "ten idle minutes. To be asked again: Settings → Helper → Forget my password, or log out."
+    echo "Done. Nexa can now run commands as root, type for you, and lock the keyboard and mouse"
+    echo "in hardcore mode. It asks for your password once per login — the desktop's own prompt,"
+    echo "never Nexa's — and the helper exits on its own after ten idle minutes. To be asked again:"
+    echo "Settings → Helper → Forget my password, or log out."
 else
     echo "Installed, but the checks above did not all pass." >&2
 fi

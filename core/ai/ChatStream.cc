@@ -29,6 +29,11 @@ void ChatStream::complete(FinishReason reason, QList<ToolCall> toolCalls) {
     emit finished(reason);
 }
 
+void ChatStream::setRoute(const QString &route, const QString &reason) {
+    route_ = route;
+    emit rerouted(route, reason);
+}
+
 void ChatStream::fail(const Error &error) {
     if (done_) return;
     done_ = true;

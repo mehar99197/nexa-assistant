@@ -29,6 +29,8 @@ public:
 
     void actionStarted(quint64 id, const QString &tool, const QJsonObject &arguments, const QString &source);
     void actionFinished(quint64 id, bool ok, const QString &summary, qint64 elapsedMs);
+    // A widget above the cards (the task strip of the designs other than Mission Control).
+    void setTop(QWidget *top);
 
     QColor mutedColor() const { return muted_; }
     QColor lineColor() const { return line_; }

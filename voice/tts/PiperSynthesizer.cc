@@ -1,6 +1,9 @@
 #include "voice/tts/PiperSynthesizer.h"
 
 #include "core/Logging.h"
+#ifdef Q_OS_WIN
+#include "core/ProcessUtils.h"
+#endif
 
 #include <QDir>
 #include <QFile>
@@ -74,6 +77,10 @@ bool PiperSynthesizer::ensureRunning() {
     if (rate_ != 0.0) arguments << u"--length_scale"_s << QString::number(std::pow(1.6, -rate_), 'f', 2);
     stdout_.clear();
     discard_ = 0;
+#ifdef Q_OS_WIN
+    process::configureChild(process_);
+    process_.setWorkingDirectory(QFileInfo(binary_).absolutePath());
+#endif
     process_.start(binary_, arguments);
     qCDebug(lcVoice) << "started Piper with" << QFileInfo(model_).fileName();
     return true;
@@ -81,12 +88,16 @@ bool PiperSynthesizer::ensureRunning() {
 
 void PiperSynthesizer::readOutput() {
     stdout_ += process_.readAllStandardOutput();
-    const QString prefix = outputDir_.path() + u'/';
+    const QString prefix = QDir::cleanPath(outputDir_.path()) + u'/';
     for (qsizetype newline; (newline = stdout_.indexOf('\n')) >= 0;) {
-        const QString path = QString::fromUtf8(stdout_.left(newline)).trimmed();
+        const QString path = QDir::cleanPath(QDir::fromNativeSeparators(QString::fromUtf8(stdout_.left(newline)).trimmed()));
         stdout_.remove(0, newline + 1);
         // Only ever touch files in our own directory, whatever Piper prints.
+#ifdef Q_OS_WIN
+        if (!path.startsWith(prefix, Qt::CaseInsensitive) || path.contains(u"/../"_s)) continue;
+#else
         if (!path.startsWith(prefix) || path.contains(u"/../"_s)) continue;
+#endif
 
         QFile file(path);
         const QByteArray wav = file.open(QIODevice::ReadOnly) ? file.readAll() : QByteArray();

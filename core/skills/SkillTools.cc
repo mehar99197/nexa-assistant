@@ -6,6 +6,7 @@
 #include "core/tools/ToolArguments.h"
 #include "core/tools/ToolRegistry.h"
 
+#include <QJsonObject>
 #include <QPointer>
 
 using namespace Qt::StringLiterals;

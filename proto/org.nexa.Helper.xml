@@ -16,7 +16,9 @@
   asked for once per login however many Nexa processes come and go.
 
   Input is written, never read: there is no method here that reports keystrokes, pointer position
-  or window contents. The helper is an output device only.
+  or window contents. The helper is an output device only. Hardcore mode's LockInput switches the
+  physical keyboards and pointers off and on again; it reads what devices there are (their names
+  and capability bitmaps), never what they send.
 -->
 <node>
   <interface name="org.nexa.Helper">
@@ -127,6 +129,29 @@
       <arg name="dx" type="i" direction="in"/>
       <arg name="dy" type="i" direction="in"/>
     </method>
+
+    <!--
+      Hardcore mode: switches off every physical keyboard and pointer (the kernel's input inhibit), so
+      nothing typed or clicked at the laptop reaches anyone until UnlockInput. The power button, the lid
+      and the helper's own virtual devices stay working. Returns the names of the devices held. Calling
+      it again while locked rescans (a device plugged in since is locked too) and is the caller's
+      heartbeat: without one for 30 seconds the helper unlocks by itself, as it does when the caller
+      leaves the bus or its login stops being the one at the screen. One caller holds the lock at a time.
+    -->
+    <method name="LockInput">
+      <arg name="devices" type="as" direction="out"/>
+    </method>
+
+    <!--
+      Gives the keyboards and pointers back. Not privileged — giving up needs no password — but only the
+      caller that locked them (or root) may.
+    -->
+    <method name="UnlockInput"/>
+
+    <!-- The helper ended the lock by itself; reason says why, in words. -->
+    <signal name="InputUnlocked">
+      <arg name="reason" type="s"/>
+    </signal>
 
   </interface>
 </node>

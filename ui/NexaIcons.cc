@@ -99,6 +99,17 @@ void NexaIcons::paint(QPainter &p, Kind kind, const QRectF &box, const QColor &c
         p.drawPolyline(QPolygonF() << (tip + QPointF(-0.2 * s, -0.02 * s)) << tip << (tip + QPointF(0.0, -0.2 * s)));
         break;
     }
+    case Kind::Eye: {
+        // An almond of two arcs and a round pupil: "this model sees images".
+        QPainterPath almond;
+        almond.moveTo(-0.38 * s, 0);
+        almond.quadTo(0, -0.34 * s, 0.38 * s, 0);
+        almond.quadTo(0, 0.34 * s, -0.38 * s, 0);
+        p.drawPath(almond);
+        p.setBrush(colour);
+        p.drawEllipse(QPointF(0, 0), 0.09 * s, 0.09 * s);
+        break;
+    }
     case Kind::NewChat:
         p.drawLine(QPointF(-0.3 * s, 0), QPointF(0.3 * s, 0));
         p.drawLine(QPointF(0, -0.3 * s), QPointF(0, 0.3 * s));
@@ -117,6 +128,95 @@ void NexaIcons::paint(QPainter &p, Kind kind, const QRectF &box, const QColor &c
         p.setBrush(colour);
         for (int i = -1; i <= 1; ++i) p.drawEllipse(QPointF(0, 0.26 * s * i), 0.07 * s, 0.07 * s);
         break;
+    case Kind::Pause:
+        p.setPen(Qt::NoPen);
+        p.setBrush(colour);
+        p.drawRoundedRect(QRectF(-0.26 * s, -0.3 * s, 0.17 * s, 0.6 * s), 0.04 * s, 0.04 * s);
+        p.drawRoundedRect(QRectF(0.09 * s, -0.3 * s, 0.17 * s, 0.6 * s), 0.04 * s, 0.04 * s);
+        break;
+    case Kind::Play: {
+        QPainterPath play;
+        play.moveTo(-0.2 * s, -0.32 * s);
+        play.lineTo(0.32 * s, 0);
+        play.lineTo(-0.2 * s, 0.32 * s);
+        play.closeSubpath();
+        p.setBrush(colour);
+        p.drawPath(play);
+        break;
+    }
+    case Kind::Check:
+        p.drawPolyline(QPolygonF{QPointF(-0.3 * s, 0.02 * s), QPointF(-0.08 * s, 0.24 * s), QPointF(0.32 * s, -0.22 * s)});
+        break;
+    case Kind::Cross:
+        p.drawLine(QPointF(-0.24 * s, -0.24 * s), QPointF(0.24 * s, 0.24 * s));
+        p.drawLine(QPointF(0.24 * s, -0.24 * s), QPointF(-0.24 * s, 0.24 * s));
+        break;
+    case Kind::Globe:
+        p.drawEllipse(QPointF(0, 0), 0.36 * s, 0.36 * s);
+        p.drawEllipse(QPointF(0, 0), 0.15 * s, 0.36 * s);
+        p.drawLine(QPointF(-0.36 * s, 0), QPointF(0.36 * s, 0));
+        break;
+    case Kind::Code:
+        p.drawPolyline(QPolygonF{QPointF(-0.12 * s, -0.26 * s), QPointF(-0.36 * s, 0), QPointF(-0.12 * s, 0.26 * s)});
+        p.drawPolyline(QPolygonF{QPointF(0.12 * s, -0.26 * s), QPointF(0.36 * s, 0), QPointF(0.12 * s, 0.26 * s)});
+        p.drawLine(QPointF(0.06 * s, -0.32 * s), QPointF(-0.06 * s, 0.32 * s));
+        break;
+    case Kind::Screen:
+        p.drawRoundedRect(QRectF(-0.38 * s, -0.3 * s, 0.76 * s, 0.48 * s), 0.06 * s, 0.06 * s);
+        p.drawLine(QPointF(-0.16 * s, 0.34 * s), QPointF(0.16 * s, 0.34 * s));
+        break;
+    case Kind::Queue:
+        for (int i = -1; i <= 1; ++i) {
+            const double y = 0.22 * s * i;
+            p.drawLine(QPointF(-0.34 * s, y), QPointF(0.34 * s, y));
+        }
+        break;
+    case Kind::Plus:
+        p.drawLine(QPointF(-0.28 * s, 0), QPointF(0.28 * s, 0));
+        p.drawLine(QPointF(0, -0.28 * s), QPointF(0, 0.28 * s));
+        break;
+    case Kind::Attach: {
+        // A paper clip: a long loop with a shorter one inside, leaning right.
+        p.save();
+        p.rotate(-40);
+        QPainterPath clip;
+        clip.moveTo(-0.1 * s, 0.3 * s);
+        clip.lineTo(-0.1 * s, -0.2 * s);
+        clip.arcTo(QRectF(-0.1 * s, -0.36 * s, 0.32 * s, 0.32 * s), 180, -180);
+        clip.lineTo(0.22 * s, 0.26 * s);
+        clip.arcTo(QRectF(0.0 * s, 0.15 * s, 0.22 * s, 0.22 * s), 0, -180);
+        clip.lineTo(0.0 * s, -0.12 * s);
+        clip.arcTo(QRectF(0.0 * s, -0.2 * s, 0.12 * s, 0.16 * s), 180, -180);
+        clip.lineTo(0.12 * s, 0.16 * s);
+        p.drawPath(clip);
+        p.restore();
+        break;
+    }
+    case Kind::Lock: {
+        p.drawRoundedRect(QRectF(-0.3 * s, -0.04 * s, 0.6 * s, 0.42 * s), 0.07 * s, 0.07 * s);
+        QPainterPath shackle;
+        shackle.moveTo(-0.17 * s, -0.04 * s);
+        shackle.lineTo(-0.17 * s, -0.17 * s);
+        shackle.arcTo(QRectF(-0.17 * s, -0.34 * s, 0.34 * s, 0.34 * s), 180, -180);
+        shackle.lineTo(0.17 * s, -0.04 * s);
+        p.drawPath(shackle);
+        p.drawLine(QPointF(0, 0.1 * s), QPointF(0, 0.22 * s));
+        break;
+    }
+    case Kind::Palette: {
+        // A painter's palette: the board with its thumb hole, and three dabs of colour.
+        QPainterPath board;
+        board.addEllipse(QPointF(0, 0.02 * s), 0.36 * s, 0.3 * s);
+        QPainterPath hole;
+        hole.addEllipse(QPointF(0.15 * s, 0.1 * s), 0.11 * s, 0.11 * s);
+        p.drawPath(board.subtracted(hole));
+        p.setPen(Qt::NoPen);
+        p.setBrush(colour);
+        for (const QPointF &dab : {QPointF(-0.19 * s, -0.06 * s), QPointF(-0.04 * s, -0.16 * s), QPointF(0.13 * s, -0.1 * s)}) {
+            p.drawEllipse(dab, 0.055 * s, 0.055 * s);
+        }
+        break;
+    }
     }
     p.restore();
 }

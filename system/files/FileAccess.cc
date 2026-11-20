@@ -29,15 +29,23 @@ Result<QString> FileAccess::resolve(const QString &path) const {
     // Canonicalise the deepest existing ancestor: symlinks on the way may point outside the roots.
     QString existing = absolute;
     QStringList missing;
-    while (!QFileInfo::exists(existing) && existing != u"/") {
+    while (!QFileInfo::exists(existing)) {
+        const QString parent = QFileInfo(existing).absolutePath();
+        if (parent.isEmpty() || parent == existing) break;
         missing.prepend(QFileInfo(existing).fileName());
-        existing = QFileInfo(existing).absolutePath();
+        existing = parent;
     }
     QString canonical = QFileInfo(existing).canonicalFilePath();
     if (!missing.isEmpty()) canonical = QDir::cleanPath(canonical + u'/' + missing.join(u'/'));
 
+#ifdef Q_OS_WIN
+    constexpr Qt::CaseSensitivity kPathCase = Qt::CaseInsensitive;
+#else
+    constexpr Qt::CaseSensitivity kPathCase = Qt::CaseSensitive;
+#endif
     for (const QString &root : roots_) {
-        if (canonical == root || canonical.startsWith(root + u'/')) return canonical;
+        const QString prefix = root.endsWith(u'/') ? root : root + u'/';
+        if (canonical.compare(root, kPathCase) == 0 || canonical.startsWith(prefix, kPathCase)) return canonical;
     }
     return Error{ErrorCode::PermissionDenied,
                  u"%1 is outside the folders Nexa may use (%2)"_s.arg(path, roots_.join(u", "_s))};

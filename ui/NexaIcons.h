@@ -13,7 +13,10 @@ namespace nexa {
 // four node icons are NexaCorePainter's, so a button means the same as the satellite it points at.
 class NexaIcons {
 public:
-    enum class Kind { Mic, Pc, Tools, Phone, Send, Stop, Sun, Moon, Gear, Refresh, NewChat, Actions, More };
+    enum class Kind {
+        Mic, Pc, Tools, Phone, Send, Stop, Sun, Moon, Gear, Refresh, NewChat, Actions, More, Eye,
+        Pause, Play, Check, Cross, Globe, Code, Screen, Queue, Plus, Lock, Attach, Palette,
+    };
 
     static QIcon icon(Kind kind, const QColor &colour, int size = 20);
     static void paint(QPainter &painter, Kind kind, const QRectF &box, const QColor &colour);

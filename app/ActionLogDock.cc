@@ -11,6 +11,7 @@
 #include <QJsonValue>
 #include <QLabel>
 #include <QListWidget>
+#include <QVBoxLayout>
 #include <QPainter>
 #include <QStyledItemDelegate>
 
@@ -184,6 +185,16 @@ ActionLogDock::ActionLogDock(const QString &auditPath, QWidget *parent)
     list_->setContextMenuPolicy(Qt::ActionsContextMenu);
     list_->addAction(clear);
     setWidget(list_);
+}
+
+void ActionLogDock::setTop(QWidget *top) {
+    auto *holder = new QWidget(this);
+    auto *column = new QVBoxLayout(holder);
+    column->setContentsMargins(0, 0, 0, 0);
+    column->setSpacing(0);
+    column->addWidget(top);
+    column->addWidget(list_, 1);
+    setWidget(holder);
 }
 
 void ActionLogDock::actionStarted(quint64 id, const QString &tool, const QJsonObject &arguments, const QString &source) {

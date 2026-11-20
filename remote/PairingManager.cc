@@ -9,10 +9,11 @@
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
+#include <QJsonValue>
 #include <QRandomGenerator>
 #include <QRegularExpression>
 #include <QSaveFile>
-#include <QStandardPaths>
+#include "core/config/Portable.h"
 
 using namespace Qt::StringLiterals;
 
@@ -47,7 +48,7 @@ PairingManager::PairingManager(QString path, Clock clock, QObject *parent)
 }
 
 QString PairingManager::defaultPath() {
-    return QStandardPaths::writableLocation(QStandardPaths::GenericConfigLocation) + u"/nexa/remote-devices.json"_s;
+    return portable::configDir() + u"/remote-devices.json"_s;
 }
 
 QDateTime PairingManager::now() const {
@@ -59,7 +60,7 @@ QString PairingManager::hashToken(const QString &token) {
 }
 
 QString PairingManager::startPairing() {
-    code_ = u"%1"_s.arg(QRandomGenerator::system()->bounded(1'000'000), 6, 10, u'0');
+    code_ = u"%1"_s.arg(QRandomGenerator::system()->bounded(1'000'000), 6, 10, QLatin1Char('0'));
     codeExpires_ = now().addSecs(kCodeLifetimeSeconds);
     attempts_ = 0;
     emit codeChanged(code_);

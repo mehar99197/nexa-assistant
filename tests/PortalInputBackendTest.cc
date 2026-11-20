@@ -2,7 +2,7 @@
 
 #include "system/input/PortalInputBackend.h"
 
-#include <linux/input-event-codes.h>
+#include "proto/LinuxKeyCodes.h"
 
 #include <catch2/catch_test_macros.hpp>
 

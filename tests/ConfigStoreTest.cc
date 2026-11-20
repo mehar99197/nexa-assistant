@@ -21,10 +21,10 @@ constexpr QFileDevice::Permissions kGroupOrOther = QFileDevice::ReadGroup | QFil
 Config sampleConfig() {
     Config config;
     config.providers.append(ProviderConfig{
-        .id = u"omniroute"_s,
+        .id = u"gateway"_s,
         .kind = u"openai-compatible"_s,
-        .name = u"OmniRoute"_s,
-        .baseUrl = u"http://localhost:20128/v1"_s,
+        .name = u"Gateway"_s,
+        .baseUrl = u"https://gateway.example/v1"_s,
         .apiKey = u"sk-test"_s,
         .defaultModel = u"gpt-4o-mini"_s,
     });
@@ -44,6 +44,11 @@ Config sampleConfig() {
     config.android.autoReconnect = false;
     config.remote.enabled = true;
     config.remote.port = 8443;
+    config.remote.announceMessages = false;
+    config.remote.cloudflare = u"named"_s;
+    config.remote.cloudflareHostname = u"nexa.nexacodesolutions.online"_s;
+    config.remote.ngrok = true;
+    config.remote.ngrokDomain = u"quiet-owl.ngrok-free.app"_s;
     config.agent.maxToolRounds = 12;
     config.browser.mode = u"extension"_s;
     config.browser.profile = u"Profile 1"_s;
@@ -85,6 +90,13 @@ TEST_CASE("ConfigStore round-trips providers, prompt and unknown sections") {
     CHECK_FALSE(loaded.value().android.autoReconnect);
     CHECK(loaded.value().remote.enabled);
     CHECK(loaded.value().remote.port == 8443);
+    CHECK_FALSE(loaded.value().remote.announceMessages);
+    CHECK(loaded.value().remote.tailscale);
+    CHECK(loaded.value().remote.cloudflare == u"named"_s);
+    CHECK(loaded.value().remote.cloudflareTunnel == u"nexa"_s);
+    CHECK(loaded.value().remote.cloudflareHostname == u"nexa.nexacodesolutions.online"_s);
+    CHECK(loaded.value().remote.ngrok);
+    CHECK(loaded.value().remote.ngrokDomain == u"quiet-owl.ngrok-free.app"_s);
     CHECK(loaded.value().agent.maxToolRounds == 12);
     CHECK(loaded.value().extra.value(u"future"_s).toObject().value(u"setting"_s).toInt() == 42);
     CHECK_FALSE(loaded.value().extra.contains(u"remote"_s));
@@ -98,6 +110,56 @@ TEST_CASE("ConfigStore round-trips providers, prompt and unknown sections") {
     for (const QString &section : {u"browser"_s, u"memory"_s, u"skills"_s, u"ui"_s, u"mcp"_s}) {
         CHECK_FALSE(loaded.value().extra.contains(section));
     }
+}
+
+TEST_CASE("Voice settings for the wake name, listening and the cloud voice round-trip") {
+    const VoiceConfig defaults;
+    CHECK(defaults.wakeName == u"Nexa"_s);
+    CHECK(defaults.wakeSensitivity == u"normal"_s);
+    CHECK(defaults.endPause == u"normal"_s);
+    CHECK(defaults.followUps);
+    CHECK(defaults.noiseReduction);
+    CHECK(defaults.sttProvider.isEmpty());
+    CHECK(defaults.ttsProvider.isEmpty());
+
+    QTemporaryDir dir;
+    REQUIRE(dir.isValid());
+    const ConfigStore store(dir.filePath(u"nexa/config.json"_s));
+    Config config = sampleConfig();
+    config.voice.wakeName = u"Jarvis"_s;
+    config.voice.wakeSensitivity = u"high"_s;
+    config.voice.endPause = u"long"_s;
+    config.voice.followUps = false;
+    config.voice.noiseReduction = false;
+    config.voice.sttProvider = u"groq"_s;
+    config.voice.ttsProvider = u"groq"_s;
+    REQUIRE(store.save(config).isOk());
+    const Result<Config> loaded = store.load();
+    REQUIRE(loaded.isOk());
+    CHECK(loaded.value().voice == config.voice);
+
+    const VoiceConfig odd = VoiceConfig::fromJson(QJsonObject{
+        {u"wakeSensitivity"_s, u"loud"_s}, {u"endPause"_s, u"forever"_s}, {u"wakeName"_s, u""_s}});
+    CHECK(odd.wakeSensitivity == u"normal"_s);
+    CHECK(odd.endPause == u"normal"_s);
+    CHECK(odd.wakeName == u"Nexa"_s);
+}
+
+TEST_CASE("ConfigStore round-trips fallback and modelsUrl") {
+    QTemporaryDir dir;
+    REQUIRE(dir.isValid());
+    const ConfigStore store(dir.filePath(u"nexa/config.json"_s));
+    Config config = sampleConfig();
+    config.providers[0].fallback = false;
+    config.providers[0].modelsUrl = u"https://x/models"_s;
+    REQUIRE(store.save(config).isOk());
+
+    const Result<Config> loaded = store.load();
+    REQUIRE(loaded.isOk());
+    CHECK_FALSE(loaded.value().providers.at(0).fallback);
+    CHECK(loaded.value().providers.at(0).modelsUrl == u"https://x/models"_s);
+    // A provider written before the keys existed may answer for the others.
+    CHECK(ProviderConfig::fromJson(QJsonObject{{u"id"_s, u"old"_s}}).fallback);
 }
 
 TEST_CASE("The browser, memory and skills sections default when missing and refuse what they cannot use") {
@@ -131,6 +193,14 @@ TEST_CASE("A phone remembered before Nexa understood the section is still rememb
     CHECK_FALSE(config.extra.contains(u"android"_s));
 }
 
+TEST_CASE("The agent allows 200 tool rounds by default and up to 1000") {
+    CHECK(AgentConfig{}.maxToolRounds == 200);
+    CHECK(AgentConfig::fromJson(QJsonObject{}).maxToolRounds == 200);
+    CHECK(AgentConfig::fromJson(QJsonObject{{u"maxToolRounds"_s, 500}}).maxToolRounds == 500);
+    CHECK(AgentConfig::fromJson(QJsonObject{{u"maxToolRounds"_s, 5000}}).maxToolRounds == 1000);
+    CHECK(AgentConfig::fromJson(QJsonObject{{u"maxToolRounds"_s, 0}}).maxToolRounds == 1);
+}
+
 TEST_CASE("ConfigStore keeps the file and its directory private") {
     QTemporaryDir dir;
     REQUIRE(dir.isValid());
@@ -140,8 +210,12 @@ TEST_CASE("ConfigStore keeps the file and its directory private") {
     const QFileDevice::Permissions file = QFileInfo(path).permissions();
     CHECK(file.testFlag(QFileDevice::ReadOwner));
     CHECK(file.testFlag(QFileDevice::WriteOwner));
+#ifdef Q_OS_UNIX
     CHECK_FALSE(file.testAnyFlags(kGroupOrOther));
     CHECK_FALSE(QFileInfo(QFileInfo(path).absolutePath()).permissions().testAnyFlags(kGroupOrOther));
+#else
+    Q_UNUSED(kGroupOrOther);
+#endif
 }
 
 TEST_CASE("ConfigStore reports malformed JSON, leaves the file alone and can move it aside") {
@@ -173,5 +247,90 @@ TEST_CASE("Config falls back to the first provider when the active id is unknown
     Config config = sampleConfig();
     config.activeProvider = u"missing"_s;
     REQUIRE(config.active() != nullptr);
-    CHECK(config.active()->id == u"omniroute"_s);
+    CHECK(config.active()->id == u"gateway"_s);
+}
+
+TEST_CASE("ConfigStore round-trips a provider of kind codex") {
+    QTemporaryDir dir;
+    REQUIRE(dir.isValid());
+    const ConfigStore store(dir.filePath(u"nexa/config.json"_s));
+    Config config = sampleConfig();
+    config.providers.append(ProviderConfig{.id = u"codex"_s,
+                                           .kind = QString(kKindCodex),
+                                           .name = u"Codex (ChatGPT)"_s,
+                                           .baseUrl = u"/opt/codex/bin/codex"_s,
+                                           .defaultModel = u"gpt-5"_s,
+                                           .requiresKey = false});
+    config.activeProvider = u"codex"_s;
+    REQUIRE(store.save(config).isOk());
+
+    const Result<Config> loaded = store.load();
+    REQUIRE(loaded.isOk());
+    REQUIRE(loaded.value().providers.size() == 3);
+    const ProviderConfig &codex = loaded.value().providers.at(2);
+    CHECK(codex == config.providers.at(2));
+    CHECK(codex.kind == kKindCodex);
+    CHECK(codex.baseUrl == u"/opt/codex/bin/codex"_s);
+    CHECK_FALSE(codex.requiresKey);
+    REQUIRE(loaded.value().active() != nullptr);
+    CHECK(loaded.value().active()->id == u"codex"_s);
+}
+
+TEST_CASE("A save that removes providers keeps the settings from before it, privately, until the next removal") {
+    QTemporaryDir dir;
+    REQUIRE(dir.isValid());
+    const ConfigStore store(dir.filePath(u"nexa/config.json"_s));
+    const auto withProviders = [](const QStringList &ids) {
+        Config config;
+        for (const QString &id : ids) config.providers.append(ProviderConfig{.id = id, .name = id});
+        return config;
+    };
+    const auto idsIn = [](const Config &config) {
+        QStringList ids;
+        for (const ProviderConfig &provider : config.providers) ids.append(provider.id);
+        return ids;
+    };
+
+    REQUIRE(store.save(withProviders({u"opencode"_s, u"agy"_s, u"codex"_s})).isOk());
+    CHECK_FALSE(QFile::exists(store.previousPath()));    // nothing was removed
+
+    REQUIRE(store.save(withProviders({u"opencode"_s})).isOk());
+    REQUIRE(QFile::exists(store.previousPath()));
+#ifdef Q_OS_UNIX
+    CHECK_FALSE(QFileInfo(store.previousPath()).permissions().testAnyFlags(kGroupOrOther));
+#endif
+    const Result<Config> previous = ConfigStore(store.previousPath()).load();
+    REQUIRE(previous.isOk());
+    CHECK(idsIn(previous.value()) == QStringList{u"opencode"_s, u"agy"_s, u"codex"_s});
+
+    // A later save that removes nothing (a model changed) leaves the copy alone.
+    Config later = withProviders({u"opencode"_s});
+    later.providers.first().defaultModel = u"another"_s;
+    REQUIRE(store.save(later).isOk());
+    CHECK(idsIn(ConfigStore(store.previousPath()).load().value()) == QStringList{u"opencode"_s, u"agy"_s, u"codex"_s});
+}
+
+TEST_CASE("The mission section round-trips, keeps slots in range and drops what it cannot use") {
+    QTemporaryDir dir;
+    REQUIRE(dir.isValid());
+    const ConfigStore store(dir.filePath(u"nexa/config.json"_s));
+    Config config;
+    config.mission.maxConcurrent = 6;
+    config.mission.roleModels.insert(u"code"_s, ModelChoice{u"codex"_s, u"gpt-6-luna"_s});
+    config.mission.roleModels.insert(u"screen"_s, ModelChoice{u"gemini"_s, {}});
+    REQUIRE(store.save(config).isOk());
+    const Result<Config> loaded = store.load();
+    REQUIRE(loaded.isOk());
+    CHECK(loaded.value().mission == config.mission);
+    CHECK_FALSE(loaded.value().extra.contains(u"mission"_s));
+
+    const MissionConfig odd = MissionConfig::fromJson(QJsonObject{
+        {u"maxConcurrent"_s, 40},
+        {u"roleModels"_s, QJsonObject{{u"web"_s, QJsonObject{{u"provider"_s, u""_s}}},
+                                      {u"Bad Key"_s, QJsonObject{{u"provider"_s, u"x"_s}}},
+                                      {u"phone"_s, QJsonObject{{u"provider"_s, u"opencode"_s}}}}}});
+    CHECK(odd.maxConcurrent == MissionConfig::kMaxSlots);
+    CHECK(odd.roleModels.keys() == QStringList{u"phone"_s});
+    CHECK(MissionConfig::fromJson(QJsonObject{{u"maxConcurrent"_s, 0}}).maxConcurrent == 1);
+    CHECK(MissionConfig{}.maxConcurrent == 3);
 }

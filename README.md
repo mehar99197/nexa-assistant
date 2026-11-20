@@ -1,7 +1,9 @@
 # Nexa
 
 A Linux desktop AI assistant written in C++20 with a Qt 6 Widgets interface. It talks to any AI
-provider — OmniRoute by default, or OpenAI-compatible APIs, Anthropic and Google Gemini natively —
+provider — your own opencode and agy (Google's Antigravity CLI) on their own sign-ins by default, Codex on your
+ChatGPT account, Claude Code on your Claude subscription, a catalogue of 179 key-based and local providers, or
+OpenAI-compatible APIs, Anthropic and Google Gemini natively —
 acts on the PC through tools, listens and talks back, and works with your Android phone in both
 directions. See [ARCHITECTURE.md](ARCHITECTURE.md) for the design and the milestone status.
 
@@ -20,21 +22,72 @@ Not to be confused with Nexa Download Manager: this is a separate program, named
   about solar energy" becomes an Impress file with real slides, "a budget spreadsheet" a Calc sheet with
   working formulas, "a letter to…" a Writer document — created as files and opened, not typed. The status
   bar shows which app Nexa thinks you are in; opening another, closing it, or half an hour of silence moves on.
-- **Looks only when you share** — the Share screen button beside the input box (Ctrl+Shift+S, or say
-  "share my screen") is off at every start; until you switch it on, the model is not even offered the
-  screenshot tool and works through commands and tools alone. Asking "what's on my screen?" yourself
-  takes one picture either way. A model that cannot see images gets the words without the picture and
-  Nexa says so, instead of every later request failing.
+- **Looks only when you share — and reads before it looks** — the Share screen button beside the input box
+  (Ctrl+Shift+S, or say "share my screen") is off at every start; until you switch it on, the model is offered
+  neither the screenshot tool nor the screen-as-text tools and works through commands and tools alone. Switched
+  on, Nexa first reads the window in front as **text** through the desktop's accessibility bus — every button,
+  field and line of a terminal with a ref, the way Playwright reads a page — so even a model that cannot see
+  images clicks and types in it; a picture is taken only when the text is not enough. The phone the same:
+  `android_snapshot` reads its screen as text and taps go to an element by name. Asking "what's on my screen?"
+  yourself takes one look either way (the text, for a model without eyes). Chrome, Electron and Qt apps expose
+  their contents only with GNOME's accessibility switch on: Settings → General → "Let apps expose their contents".
+- **Give it files** — the paper clip beside the input box (Ctrl+O), a drop on the window or a paste (files copied
+  in the file manager, or a picture) attach up to ten files to the request, like to any agent: a picture is shown
+  to the model, a text file read as it is (the first 200 KB in the request, the rest a `read_file` away), a PDF or
+  an office document converted to words first (pdftotext, LibreOffice). The model is told they are the file's
+  contents — data you handed it, never instructions — and the chat lists them under your words.
 - **Fast path** — common requests ("open firefox", "volume 30", "pause music", "run df -h", "what's on
   my screen?", "on my phone open youtube") run directly in milliseconds, without waiting for a model.
 - **Agent** — anything else goes to the model, which calls the same tools step by step.
+- **Mission Control: many tasks at once** — every request is a task with an agent of its own, and several run
+  at the same time (3 by default, up to 8 in Settings → Mission; the rest wait in a queue). Add a list at once
+  with **+ Add tasks** (Ctrl+T, one per line). Each task gets a kind of agent from its words — web, code, screen,
+  phone or general — and the model that kind is given: Auto sends code to Claude Code, Codex, opencode or agy and the screen
+  and the phone to a provider that can see, or choose one per kind, or for a batch. A lead agent can hand part of
+  its task to another kind (`delegate_task`), which works on that kind's model and answers back. The control room
+  shows the agents at work, the board (pause, resume, stop, clear; the queue), the live activity by lane, and a
+  card for every question the policy asks, with Approve and Deny — no task waits behind a dialog, and stopping
+  one stops nothing else. The latency, tokens per second, CPU and memory are measured live. A conversation still
+  carries on: the next request sees the last one, on the same warm program.
+- **Hardcore mode** — switch on **Hardcore** beside Share screen (Ctrl+Shift+H, or say "hardcore on") and every
+  task you start locks this laptop's own keyboard and touchpad until it is done, so nothing typed or clicked here
+  spoils what it types and clicks; the screen stays on and you watch. A banner says until when. Its questions are
+  answered by voice ("approve" / "deny") or on your phone. While it works, only **Nexa Phone, the web remote or your
+  own enrolled voice** can end it early (**Unlock PC**, or "Nexa, unlock" / "stop everything" said by you — Settings →
+  Voice → My voice); anyone else's voice is refused, and hardcore mode switches on only when one of those ways exists.
+  Nexa closing or hanging always gives the keyboard and mouse back. It needs the root helper (reinstall it once after
+  updating Nexa).
+- **From anywhere** — away from home, Nexa Phone and the web remote still reach the laptop: privately over
+  **Tailscale** (sign in on the laptop and the phone with the same account), or through a public **Cloudflare**
+  tunnel on your own domain or **ngrok**'s free fixed domain (Settings → Remote → Away from home). The phone learns
+  every way while it is connected, tries them in turn, and says "via Tailscale" when it is not at home.
+  `scripts/download-tunnels.sh` installs cloudflared and ngrok without sudo; each keeps its own sign-in.
 - **Types and clicks for you** — in any window, including native Wayland ones. Point at anything you
   can see: coordinates are read straight off the screenshot Nexa last took, and land on the exact
   pixel even with fractional scaling.
 - **Talk to it** — hold the Talk button (Ctrl+M in the window, or a global key you assign) and speak.
-  Replies to spoken requests are read back sentence by sentence as they stream in. Optionally it
-  answers to "Hey Nexa", and then only the offline recogniser ever hears the room. Speech uses the
-  provider's models by default, with whisper.cpp and Piper as an offline fallback.
+  Replies to spoken requests are read back sentence by sentence as they stream in, and for a few
+  seconds after one it listens for a follow-up without its name. Optionally it answers to a name you
+  choose ("Hey Nexa" by default, Settings → Voice) — heard the moment it is said, even mid-sentence or
+  over a fan, by an offline keyword spotter, with whisper.cpp as a second net; only offline recognition
+  hears the room, and only the request after the name goes to the cloud recogniser. Recognition and the
+  voice come from the provider you pick in Settings → Voice (Groq's whisper, for example), with
+  whisper.cpp and Piper as the offline fallback. Nexa says when the microphone is overloaded and can
+  lower its input volume for you.
+- **Listens to you, not the room** — enrol your voice once (Settings → Voice → My voice: read three sentences)
+  and Nexa answers hands-free to your voice alone: a TV, someone else or its own speakers saying "Nexa" are
+  ignored, and a stranger's sentence is not even transcribed. Pressing Talk always works. A wake word the words
+  do not confirm asks nothing, and "next", "Max" or "Rex" are no longer taken for "Nexa". By default only its
+  name interrupts Nexa while it speaks, so it never interrupts itself.
+- **Speaks in your voice** — record yourself reading one short passage (Settings → Voice → Speak in my voice →
+  Record my voice…) and Nexa's replies come out in your own voice, made on this computer by ZipVoice from that one
+  recording, which stays here (readable by you alone) and is removed by "Forget the sample". "Hear it" plays a
+  test sentence; the phone and the web remote hear the same voice.
+- **Voice control** — "stop talking" stops the voice and leaves the work going; "stop" stops the task you are
+  looking at, "stop everything" every task. "Pause task two", "resume the code agent", "approve" / "deny" (when a
+  task waits for you), "what are you doing?", "add a task: …". With **Keep the conversation going** on, Nexa
+  keeps listening to you after each reply until you say "that's all", and tasks on the board say aloud when they
+  are done or need you.
 - **Controls your phone** (over USB or Wi-Fi, no app on the phone) — opens apps, taps, swipes and
   types, takes screenshots and describes them, reads notifications and text messages, starts calls
   and messages, controls music and volume, and copies files both ways. While a phone is connected, a
@@ -49,10 +102,50 @@ Not to be confused with Nexa Download Manager: this is a separate program, named
 - **Stays out of the way** — one copy per user (starting it again brings the window forward), an icon
   in the top bar, and closing the window keeps the hotkeys and web remote running.
 
-Providers: OmniRoute (default), OpenAI, Anthropic, Google Gemini, Ollama, LM Studio, Groq, OpenRouter,
-DeepSeek, Mistral, xAI, Together, or any OpenAI-compatible endpoint. For a model that cannot call tools
-(many small local ones), tick "This model cannot call tools" in Settings → Providers and Nexa describes
-the tools in the prompt instead.
+Providers: **opencode**, **agy** (Google's Antigravity CLI), **Codex** (OpenAI's coding agent, on your ChatGPT
+plan) and **Claude Code** (Anthropic's coding agent, on your Claude subscription; add the last two under Settings →
+Providers → Add → Programs) — the models you already have there, on their own sign-ins and quotas, with no key in
+Nexa: Nexa runs its own `opencode serve`, a warm `agy` process, a warm `codex app-server` and a warm `claude -p`, and
+every action still goes through Nexa's own tools (theirs stay switched off). Claude Code is run exactly as Anthropic
+publishes it, on the sign-in you made in your own terminal (or from Settings, through Claude Code's own login): Nexa
+never touches its credentials.
+
+**Sign in from inside Nexa.** Settings → Providers → pick the program → **Sign in…** opens that program's own login in
+your browser (the link is shown too, to copy) and reads its status; the program keeps the token, Nexa never sees it.
+A program that says nobody is signed in gets a **Sign in…** button in the status bar that opens the same place. The
+sign-in is shared with the program in your terminal, so signing out in Nexa signs it out there too (`opencode auth
+login`, running `agy` once and `codex login` still work). Claude's subscription login is not offered — Anthropic's terms
+do not let a third-party app offer it — so Claude goes through an Anthropic API key.
+
+**A catalogue of 179 providers.** Settings → Providers → **Add** lists them by category (gateways, model makers, inference hosts,
+regional and cloud providers, local servers, ones that need no key) and **Browse all…** opens a searchable gallery (a
+name, a host, "free" or "nokey"). Each takes a key from its own site, except local servers and the few that need none.
+OpenAI, Anthropic, Google Gemini, Groq, OpenRouter, DeepSeek, Mistral, xAI, Together, Ollama, LM Studio, OpenCode's
+hosted API (Console and Go) and a Custom OpenAI-compatible endpoint are all in the menu; the catalogue is generated from
+OmniRoute's open-source registry (`THIRD_PARTY_NOTICES.md`).
+
+Settings → Providers sets the **first choice** and the order of the rest (▲ ▼): when the first choice cannot answer —
+not running, not signed in, out of quota — the next one that allows it answers, with its own model, and the reply
+says `via agy`. For a model that cannot call tools (many small local ones), tick "This model cannot call tools" and
+Nexa describes the tools in the prompt instead.
+
+## Install (the package)
+
+The `.deb` from https://assistant.nexadownloadmanager.com (or the GitHub release) is self-contained: Qt, whisper.cpp,
+sherpa-onnx and Piper are inside it, and it installs on Ubuntu 24.04 or newer and Debian 13 or newer (x86-64, a CPU
+with AVX2 — anything since 2013).
+
+```bash
+sudo apt install ./nexa-assistant_1.0.0_amd64.deb      # the root helper comes with it: no install-helper.sh needed
+nexa-assistant
+```
+
+The speech models (about 420 MB — offline recognition, the wake name, your voice, the Piper voice and ZipVoice) are
+not in the package: Settings → Voice → **Speech models → Download** fetches them into `~/.local/share/nexa`, with
+resume and a checksum on every file, and the status bar says so until they are there. The cloud recogniser and voice
+of a provider work meanwhile. A machine that already runs the source build should `sudo ./packaging/uninstall-helper.sh`
+first, so one helper answers on the bus. `scripts/build-deb.sh` builds the package from a checkout and
+`scripts/test-deb.sh` installs it in a clean container; GitHub Actions does both on every push.
 
 ## Build
 
@@ -76,9 +169,13 @@ scripts/install-desktop-entry.sh             # app grid entry and icon; needed f
 sudo ./packaging/install-helper.sh           # typing, clicking and root commands (asks for your password once per login)
 scripts/download-whisper-model.sh base.en    # offline speech recognition (148 MB), optional
 scripts/download-piper.sh                    # offline voice (26 MB + a 63 MB voice), optional
+scripts/download-sherpa.sh                   # wake-name spotter, voice detection, noise reduction, your voice (220 MB), optional
 ```
 
-On first start Nexa asks for the OmniRoute API key, and installs Playwright — the browser automation that is
+The three model scripts and Settings → Voice → Speech models install the same files into the same folders, so
+either way works; the scripts also fetch the engines a source build lacks.
+
+On first start Nexa offers opencode and agy if they are installed, and installs Playwright — the browser automation that is
 part of it — into `~/.local/share/nexa/playwright` by itself (it needs Node.js 18 or newer and npm:
 `sudo apt install nodejs npm` if they are missing). Then:
 
@@ -123,7 +220,7 @@ pipx install aqtinstall
 aqt install-qt all_os android 6.10.2 android_arm64_v8a -m qtwebsockets qtmultimedia \
     --archives qtbase qtsvg qtwebsockets qtmultimedia -O ~/Qt
 # Android SDK: command-line tools from developer.android.com into ~/Android/Sdk/cmdline-tools/latest, then
-sdkmanager "platform-tools" "platforms;android-35" "build-tools;35.0.0" "ndk;27.2.12479018"
+sdkmanager "platform-tools" "platforms;android-36" "build-tools;36.0.0" "ndk;27.2.12479018"
 sudo apt install -y openjdk-21-jdk-headless   # a JDK with javac (the JRE is not enough); or a Temurin JDK in ~/Android/jdk-21
 scripts/download-android-openssl.sh           # OpenSSL for the APK (5 MB): Qt for Android has no TLS without it
 scripts/build-phone-apk.sh                    # configures with the kit, builds, signs, prints the APK's path
@@ -141,22 +238,26 @@ reach Nexa only over adb, so the build refuses to go on without it.
 ## Security, in brief
 
 - The root helper is the only privileged part. It runs only when needed, exits when idle, can only
-  *send* keyboard and mouse input (never read it), and authorises against what the system bus says
-  about the caller. Your password goes into the desktop's own prompt, never into Nexa; what Nexa
+  *send* keyboard and mouse input (never read it) — and, for hardcore mode, switch the laptop's own
+  keyboards and pointers off and on, giving them back whenever Nexa or the helper itself stops — and
+  authorises against what the system bus says about the caller. Your password goes into the desktop's own prompt, never into Nexa; what Nexa
   remembers is only that you said yes, until you log out (Settings → Helper → Forget my password ends
   it sooner).
 - The web remote is off until you switch it on. A phone gets in only with a six-digit code shown on
   the PC — single use, five minutes, withdrawn after ten wrong guesses — traded for a token stored
   only as a hash. It speaks HTTPS on the network (plain HTTP only on loopback, for adb), refuses other
   sites' pages, rate-limits everything, and a revoked phone is disconnected at once.
-- API keys live in `~/.config/nexa/config.json` (readable only by you) and are never logged or shown.
+- API keys live in `~/.config/nexa/config.json` (readable only by you) and are never logged or shown. Signing in to
+  opencode, agy, Codex or Claude Code is each program's own OAuth: Nexa starts it and reads its status, and the token
+  stays with the program — Nexa never reads, stores or shows one.
 
 ## The browser, memory and skills
 
 **Browser.** Anything on the web — "open github.com/trending and tell me the top repository", "search for
 flights to Lahore", "fill in this form" — goes to Playwright first: it reads pages as text, so it works even
 with models that cannot see the screen, in your own Chrome (signed in as you) once its extension is in the
-profile you chose. Screen sharing is the second approach, only for what Playwright cannot reach. The status
+profile you chose. The screen — read as text first, a picture second — is the second approach, only for what
+Playwright cannot reach. The status
 bar says where it works (`Browser: Chrome · Ahmad`, `Browser: Nexa profile`). Firefox cannot be driven this
 way. In confirm-risky mode Nexa asks before it clicks or types on a page.
 
@@ -190,17 +291,24 @@ request fits.
 ```bash
 nexa-assistant --ask "open calculator" --ask "volume 50"   # requests, in order, as if typed
 nexa-assistant --say "hello" --voice-file request.wav      # speak; feed a recording in as a spoken request
+nexa-assistant --new-instance --hear room.wav              # play a recording into the microphone, wake word on
 nexa-assistant --pair-phone                                 # pair the Nexa Phone app on the adb-connected phone, no typing
+nexa-assistant --hardcore --ask "tidy my downloads folder"   # hardcore mode on without asking: the task locks the laptop
+nexa-assistant --ask "what does this say?" --attach report.pdf --attach shot.png   # files with the first request
 ```
 
 If Nexa is already running, these go to the running copy. `--new-instance` starts a separate one
 (for testing). `--screenshot <file.png>` saves a picture of the window once the requests are done,
 then quits (it works with `QT_QPA_PLATFORM=offscreen`); `--screenshot-settings <dir>` does the same
-for every Settings tab; `--theme dark|light|system|<palette>` and `--design <design>` pick the look for
-that run only (a palette is one of the 52 in Settings → General, such as `ocean-dark`; a design is one of
+for every Settings tab; `--theme <theme>` and `--design <design>` pick the look for
+that run only (a theme is one of the 85 dark packs in Settings → General, such as `neon-cyan`, `ocean` or
+`hud-console`, in twelve categories — Nexa, HUD, Neon, Nature, Ocean, Space, Fire & Ember, Minimal & Mono, Retro,
+Cyber, Pastel Night, Gems; the HUD ones are heads-up displays — bracketed, neon, cut-cornered, glass or railed
+panels over a grid, dots, a glow, a horizon or scan lines; `dark`, `light`, `system` and the old
+`ocean-dark`-style names still resolve to one; a design is one of
 the eight there — `studio`, `focus`, `console`, `sidebar`, `orb`, `dashboard`, `gauge`, `paper` — each its
-own arrangement, core shape, corners and type), while the galleries there and the sun/moon button in the
-toolbar set them for good.
+own arrangement, core shape, corners and type), while the galleries there and the palette button in the
+toolbar (the next theme of the same category) set them for good.
 
 ## Connectors (MCP)
 
@@ -210,4 +318,4 @@ its standard streams (`npx -y @modelcontextprotocol/server-filesystem /home/me`,
 the model calls them like any other, through the policy, the Actions panel and the audit log; in
 confirm-risky mode Nexa asks before each call. Test lists a server's tools before you press OK.
 
-No licence has been chosen yet.
+No licence has been chosen yet. Third-party notices: [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).

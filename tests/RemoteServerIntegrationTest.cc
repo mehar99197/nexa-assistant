@@ -4,6 +4,7 @@
 
 #include "remote/IRemoteHost.h"
 #include "remote/PairingManager.h"
+#include "remote/RemoteRoutes.h"
 #include "remote/RemoteServer.h"
 #include "remote/RemoteSession.h"
 #include "remote/TlsIdentity.h"
@@ -11,6 +12,8 @@
 #include "QtStringMakers.h"
 
 #include <QElapsedTimer>
+#include <QFileInfo>
+#include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QNetworkAccessManager>
@@ -36,6 +39,11 @@ class FakeHost : public IRemoteHost {
 public:
     bool isBusy() const override { return busy; }
     void submit(const QString &text, const QString &source) override { submitted.append(source + u": "_s + text); }
+    void submitWithAttachments(const QString &text, const QString &source, const QStringList &savedPaths) override {
+        submitted.append(source + u": "_s + text);
+        uploadedPaths.append(savedPaths);
+    }
+    QString attachmentDir() const override { return uploadDir; }
     void cancel() override { ++cancels; }
     void transcribe(const QByteArray &pcm16k, std::function<void(Result<QString>)> done) override {
         heardBytes = pcm16k.size();
@@ -47,14 +55,26 @@ public:
         done(QByteArrayLiteral("RIFF-fake-wav"));
     }
 
+    bool isLocked() const override { return locked; }
+    QString lockText() const override { return locked ? u"Keyboard and mouse locked until “sort photos” is done."_s : QString(); }
+    void unlock() override { ++unlocks; }
+    QList<RemoteApproval> approvals() const override { return waiting; }
+    void answer(quint64 id, bool allow) override { answers.append(u"%1:%2"_s.arg(id).arg(allow ? u"yes"_s : u"no"_s)); }
+
     bool busy{false};
+    bool locked{false};
+    int unlocks{0};
+    QList<RemoteApproval> waiting;
+    QString uploadDir;
+    QStringList uploadedPaths;
+    QStringList answers;
     QStringList submitted;
     int cancels{0};
     qsizetype heardBytes{0};
     QString spoken;
 };
 
-// Two free ports in a row: the server uses port and port + 1.
+// Three free ports in a row: the server uses port, port + 1 (adb) and port + 2 (tunnels).
 int freePortPair() {
     for (int attempt = 0; attempt < 50; ++attempt) {
         QTcpServer probe;
@@ -63,8 +83,10 @@ int freePortPair() {
         probe.close();
         QTcpServer first;
         QTcpServer second;
+        QTcpServer third;
         if (port < 65000 && first.listen(QHostAddress::Any, quint16(port))
-            && second.listen(QHostAddress::LocalHost, quint16(port + 1))) {
+            && second.listen(QHostAddress::LocalHost, quint16(port + 1))
+            && third.listen(QHostAddress::LocalHost, quint16(port + 2))) {
             return port;
         }
     }
@@ -130,6 +152,9 @@ struct Fixture {
     QString local(const QString &path) const { return u"http://127.0.0.1:%1%2"_s.arg(port + 1).arg(path); }
     QString lan(const QString &path) const { return u"https://127.0.0.1:%1%2"_s.arg(port).arg(path); }
     QString localOrigin() const { return u"http://127.0.0.1:%1"_s.arg(port + 1); }
+    // What a tunnel hands on: its own public origin and Host (here, the loopback door's).
+    QString tunnel(const QString &path) const { return u"http://127.0.0.1:%1%2"_s.arg(port + 2).arg(path); }
+    QString tunnelOrigin() const { return u"http://127.0.0.1:%1"_s.arg(port + 2); }
 
     // POSTs to /api/pair and returns the status and the JSON answer.
     std::pair<int, QJsonObject> pair(const QString &code) {
@@ -314,4 +339,163 @@ TEST_CASE("Revoking a phone disconnects it at once") {
     REQUIRE(again.open(f.local(u"/ws"_s).replace(u"http:"_s, u"ws:"_s)));
     again.send({{u"t"_s, u"hello"_s}, {u"token"_s, token}});
     CHECK(again.waitFor(u"error"_s).value(u"code"_s).toString() == u"unauthorized"_s);
+}
+
+TEST_CASE("A locked PC shows on the phone, is unlocked from it, and its questions are answered there") {
+    if (!haveOpenssl()) SKIP("openssl is needed to make the certificate");
+    Fixture f;
+    REQUIRE(f.start());
+    const QString token = f.pairedToken();
+    REQUIRE_FALSE(token.isEmpty());
+    f.host.locked = true;
+    f.host.waiting = {RemoteApproval{3, u"BROWSER-01"_s, u"browser_click"_s, u"Click “Submit”?"_s}};
+
+    // A phone that connects while the PC is locked learns it at once, and what waits for an answer.
+    Client phone(f.localOrigin());
+    REQUIRE(phone.open(f.local(u"/ws"_s).replace(u"http:"_s, u"ws:"_s)));
+    phone.send({{u"t"_s, u"hello"_s}, {u"token"_s, token}});
+    REQUIRE_FALSE(phone.waitFor(u"welcome"_s).isEmpty());
+    const QJsonObject lock = phone.waitFor(u"lock"_s);
+    CHECK(lock.value(u"locked"_s).toBool());
+    CHECK(lock.value(u"text"_s).toString().contains(u"sort photos"_s));
+    const QJsonObject waiting = phone.waitFor(u"approval"_s);
+    CHECK(waiting.value(u"id"_s).toInteger() == 3);
+    CHECK(waiting.value(u"agent"_s).toString() == u"BROWSER-01"_s);
+
+    phone.send({{u"t"_s, u"unlock"_s}});
+    CHECK(QTest::qWaitFor([&f] { return f.host.unlocks == 1; }, 5000));
+    f.server.onLockChanged(false, {});
+    CHECK_FALSE(phone.waitFor(u"lock"_s).value(u"locked"_s).toBool(true));
+
+    // A new question reaches every phone; the answer reaches Nexa; and every phone hears it was settled.
+    f.server.onApprovalAsked(7, u"CODE-02"_s, u"run_command"_s, u"Run `make`?"_s);
+    const QJsonObject asked = phone.waitFor(u"approval"_s);
+    CHECK(asked.value(u"id"_s).toInteger() == 7);
+    CHECK(asked.value(u"text"_s).toString() == u"Run `make`?"_s);
+    phone.send({{u"t"_s, u"answer"_s}, {u"id"_s, 7}, {u"allow"_s, false}});
+    CHECK(QTest::qWaitFor([&f] { return f.host.answers == QStringList{u"7:no"_s}; }, 5000));
+    f.server.onApprovalSettled(7, false);
+    CHECK(phone.waitFor(u"settled"_s).value(u"id"_s).toInteger() == 7);
+
+    // An answer to nothing in particular is not guessed at.
+    phone.send({{u"t"_s, u"answer"_s}, {u"allow"_s, true}});
+    CHECK(phone.waitFor(u"error"_s).value(u"code"_s).toString() == u"invalid"_s);
+    CHECK(f.host.answers.size() == 1);
+}
+
+TEST_CASE("A phone through a tunnel is told apart, and every phone learns every way to this PC") {
+    if (!haveOpenssl()) SKIP("openssl is needed to make the certificate");
+    Fixture f;
+    REQUIRE(f.start());
+    const QString token = f.pairedToken();
+    REQUIRE_FALSE(token.isEmpty());
+    const QList<RemoteRoute> routes{{RemoteRoute::Kind::Ngrok, u"https://quiet-owl.ngrok-free.app"_s},
+                                    {RemoteRoute::Kind::Tailscale, u"https://100.101.102.103:7777"_s}};
+    f.server.setRoutes(routes);
+
+    // At home, through adb: not a tunnel; told the routes (nearest first) and the certificate the direct ones show.
+    Client home(f.localOrigin());
+    REQUIRE(home.open(f.local(u"/ws"_s).replace(u"http:"_s, u"ws:"_s)));
+    home.send({{u"t"_s, u"hello"_s}, {u"token"_s, token}});
+    const QJsonObject welcome = home.waitFor(u"welcome"_s);
+    REQUIRE_FALSE(welcome.isEmpty());
+    const QList<RemoteRoute> told = decodeRoutes(welcome.value(u"routes"_s).toArray());
+    REQUIRE(told.size() == 2);
+    CHECK(told.first().kind == RemoteRoute::Kind::Tailscale);
+    CHECK(welcome.value(u"fingerprint"_s).toString() == f.server.fingerprint());
+    CHECK_FALSE(f.server.fingerprint().isEmpty());
+    CHECK(f.server.tunnelClientCount() == 0);
+
+    // Away, through the tunnel's door: the same token works, and the session counts as a tunnel's.
+    Client away(f.tunnelOrigin());
+    REQUIRE(away.open(f.tunnel(u"/ws"_s).replace(u"http:"_s, u"ws:"_s)));
+    away.send({{u"t"_s, u"hello"_s}, {u"token"_s, token}});
+    REQUIRE_FALSE(away.waitFor(u"welcome"_s).isEmpty());
+    CHECK(QTest::qWaitFor([&f] { return f.server.tunnelClientCount() == 1; }, 5000));
+    CHECK(f.server.clientCount() == 2);
+
+    // A way comes up: every phone hears it.
+    f.server.setRoutes(routes + QList<RemoteRoute>{{RemoteRoute::Kind::Cloudflare, u"https://nexa.nexacodesolutions.online"_s}});
+    CHECK(decodeRoutes(home.waitFor(u"routes"_s).value(u"routes"_s).toArray()).size() == 3);
+    CHECK(decodeRoutes(away.waitFor(u"routes"_s).value(u"routes"_s).toArray()).size() == 3);
+
+    // Pairing through the tunnel works as at home: the code is the guard.
+    f.pairing.startPairing();
+    QNetworkRequest request(QUrl(f.tunnel(u"/api/pair"_s)));
+    request.setHeader(QNetworkRequest::ContentTypeHeader, u"application/json"_s);
+    QNetworkReply *reply = f.network.post(
+        request, QJsonDocument(QJsonObject{{u"code"_s, f.pairing.code()}, {u"name"_s, u"Away phone"_s}}).toJson());
+    QSignalSpy finished(reply, &QNetworkReply::finished);
+    REQUIRE(finished.wait(5000));
+    CHECK(reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt() == 200);
+    reply->deleteLater();
+}
+
+TEST_CASE("RemoteServer serves upload endpoint with Bearer auth and broadcasts theme + attachments") {
+    if (!haveOpenssl()) SKIP("openssl is needed to make the certificate");
+    Fixture f;
+    f.host.uploadDir = f.directory.filePath(u"uploads"_s);
+    REQUIRE(f.start());
+
+    remote::ThemeStyle theme;
+    theme.themeId = u"neon-cyan"_s;
+    theme.designId = u"cards"_s;
+    theme.ground = u"#080b10"_s;
+    theme.panel = u"#101622"_s;
+    theme.text = u"#f0f6fc"_s;
+    theme.idle = u"#00e5ff"_s;
+    theme.bubbleStyle = u"cards"_s;
+    theme.fontFace = u"mono"_s;
+    theme.radius = 6;
+    f.server.setTheme(theme);
+
+    const QString token = f.pairedToken();
+    REQUIRE_FALSE(token.isEmpty());
+
+    Client phone(f.localOrigin());
+    REQUIRE(phone.open(f.local(u"/ws"_s).replace(u"http:"_s, u"ws:"_s)));
+    phone.send({{u"t"_s, u"hello"_s}, {u"token"_s, token}});
+    const QJsonObject welcome = phone.waitFor(u"welcome"_s);
+    CHECK(welcome.value(u"theme"_s).toObject().value(u"themeId"_s).toString() == u"neon-cyan"_s);
+    CHECK(welcome.value(u"theme"_s).toObject().value(u"bubbleStyle"_s).toString() == u"cards"_s);
+
+    // Live theme update broadcasts immediately.
+    theme.ground = u"#11151d"_s;
+    f.server.setTheme(theme);
+    const QJsonObject themeMsg = phone.waitFor(u"theme"_s);
+    CHECK(themeMsg.value(u"theme"_s).toObject().value(u"ground"_s).toString() == u"#11151d"_s);
+
+    // Unauthenticated POST /api/upload is refused (401).
+    QNetworkRequest unauthReq(QUrl(f.local(u"/api/upload"_s)));
+    unauthReq.setHeader(QNetworkRequest::ContentTypeHeader, u"application/json"_s);
+    QNetworkReply *unauth = f.network.post(unauthReq, R"({"text":"hi","files":[{"name":"a.txt","data":"SGk="}]})");
+    QSignalSpy unauthDone(unauth, &QNetworkReply::finished);
+    REQUIRE(unauthDone.wait(5000));
+    CHECK(unauth->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt() == 401);
+    unauth->deleteLater();
+
+    // Authenticated POST /api/upload sanitizes path traversal, saves file 0600, and submits to host.
+    QNetworkRequest uploadReq(QUrl(f.local(u"/api/upload"_s)));
+    uploadReq.setHeader(QNetworkRequest::ContentTypeHeader, u"application/json"_s);
+    uploadReq.setRawHeader("Authorization", "Bearer " + token.toUtf8());
+    const QByteArray payload = QJsonDocument(QJsonObject{
+        {u"text"_s, u"review attachment"_s},
+        {u"files"_s, QJsonArray{QJsonObject{
+            {u"name"_s, u"../../evil/hello.txt"_s},
+            {u"data"_s, QString::fromLatin1(QByteArrayLiteral("hello attachment").toBase64())},
+        }}},
+    }).toJson(QJsonDocument::Compact);
+    QNetworkReply *okReply = f.network.post(uploadReq, payload);
+    QSignalSpy okDone(okReply, &QNetworkReply::finished);
+    REQUIRE(okDone.wait(5000));
+    CHECK(okReply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt() == 200);
+    okReply->deleteLater();
+
+    REQUIRE(f.host.uploadedPaths.size() == 1);
+    CHECK(QFileInfo(f.host.uploadedPaths.first()).fileName() == u"hello.txt"_s);
+    CHECK(f.host.submitted.last() == u"phone: review attachment"_s);
+
+    f.server.onUserMessageFrom(u"review attachment"_s, u"phone"_s, u"hello.txt (16 B)"_s);
+    const QJsonObject acc = phone.waitFor(u"accepted"_s);
+    CHECK(acc.value(u"attachments"_s).toString() == u"hello.txt (16 B)"_s);
 }

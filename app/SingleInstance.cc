@@ -17,13 +17,19 @@ namespace {
 constexpr int kConnectTimeoutMs = 1'000;
 constexpr qsizetype kMaxMessage = 64 * 1024;
 
-} // namespace
-
-SingleInstance::SingleInstance(const QString &name, QObject *parent) : QObject(parent) {
+QString makeSocketPath(const QString &name) {
+#ifdef Q_OS_WIN
+    return name;
+#else
     QString directory = QStandardPaths::writableLocation(QStandardPaths::RuntimeLocation);
     if (directory.isEmpty()) directory = QDir::tempPath();
-    path_ = directory + u'/' + name + u".socket"_s;
+    return directory + u'/' + name + u".socket"_s;
+#endif
 }
+
+} // namespace
+
+SingleInstance::SingleInstance(const QString &name, QObject *parent) : QObject(parent), path_(makeSocketPath(name)) {}
 
 SingleInstance::~SingleInstance() {
     if (server_) server_->close();
@@ -41,6 +47,11 @@ bool SingleInstance::handOver(const QJsonObject &message) {
 }
 
 bool SingleInstance::listen() {
+    if (server_) {
+        server_->close();
+        delete server_;
+        server_ = nullptr;
+    }
     server_ = new QLocalServer(this);
     // The socket only answers this user, whatever directory it ended up in.
     server_->setSocketOptions(QLocalServer::UserAccessOption);

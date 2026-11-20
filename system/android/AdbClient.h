@@ -36,6 +36,8 @@ public:
     ~AdbClient() override;
 
     static bool isInstalled();
+    // Another adb to run — the tests' stand-in (tests/fake-adb/adb); empty: the one on the PATH.
+    void setProgram(const QString &path) { program_ = path; }
 
     // `adb <arguments>` — for commands about adb itself: devices, mdns, pair, connect.
     void run(const QStringList &arguments, int timeoutMs, Done done);
@@ -53,7 +55,10 @@ private:
     struct Job;
     void finish(QProcess *process, Result<Output> result);
 
+    QString program() const;
+
     QHash<QProcess *, std::shared_ptr<Job>> jobs_;
+    QString program_;
 };
 
 } // namespace nexa

@@ -98,25 +98,36 @@ TEST_CASE("The browser asks, hears a phone answer, and forgets it on the goodbye
     browser.setActive(true);
     REQUIRE(browser.isActive());
     CHECK(browser.problem().isEmpty());
+    // A real phone with wireless debugging on, on the same network, answers too: only the fake one is judged, and the
+    // counts of changes only while nobody else has answered.
+    const auto fake = [&browser] {
+        QList<MdnsService> mine;
+        for (const MdnsService &service : browser.services()) {
+            if (service.name == u"adb-R58M12345ABC-AbCdEf"_s) mine.append(service);
+        }
+        return mine;
+    };
+    const auto alone = [&browser, &fake] { return browser.services().size() == fake().size(); };
     QSignalSpy changed(&browser, &MdnsBrowser::changed);
     browser.query();
     REQUIRE(QTest::qWaitFor([&questions] { return questions > 0; }, 5000));
-    REQUIRE(QTest::qWaitFor([&browser] { return !browser.services().isEmpty(); }, 5000));
-    CHECK(changed.count() == 1);
-    const QList<MdnsService> services = browser.services();
+    REQUIRE(QTest::qWaitFor([&fake] { return !fake().isEmpty(); }, 5000));
+    if (alone()) CHECK(changed.count() == 1);
+    const QList<MdnsService> services = fake();
     REQUIRE(services.size() == 1);
-    CHECK(services.first().name == u"adb-R58M12345ABC-AbCdEf"_s);
     CHECK(services.first().kind == MdnsService::Kind::Connect);
     CHECK(services.first().address() == u"192.168.0.42:37135"_s);
 
     // The same announcement again changes nothing; the goodbye does.
+    const qsizetype before = changed.count();
     phone.writeDatagram(announcement, kGroup, MdnsBrowser::kPort);
     QTest::qWait(300);
-    CHECK(changed.count() == 1);
+    if (alone()) CHECK(changed.count() == before);
+    CHECK(fake().size() == 1);
     phone.writeDatagram(response({record(u"_adb-tls-connect._tcp.local"_s, 12, 0, dnsName(instance))}), kGroup,
                         MdnsBrowser::kPort);
-    REQUIRE(QTest::qWaitFor([&browser] { return browser.services().isEmpty(); }, 5000));
-    CHECK(changed.count() == 2);
+    REQUIRE(QTest::qWaitFor([&fake] { return fake().isEmpty(); }, 5000));
+    CHECK(changed.count() > before);
 
     // Inactive, it asks nothing more (the question went out once per interface before, so the
     // count is whatever it is — it must only stop growing).

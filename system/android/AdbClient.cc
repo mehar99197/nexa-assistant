@@ -1,7 +1,11 @@
 #include "system/android/AdbClient.h"
 
 #include "core/Logging.h"
+#ifdef Q_OS_WIN
+#include "core/ProcessUtils.h"
+#endif
 
+#include <QDir>
 #include <QProcess>
 #include <QStandardPaths>
 #include <QTimer>
@@ -13,7 +17,30 @@ namespace nexa {
 namespace {
 
 QString adbProgram() {
-    static const QString program = QStandardPaths::findExecutable(u"adb"_s);
+    static const QString program = [] {
+        if (const QString found = QStandardPaths::findExecutable(u"adb"_s); !found.isEmpty()) return found;
+#ifdef Q_OS_WIN
+        QStringList dirs;
+        if (const QString local = qEnvironmentVariable("LOCALAPPDATA"); !local.isEmpty()) {
+            dirs.append(local + u"/Android/Sdk/platform-tools"_s);
+            dirs.append(local + u"/Microsoft/WinGet/Links"_s);
+            const QDir wingetPkgs(local + u"/Microsoft/WinGet/Packages"_s);
+            for (const QString &pkg : wingetPkgs.entryList({u"Google.PlatformTools*"_s}, QDir::Dirs | QDir::NoDotAndDotDot)) {
+                dirs.append(wingetPkgs.filePath(pkg) + u"/platform-tools"_s);
+            }
+        }
+        dirs.append(QDir::homePath() + u"/AppData/Local/Android/Sdk/platform-tools"_s);
+        dirs.append(QDir::homePath() + u"/scoop/shims"_s);
+        if (const QString pf = qEnvironmentVariable("ProgramFiles"); !pf.isEmpty()) {
+            dirs.append(pf + u"/Android/platform-tools"_s);
+        }
+        dirs.append(u"C:/platform-tools"_s);
+        dirs.append(u"C:/Android/platform-tools"_s);
+        return QStandardPaths::findExecutable(u"adb"_s, dirs);
+#else
+        return QString();
+#endif
+    }();
     return program;
 }
 
@@ -59,9 +86,17 @@ void AdbClient::runOn(const QString &serial, const QStringList &arguments, int t
     run(QStringList{u"-s"_s, serial} + arguments, timeoutMs, std::move(done));
 }
 
+QString AdbClient::program() const {
+    return program_.isEmpty() ? adbProgram() : program_;
+}
+
 void AdbClient::run(const QStringList &arguments, int timeoutMs, Done done) {
-    if (!isInstalled()) {
+    if (program().isEmpty()) {
+#ifdef Q_OS_WIN
+        done(Error{ErrorCode::NotSupported, u"adb is not installed. Install Android Platform Tools and add adb to PATH."_s});
+#else
         done(Error{ErrorCode::NotSupported, u"adb is not installed. Install it with: sudo apt install adb"_s});
+#endif
         return;
     }
     auto *process = new QProcess(this);
@@ -93,7 +128,10 @@ void AdbClient::run(const QStringList &arguments, int timeoutMs, Done done) {
     if (logged.size() >= 3 && logged.first() == u"pair") logged.last() = u"******"_s;
     qCDebug(lcApp) << "adb" << logged;
     job->timer->start(timeoutMs);
-    process->start(adbProgram(), arguments);
+#ifdef Q_OS_WIN
+    process::configureChild(*process);
+#endif
+    process->start(program(), arguments);
 }
 
 void AdbClient::cancelAll() {

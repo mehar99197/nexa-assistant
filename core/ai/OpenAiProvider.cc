@@ -6,6 +6,7 @@
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonParseError>
+#include <QJsonValue>
 #include <QNetworkReply>
 
 using namespace Qt::StringLiterals;
@@ -96,7 +97,8 @@ IAiProvider::Capabilities OpenAiProvider::capabilities() const {
 }
 
 void OpenAiProvider::listModels(std::function<void(Result<QStringList>)> done) {
-    http_->get(HttpClient::jsonRequest(endpoint(u"/models"_s), config_.apiKey), kModelsTimeoutMs, this,
+    const QUrl models = config_.modelsUrl.isEmpty() ? endpoint(u"/models"_s) : QUrl(config_.modelsUrl);
+    http_->get(HttpClient::jsonRequest(models, config_.apiKey), kModelsTimeoutMs, this,
                [done = std::move(done)](Result<QByteArray> body) {
                    if (!body) {
                        done(body.error());

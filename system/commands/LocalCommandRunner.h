@@ -56,6 +56,9 @@ public:
 
     // `done` runs exactly once; cancelAll() reports ErrorCode::Cancelled.
     void run(const QString &command, const QString &workingDirectory, int timeoutMs, Done done);
+    // Runs a program with explicit argv and environment overrides without invoking a shell.
+    void runProgram(const QString &program, const QStringList &arguments, const QString &workingDirectory,
+                    int timeoutMs, const QProcessEnvironment &environment, Done done);
     // GUI programs and servers: started detached and not waited for; returns the pid.
     Result<qint64> startDetached(const QString &command, const QString &workingDirectory);
     void cancelAll();

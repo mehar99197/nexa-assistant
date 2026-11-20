@@ -1,6 +1,6 @@
 # Nexa — guide for Claude Code
 
-Linux AI assistant in C++20 + Qt 6 Widgets (Kali, GNOME on Wayland). The full design, the owner's
+Cross-platform AI assistant in C++20 + Qt 6 Widgets (Linux primary / GNOME on Wayland + Windows x64 + Android bridge). The full design, the owner's
 decisions and the milestone status live in **ARCHITECTURE.md** — read its *Status* section first and
 update it at the end of every milestone.
 
@@ -28,13 +28,23 @@ browser profile out of the real ones, or to try another model, give it a private
 `XDG_CONFIG_HOME=/tmp/x/config XDG_DATA_HOME=/tmp/x/data`, with `playwright`, `models` and `piper` symlinked into
 `/tmp/x/data/nexa`) — it still reads the real config, so
 run it with `QT_QPA_PLATFORM=offscreen` to keep it off the user's screen (it still registers the global Talk hotkey and
-the web remote's port like the real one, so a press of the hotkey during a scripted run goes to the test copy). `--say "<text>"` speaks, `--voice-file <wav>` feeds a recording in as a spoken
+the web remote's port like the real one, so a press of the hotkey during a scripted run goes to the test copy). A command about Nexa itself ("unlock", "stop everything", "pause all") given with `--ask` acts at once instead of
+waiting its turn. `--hardcore` switches hardcore mode on for that run without asking (it locks the laptop while the requests run — see
+the helper rule below). `--attach <file>` (repeatable) gives files with the first `--ask`, as if attached in the
+window. `--say "<text>"` speaks, `--voice-file <wav>` feeds a recording in as a spoken
 request; the three run in that order, one at a time. **To check the look**, add `--screenshot <file.png>`: once the
 requests are done and Nexa is idle, it saves a picture of the window and quits — it works offscreen, so
 `QT_QPA_PLATFORM=offscreen ./build/app/nexa-assistant --new-instance --theme light --ask "run uname -sr" --screenshot /tmp/nexa.png`
 shows the light scheme with a fast-path reply without touching the screen (`--theme <palette>` and `--design <design>`
 are for that run only and never reach the settings; `--design console` shows the terminal design in its own palette);
-`--screenshot-settings <dir>` saves every Settings tab the same way. **Without a phone**, `tests/fake-adb/adb` stands in
+`--screenshot-settings <dir>` saves every Settings tab the same way, then the Providers tab of each program (agy,
+opencode, Codex, Claude Code: its sign-in status read) and the provider gallery (`provider-gallery.png`, and searched for "free");
+the pictures of a sign-in under way (the method menu, the login link) need **`NEXA_SNAPSHOT_SIGN_IN=1` and a private
+config naming the fake programs** — `XDG_CONFIG_HOME=/tmp/x/config` with providers of kind `agy` and `codex` whose
+`baseUrl` is `tests/fake-agy/agy` / `tests/fake-codex/codex`, and `tests/fake-opencode` first on the `PATH` (opencode is
+found there; each fake's header says which `FAKE_*` file holds who is signed in) — because without the variable only
+status checks run: a started sign-in opens the real browser (agy does it itself) and puts the login link in the
+picture, so never set it against the owner's own config. **Without a phone**, `tests/fake-adb/adb` stands in
 for adb with a Pixel always connected: `PATH="$PWD/tests/fake-adb:$PATH"` before the command above, plus
 `--ask "on my phone open youtube"` so the phone is looked up, shows the Phone panel with a drawn screen in it.
 The phone app's screens come out of
@@ -52,10 +62,58 @@ find, and GNOME insists on a reverse-DNS one). GNOME then wants the keys assigne
 Keyboard; inspect the result with `dconf dump /org/gnome/settings-daemon/global-shortcuts/`.
 To inspect the GUI from a script, run it on XWayland (`QT_QPA_PLATFORM=xcb`) and capture with `xwd -id <window>`; do **not** drive it with `xdotool type` — under Wayland, synthetic keystrokes only reach whichever X11 window has focus.
 
-Voice engines (optional, no sudo): `scripts/download-whisper-model.sh base.en` for offline recognition and
-`scripts/download-piper.sh` for the offline voice, both into `~/.local/share/nexa`. Without them Nexa uses the
-provider's speech models (OmniRoute by default). Local recognition is compiled in only with
+Voice engines (optional, no sudo): `scripts/download-whisper-model.sh base.en` for offline recognition,
+`scripts/download-piper.sh` for the offline voice, and `scripts/download-sherpa.sh` for sherpa-onnx 2.0.1 and its
+models (`~/.local/share/nexa/sherpa`: the keyword spotter that hears the wake name, Silero voice detection, GTCRN
+noise reduction, the speaker model, and **ZipVoice** with its Vocos vocoder, the voice Nexa makes from a sample of the
+owner's own (M26, Settings → Voice → Speak in my voice: `Record my voice…` records the owner reading a passage,
+`Hear it` speaks a sentence in it; needs Piper too, for its phonemizer) — loaded at run time with `QLibrary` against
+the vendored `voice/wake/sherpa/c-api.h`, nothing linked; without it the energy VAD and the whisper second net work
+alone), all into `~/.local/share/nexa`. The
+cloud recogniser and voice are the provider chosen in Settings → Voice, or automatically the first choice and then
+every provider with a speech model (agy, opencode and Codex have none). Local recognition is compiled in only with
 `-DNEXA_BUILD_WHISPER=ON` (on in the release and debug presets; whisper.cpp is fetched at configure time).
+`--hear <wav>` (with `--new-instance` implied) plays a recording into the microphone with the wake word on, so the
+whole wake → request → reply → follow-up path runs as if the room had said it; with
+`QT_LOGGING_RULES="nexa.voice.debug=true"` the log says what the spotter heard and why it was taken or ignored.
+
+The package (M28): `scripts/build-deb.sh [--build-dir build-deb] [--out dist]` configures a packaged build
+(`-DNEXA_PACKAGED=ON`: Qt's plugins through the `packaging/qt.conf` built in as `:/qt/etc/qt.conf`, the speech engines
+looked for under `NEXA_ENGINE_DIR` = `/usr/lib/nexa-assistant` after the user's own `~/.local/share/nexa` —
+`voice/EngineLocator`; whisper.cpp with `GGML_NATIVE=OFF` and AVX2, so the binary runs on any CPU since 2013),
+installs it into a staging tree (`cmake --install`: the layout in `CMakeLists.txt`'s install rules — the app in
+`/usr/bin`, the helper in `/usr/libexec/nexa-assistant`, its D-Bus service and systemd unit generated from
+`packaging/*.in` with that path), bundles the whole library closure of both binaries with linuxdeploy (pinned; glibc,
+libstdc++ and the GL stack stay the host's), adds the pinned sherpa-onnx and Piper archives, patches RPATHs, and runs
+`dpkg-deb` with `packaging/debian/`. `scripts/test-deb.sh dist/*.deb` installs it in a clean `ubuntu:24.04` container
+(Docker) and runs `--version`, a fast-path `--ask` with a screenshot and the helper's `--version` — what the CI
+(`.github/workflows/build.yml`: Ubuntu 24.04, Qt 6.8 from aqtinstall, polkit-qt-1 built from source, the tests on a
+`dbus-run-session`, then the package and the container test; a tag `v*` publishes a GitHub Release) does on every push.
+The models are not in the package: `system/setup/EngineAssets` is the pinned manifest (the same URLs and hashes as the
+scripts — a test reads them), `AssetDownloader` fetches them with resume and verification into the user's folder, and
+Settings → Voice → **Speech models** drives it; `nexa-assistant --version` and `nexa-helper --version` answer with no
+display. A source build keeps `install-helper.sh` and the scripts as before.
+
+The server (M30): the website and API live in the Nexa Download Manager repository (`~/Desktop/Work/nexadownloadmanager`,
+worktree `~/Desktop/Work/nexadownloadmanager-m30` on `website/two-products`; never touch the main checkout without
+checking `git status` first). One Node/MySQL backend (`ndm-website/backend`) serves both products through the `product`
+parameter (`'ndm'` default, `'assistant'` for this app) on `/api/releases/*`, `/api/subscription/*`, `/api/device/*`,
+`/api/license/*`, `/api/user/*` and `/api/admin/*`, and mounts the OpenAI-compatible Nexa AI relay at
+`/api/assistant/v1` (`GET /models`, `POST /chat/completions` with a 15-minute Ed25519 licence token carrying
+`product: 'assistant'`, `acct` and `features.nexaAi`). The assistant's public site (`ndm-website/assistant`, served from
+`assistant.nexadownloadmanager.com` and proxying `/api/*` to the shared backend socket) is built and uploaded alongside
+`frontend`, `admin` and `backend` by `./deploy/build-and-upload.sh` (guarded by `deploy/deploy-guard.sh`, skippable with
+`SKIP_ASSISTANT=1`). Pushing, creating the Hostinger subdomain, editing the live `nexa-api/.env` (`ASSISTANT_AI_*`) and
+running `./deploy/build-and-upload.sh` are outward-facing and always need the owner's go.
+
+The screen as text (M27, nothing to install): `screen_snapshot` reads the window in front over the desktop's
+accessibility bus (`busctl --user call org.a11y.Bus /org/a11y/bus org.a11y.Bus GetAddress` says where it is; `busctl
+--address=<it> list` who is on it). GTK apps are on it always; Chrome, Electron and Qt apps (Nexa itself) only with
+GNOME's switch on — Settings → General → "Let apps expose their contents", the same as `gsettings set
+org.gnome.desktop.interface toolkit-accessibility true` — from their next start. A `--new-instance` copy reads the same
+bus, so `--ask "share my screen" --ask "use screen_snapshot and name the window in front"` exercises it live, and
+`tests/AtspiScreenReaderTest.cc` reads it in the suite (skipped where there is none). Without a phone,
+`tests/fake-adb/adb` answers `uiautomator dump` with `tests/fake-ui-dump.xml`, so `android_snapshot` has a screen to read.
 
 Root helper (needs sudo — **the user runs it**, as `! sudo ./packaging/install-helper.sh`): installs
 `nexa-helper` so Nexa can run commands as root and type/click on Wayland. The script self-checks with
@@ -69,21 +127,77 @@ being remembered — check `/run/nexa-helper/grants.json` and `journalctl -u pol
 Build dependencies (one-time, needs sudo — the user runs it):
 `sudo apt install -y cmake ninja-build qt6-base-dev qt6-base-dev-tools qt6-multimedia-dev qt6-speech-dev qt6-tools-dev qt6-websockets-dev qt6-httpserver-dev libpolkit-qt6-1-dev libxkbcommon-dev libqrencode-dev adb catch2`
 
-Runtime: settings in `~/.config/nexa/config.json` (0600, holds API keys). The default provider is
-OmniRoute at `http://localhost:20128/v1` (OpenAI-compatible, needs its API key; prefer concrete
-models over its slow `auto/*` combos). OmniRoute is a system unit (`omniroute.service`, root to start) that
-runs `/usr/local/bin/omniroute` as the user; without sudo, `nohup /usr/local/bin/omniroute serve &` starts the
-same server (ready when port 20128 answers, about 10 s). A text-only model there (the GLM Flash ones) refuses
-images with a 400; the `Agent` then resends without them and remembers the model as blind.
+Runtime: settings in `~/.config/nexa/config.json` (0600, holds API keys). The providers are tried in order as a
+`ProviderChain`: the **first choice** (Settings → Providers), then every provider ticked "Use when the providers above cannot
+answer", each with its own model; the chain moves on only when one cannot answer (not running, not installed, not
+signed in, out of quota) and nothing has streamed, and the reply's header then says `via <provider>`. The defaults
+are the owner's own programs, on their own sign-in and quota, no key in Nexa: **opencode** — Nexa starts its own
+`opencode serve` on loopback (password made per start, in the child's environment only; folder
+`~/.cache/nexa/opencode`; about 10 s to be ready) — and **agy** (Google's
+Antigravity CLI, `~/.local/bin/agy`): one warm `agy --input-format stream-json` process per conversation, run with a
+home folder of Nexa's own (`~/.cache/nexa/agy/home`, whose `settings.json` denies agy's own tools — print mode would
+otherwise read files unasked) and an empty workspace (`~/.cache/nexa/agy/work`); `agy models` takes about 16 s. A third
+program, **Codex** (OpenAI's coding agent, on the owner's ChatGPT account), is added from Settings → Providers → Add →
+Programs, never a default: one warm `codex app-server` per conversation (`~/.cache/nexa/codex`, run in its empty `work`
+folder; found on the PATH, in `~/.local/bin` or `~/.npm-global/bin`), started with its own tools disabled. A fourth,
+**Claude Code** (Anthropic's coding agent, `~/.local/bin/claude`, on the owner's Claude subscription; M25), is added the
+same way: one warm `claude -p --input-format stream-json --output-format stream-json` process per conversation
+(`~/.cache/nexa/claude/work`), its own tools, settings, hooks, MCP servers and session files all switched off at the
+command line (`--tools "" --strict-mcp-config --setting-sources "" --permission-mode dontAsk --permission-prompts
+none --no-session-persistence`), Nexa's system prompt as `--system-prompt` (a changed prompt or model is a new
+process), `CLAUDECODE` and `CLAUDE_CODE_ENTRYPOINT` removed from its environment (a nested run is refused otherwise);
+its models see pictures; the toolbar offers its aliases (`fable`, `opus`, `sonnet`, `haiku`) since it has no list
+command. All four take Nexa's tools as text (`<tool_call>`), and an empty model is their own default (Codex: the
+first it lists). **They are signed in inside Nexa**, by the program's own flow: Settings → Providers → the program →
+Sign in… opens its login in the browser and shows the link (Claude Code's `claude auth login` may also ask for a code
+the page shows: the code field takes it). The sign-in is the program's own and shared with the terminal one — agy's
+lives in the system keyring, opencode's in `auth.json`, Codex's in `CODEX_HOME`, Claude Code's in its own `~/.claude`,
+which Nexa never points elsewhere (no `CLAUDE_CONFIG_DIR` of its own, no `--bare`) and never reads — so `opencode auth
+login`, running `agy` once, `codex login` and `claude auth login` still work, and signing out in Nexa signs the terminal
+out too (so a test copy, whose private XDG folders do not isolate the keyring or the programs' own folders, must never
+sign out). For a sign-in that misbehaves,
+`QT_LOGGING_RULES="nexa.ai.debug=true"` logs the steps (never a link, a code or an account). OpenCode's hosted API (Console, Go) is a preset with a key, and
+Settings → Providers → Add has the catalogue of 179 (a key each, or none for a local server): the menu by category,
+**Browse all…** for the searchable gallery. A test copy on private `XDG_CONFIG_HOME` /
+`XDG_DATA_HOME` must link `~/.config/opencode` and `~/.local/share/opencode` into them, or opencode sees none of the
+user's providers, and needs the wake word off (`voice.wakeWord`), or `--ask` waits for an idle voice forever. A
+text-only model refuses images with a 400; the `Agent` then resends without them and remembers the model as blind.
 
 ## Layout
 
-- `core/` — no Qt Widgets, no syscalls: `Result.h`, `Logging`, `config/`, `net/` (HttpClient, SseParser),
+- `core/` — no Qt Widgets, no syscalls: `Result.h`, `Logging`, `ProcessUtils` (cross-platform child containment and descendant process-tree termination), `config/` (`Config`, `ConfigStore`, `Portable` — detects `portable.txt` next to the binary for portable Windows/Linux data storage), `net/` (HttpClient, SseParser),
+  `account/` (built as hardened `nexa_account` for shipping binaries and `nexa_account_dev` with `NEXA_DEV_BUILD=1` + `NEXA_TEST_CREDENTIAL_STORE=1` for Catch2 so tests stay isolated from production keys and host keyrings: `AccountManager`, `CredentialStore` with WinCred / secret-tool / 0600 fallback, `Guard` + `Obfuscation`, `KeyIntegrity`, `LicenseToken` verifying `product == "assistant"`, `Entitlements`, `UpdateChecker` with Ed25519 feed + SHA-256 verification),
   `ai/` (OpenAiProvider, AnthropicProvider, GeminiProvider — each maps ChatRequest to its own wire format and
-  decodes its own events; SseChatStream is the stream all three share; ToolCallAccumulator; the registry),
-  `agent/` (Agent loop, Conversation, AppContext = the app Nexa opened last for the user — its kind from the desktop
+  decodes its own events; SseChatStream is the stream all three share; ToolCallAccumulator; the registry, whose
+  `createChain` builds the `ProviderChain`, `createSignIn` the sign-in of a program, and `presets()` is the programs,
+  the hand-tuned entries, then the catalogue (187); the programs: `AgyProvider` + `AgySession` + `AgyEvents` (agy's
+  stream-json), `OpenCodeProvider` + `OpenCodeServer` + `OpenCodeWire` (opencode's server API), `CodexProvider` +
+  `CodexSession` (it also holds `CodexConnection`, one `codex app-server` and its JSON-RPC) + `CodexEvents` +
+  `CodexProtocol` (the wire, pure), `ClaudeCodeProvider` + `ClaudeCodeSession` + `ClaudeCodeEvents` (Claude Code's
+  stream-json, pure: events, the user turn with image blocks, `claude auth status --json` read for its plan alone,
+  what its failures mean), with `TurnLedger` deciding what a warm session still needs and `TranscriptWriter`
+  the text of a turn; `ProgramLookup` (PATH, then ~/.local/bin, ~/.npm-global/bin, npm's prefix, nvm, Volta, Bun —
+  a desktop session's PATH lacks them; `environmentFor` puts the program's folder first on its PATH, for an npm
+  program's `env node`); **sign-in**: `SignIn.h` (`ISignIn`, `SignInStatus` — a plan, never an email —
+  and `SignInMethod`), `AgySignIn` + `AgyAcp` (`agy acp`), `OpenCodeSignIn` (opencode's `/provider/auth` and OAuth
+  routes; an allow-list of the sign-ins a clean opencode offers), `CodexSignIn` (`account/login/*`), `ClaudeCodeSignIn`
+  (`claude auth status | login --claudeai | logout`, the link from the login's output, a pasted code typed to it), and
+  `SignInPresenter` (pure: what Settings shows of a sign-in); **the catalogue**: `ProviderCatalog` over the generated
+  `ProviderCatalogData.cc` (179 key-based and local providers from OmniRoute 3.8.51, MIT, in
+  `THIRD_PARTY_NOTICES.md`; never edit it by hand — `python3 -I scripts/generate-provider-catalog.py`, `--check` to see
+  if it is current) and `PresetFilter` (the gallery's search and ranking, pure)),
+  `mission/` (**Mission Control**, every request a task: `MissionControl` = the board (Mediator: slots and the queue,
+  pause / resume / stop, the policy's questions routed to the task that asked, `delegate_task`, the live activity),
+  `TaskRunner` = one task's Agent, Conversation, provider instance and model, `ITaskEnvironment` = what the app gives
+  every task (AppController), `RoleClassifier` (the kind of agent from the words), `ModelFit` (the model a kind gets),
+  `AgentRole`, `Task`, `TaskTranscript`, `ActivityFeed`, `DelegateTool`; **hardcore mode**: `HardcoreMode` = when the
+  laptop's own keyboard and mouse are locked (State over the board: a hardcore task queued, running, awaiting the owner
+  or delegating, after a 3 s countdown; `unlockNow` clears every task's flag and the switch) through an `IInputLock`),
+  `agent/` (Agent loop, Conversation, `Attachments` = the files a request carries: what each is (a picture, words, a
+  document, other), the model's text — the user's words first, then every file between lines naming it as data the
+  user attached, never instructions — and the chat's "📎 notes.txt (3 KB)" line; AppContext = the app Nexa opened last for the user — its kind from the desktop
   entry, a sentence for the model, and the fast path's `run <cmd>` typed into a terminal in front), `tools/` (ToolSpec, ITool, FunctionTool, ToolRegistry, ToolExecutor =
-  policy → confirm → invoke → audit, TextToolParser for models without native tools), `intent/` (IntentRouter +
+  policy → confirm → invoke → audit, every action carrying its task (`ToolContext`; `cancelTask` stops one task's), TextToolParser for models without native tools), `intent/` (IntentRouter +
   PC and phone fast-path handlers), `policy/` (PolicyEngine, PanicController), `audit/` (AuditLog), `mcp/`
   (MCP connectors — Model Context Protocol: `McpClient` speaks JSON-RPC 2.0 over an `IMcpTransport`, a server
   process on its standard streams or a URL posted to; `McpConnectors` keeps one client per server in
@@ -96,9 +210,22 @@ images with a 400; the `Agent` then resends without them and remembers the model
   SKILL.md, `SkillCatalog` = Nexa's own skills from the `:/nexa/skills` resource of `nexa_core` plus the user's in
   `~/.local/share/nexa/skills/<name>/`, the user's replacing Nexa's; `SkillTools` = `use_skill`, `save_skill`
   (privileged)); `intent/MemoryIntents` is memory's fast path, right after the stops.
-- `system/` — touches the PC: `commands/` (LocalCommandRunner, process groups), `apps/` (DesktopEntry,
+- `system/` — touches the PC: `a11y/` (**the screen as text**, M27: `AtspiBus` = the desktop's accessibility bus — AT-SPI2,
+  what a screen reader uses — connected on first use through `org.a11y.Bus.GetAddress`, and GNOME's `org.a11y.Status
+  IsEnabled` switch read and, from Settings → General, set; `AtspiNode` (pure: a node of an app's `org.a11y.atspi.Cache`,
+  both bridge forms decoded — GTK/Chromium count the children, Qt lists them — with the role and state tables);
+  `ScreenOutline` (pure: the windows as a Playwright-like outline with refs `s1…` — the active one first, bare containers
+  lifted out, a text element's excerpt, a terminal's tail, never a password's text, Nexa's own and the shell's windows
+  left out); `IScreenReader` → `AtspiScreenReader` (the blocking D-Bus calls on a worker thread; one `GetItems` per app,
+  a capped `GetChildren` walk for a bridge without a cache); `ScreenTools` = `screen_snapshot`, `screen_read`,
+  `screen_click` (the element's own action, else focus + Enter, Space on a check box), `screen_type` (`EditableText`,
+  else focus + the input backend), `screen_wait_for`), `commands/` (LocalCommandRunner, process groups), `apps/` (DesktopEntry,
   DesktopEntryIndex = IAppCatalog, AppLauncher), `audio/` (wpctl), `media/` (MPRIS), `screen/` (portal
-  screenshots), `files/` (FileAccess, confined to home and /tmp), `info/` (SystemInfo); `SystemTools.cc`
+  screenshots), `files/` (FileAccess, confined to home and /tmp; `AttachmentLoader` reads the files attached to a
+  request off the GUI thread — a picture as an image, words as they are, cut at 200 KB, a PDF through pdftotext, an
+  office file through LibreOffice headless, a file from outside the home folder copied under
+  `~/.local/share/nexa/attachments` so `read_file` reaches it, and a pasted picture kept there as a PNG), `info/` (SystemInfo; ProcessStats = Nexa and every
+  program it started, from /proc, for the CPU and memory tiles); `SystemTools.cc`
   defines every PC tool the model sees; `office/` (`OdfWriter` builds flat OpenDocument XML — Writer from Markdown,
   Impress from slides, Calc from rows with A1 formulas; `OfficeTools` = `create_document`, which writes the file under
   `~/Documents` and opens it in LibreOffice, or has LibreOffice headless convert it to docx/pptx/xlsx/pdf);
@@ -118,10 +245,20 @@ images with a 400; the `Agent` then resends without them and remembers the model
   happens, 30 Hz idle, stopped while hidden; a state change cross-fades over 350 ms and the fast-path snap stays
   for its 0.9 s ping), `NexaTheme` + `theme.qss` (the tokens for the dark and light schemes; the sheet names which
   widget wears which token and sets widget colours through `qproperty-*`, so no widget hard-codes a colour),
-  `NexaThemes` (the catalogue: 26 colour families × dark/light = 52 theme packs generated around a hue with the
-  design's own shape of palette and contrast guaranteed, each family wearing one of eight motion styles —
+  `NexaThemes` (the catalogue: 85 theme packs, **every one dark** (the owner wants no light look), in 12 categories —
+  Nexa, HUD, Neon, Nature, Ocean, Space, Fire & Ember, Minimal & Mono, Retro, Cyber, Pastel Night, Gems — most a recipe
+  (an accent, the ground's tint and depth, how far the states wander and how bright they glow) generated with the
+  design's own shape of palette and contrast guaranteed, each wearing one of eight motion styles —
   `CoreStyle`: Classic, Orbit, Pulse, Aurora, Comet, Nebula, Storm, Minimal — which `coreFrame` applies and the sheet
-  hands the core as `qproperty-coreStyle`; `config.ui.theme` is `system`, `dark`, `light` or a pack id),
+  hands the core as `qproperty-coreStyle`; `nexa-dark` and `mission-dark` are hand-tuned; `config.ui.theme` is a pack
+  id, and `resolve` maps `system`, `dark`, `light`, the old `<family>-dark` / `-light` ids and anything unknown to a
+  pack; `nextInCategory` is the toolbar's palette button). The **HUD** packs (M24: `hud-console`, `hud-jarvis`,
+  `hud-stark`, … fourteen, drawn from the owner's reference pictures — a ground, an accent, a second hue, a warm one)
+  carry a **chrome** (`NexaChrome`, pure painting: `PanelChrome` = how the panels are framed — Flat, Brackets, Glow,
+  Chamfer, Glass, Rail — and `Backdrop` = what lies behind them — Plain, Grid, Dots, Vignette, Horizon, Scan), which
+  `ChromeFrame` (a QFrame: Mission Control's panels and the Dashboard's tiles) and `BackdropWidget` (the main window's
+  central widget) paint; in any chrome but Flat the sheet leaves the panel bare (`@panelFill@` transparent,
+  `@panelBorder@` 0) and the frame paints its own fill and frame, so no widget colours itself;
   `NexaDesigns` (the **designs** — a palette is colours, a design is the shape of everything else: a
   `WindowLayout` (Studio, Focus, Console, Sidebar, Orb, Dashboard, Bottom), a `CoreShape` (Ring, Orb, Hex, Bars,
   Iris, Crystal, Arc, Dot — each a `Shape` strategy in `NexaCorePainter` reading the same frames in its own
@@ -131,22 +268,54 @@ images with a 400; the `Agent` then resends without them and remembers the model
   `@coreShape@`, `@bubbleStyle@`) and `NexaIcons` (line icons painted in the theme's colour).
 - `app/` — Qt Widgets GUI (MainWindow: toolbar pills, the core with the state's name beside it, ChatView with
   bubbles and "NEXA fast path · 2 ms" headers, ActionLogDock as cards, PhonePanel = the phone beside the chat while
-  one is connected (its screen live, Ctrl+P), the Share screen switch in the input bar (Ctrl+Shift+S), MicButton = the core as the Talk button,
-  a monospace status bar, the sun/moon theme toggle; its pieces are built once and `applyDesign()` /
+  one is connected (its screen live, Ctrl+P), the paper clip in the input bar (Ctrl+O: files with the request — a drop
+  on the window or a paste of files or of a picture does the same — as chips above the box until Send, which has the
+  loader read them and submits once they are ready), the Share screen switch beside it (Ctrl+Shift+S), MicButton = the core as the Talk button,
+  a monospace status bar, the palette button (the next theme of the category on); its pieces are built once and `applyDesign()` /
   `rebuildCentral()` arrange them for the design on — header beside or above the chat, a centred column, the
-  Actions panel on a side or the bottom or hidden, tiles; SettingsDialog with the design and palette galleries,
-  TrayIcon) and the AppController mediator,
+  Actions panel on a side or the bottom or hidden, tiles; SettingsDialog with the design gallery and the theme gallery
+  (category chips over the tiles, the choice kept while a chip hides it),
+  TrayIcon; **Mission Control**, the default design (`mission`): `AgentsRail`, `CoreCard` + `MetricsTiles`, `MissionBoard`,
+  `ActivityStream` (approval cards), `TaskTranscriptDrawer`, `AddTasksDialog` (Ctrl+T), `MissionSettingsPage`, all
+  `MissionPanel`s (`ChromeFrame`s wearing the theme's chrome; their colours from theme.qss, a token per lane and state)
+  over `TaskListModel` + `TaskFilter`, and
+  `TaskStrip` (the tasks in the other designs' Actions panel); `ProviderSignInBlock` = the sign-in row of a program's form in Settings → Providers (status line, Sign in… /
+  Sign out / Cancel, the login link as selectable text, a code field for a paste-the-code flow; it owns the `ISignIn`
+  and waits while a chat turn runs) and `ProviderGalleryDialog` = Add → Browse all… (search, category chips, one row per
+  preset); a **Sign in…** button in the status bar while a program provider says nobody is signed in) and the
+  AppController mediator,
   which also resolves the core's state from the voice pipeline, running tools, the fast path, the agent and a
-  provider out of reach (`coreModeChanged`, `litNodesChanged`); SingleInstance (one copy per user), RemoteBridge
+  provider out of reach (`coreModeChanged`, `litNodesChanged`), and asks for credentials: a key for an API provider
+  (`apiKeyRequired`), a sign-in for a program that says it is not signed in (`signInRequired`, never a key prompt;
+  `reloadProviders()` after a sign-in or out); SingleInstance (one copy per user), RemoteBridge
   (the web remote's view of the app); `main.cc` is the composition root and applies the theme first.
 - `tests/` — Catch2 v3 (custom `TestMain.cc` with a QCoreApplication), one `<Class>Test.cc` per tested
-  class; `FakeHttpServer.h` for provider tests; `AgentTest.cc` uses a scripted fake model.
+  class; `FakeHttpServer.h` for provider tests; `AgentTest.cc` uses a scripted fake model; the programs have stand-ins,
+  `tests/fake-agy/agy` (print mode and `agy acp`), `tests/fake-opencode/opencode` (`serve`, with the sign-in routes),
+  `tests/fake-codex/codex` (`app-server`) and `tests/fake-claude/claude` (`-p` stream-json and `auth`) — no test starts
+  the real ones.
 - `voice/` — microphone to speech and back: `capture/` (AudioCapture, AudioConverter → 16 kHz mono Int16,
-  EnergyVad), `stt/` (ISpeechRecognizer; CloudRecognizer for the provider, WhisperRecognizer for offline,
-  RecognizerChain tries them in order, Transcript cleans the text), `tts/` (ITextToSpeech; CloudSynthesizer and
-  PiperSynthesizer produce PCM, SynthesizedSpeech chains them and PcmPlayer plays it, SpeechdTtsBackend is the
-  fallback, SentenceChunker splits a streamed reply into speakable sentences), `pipeline/` (VoicePipeline state
-  machine + WakeWordDetector), `VoiceBackends` builds what Settings → Voice asks for, `VoiceTools` adds `speak`.
+  EnergyVad, MicrophoneCheck = clipped or drowned sound and the steps of "Lower it", RecordedAudioInput for
+  `--hear`), `listen/` (what hears speech and the name: `ListeningFront` = the Facade that runs a noise filter, a
+  voice detector and the spotter inline or on a worker thread and reports sample positions; `AudioRing` = the raw
+  audio requests are cut from; `IVoiceDetector` → EnergyVoiceDetector / SileroVoiceDetector; `IAudioFilter` →
+  NoiseReducer; `ISpeakerGate` → `SpeakerGate` = whose voice it is (sherpa's speaker embeddings against
+  `VoiceProfile`, the owner's enrolled voice in `~/.local/share/nexa/voice-profile.json`): hands-free requests go on only
+  in the owner's, push-to-talk is never asked), `wake/` (WordPieces = a name in the spotter's SentencePiece pieces, WakePhrases = spellings,
+  keyword lines, tuning and the name check, `IWakeSpotter` → KeywordSpotter, SherpaRuntime + the vendored
+  `sherpa/c-api.h`), `stt/` (ISpeechRecognizer with word times; CloudRecognizer for the provider, WhisperRecognizer
+  for offline, RecognizerChain tries them in order, Transcript cleans the text), `tts/` (ITextToSpeech;
+  CloudSynthesizer and PiperSynthesizer produce PCM, SynthesizedSpeech chains them and PcmPlayer plays it,
+  SpeechdTtsBackend is the fallback, SentenceChunker splits a streamed reply into speakable sentences, CloudVoices
+  = which models hear or speak and their voices; **the owner's voice**: `VoiceSample` = the recording of the owner
+  reading a passage (`~/.local/share/nexa/voice-sample.wav` + `.json`, 0600, trimmed of its quiet, at most 12 s),
+  `Phonemizer` = words → IPA tokens through Piper's `piper_phonemize` (so Nexa's own name is said, not skipped as
+  ZipVoice's lexicon would), `ClonedVoiceSynthesizer` = ZipVoice through `SherpaRuntime` on a worker thread, the
+  sample's tokens and the sentence's as one pre-tokenized pair, first in the chain when `voice.ownVoice` is on —
+  the phone and the web remote hear it too, since they build from the same `VoiceBackends`), `pipeline/` (VoicePipeline state machine: the spotter's hits, the
+  whisper second net, requests, follow-ups; WakeWordDetector = any name, anywhere in a sentence), `VoiceBackends`
+  builds what Settings → Voice asks for (one choice of cloud voice for the PC, the phone app and the web remote,
+  and the listening front), `VoiceTools` adds `speak`.
 - `proto/` — the contract with the root helper: `org.nexa.Helper.xml` (generates the client proxy *and* the
   service adaptor, so they cannot drift), `HelperTypes.h` (bus names, the polkit action id, error names),
   `KeyMap` (characters and key names → Linux key codes; US layout, pure, heavily tested).
@@ -156,6 +325,12 @@ images with a 400; the `Agent` then resends without them and remembers the model
   commands in their own process group, streamed output), `UinputDevice` (three virtual devices, write-only),
   `HelperService` (every privileged method replies late, after polkit). It is started by D-Bus on demand and
   exits after ten idle minutes.
+- Hardcore mode's lock in the helper: `InputDevices` (pure: capability bitmaps → keyboard / pointer / other, physical
+  devices only) and `DeviceLock` (the kernel's `/sys/class/input/inputN/inhibited`, a record in
+  `/run/nexa-helper/locked-input.json` that `nexa-helper --release-input` — the unit's `ExecStopPost` — undoes after any
+  stop or crash); `LockInput` (again = the heartbeat, every 5 s; 30 s without one and the helper unlocks), `UnlockInput`,
+  `InputUnlocked`. On the client side `system/input/HelperInputLock` (the `IInputLock`) and `system/screen/ScreenAwake`
+  (the portal's idle inhibit, or GNOME's, while locked).
 - `system/helper/`, `system/commands/RootCommandRunner`, `system/input/` — the client side:
   `HelperInputBackend` (uinput, reaches every window), `RemoteDesktopSession` + `PortalInputBackend` (the
   desktop's RemoteDesktop portal: no root, GNOME asks once and the restore token is kept in
@@ -167,8 +342,11 @@ images with a 400; the `Agent` then resends without them and remembers the model
   `AdbDiscovery` (connected phones and mDNS wireless-debugging offers; reconnects the remembered one),
   `MdnsBrowser` + `MdnsPacket` (Nexa's own DNS-SD browser — Debian's adb is built without mDNS, so
   `adb mdns services` never finds anything on this machine; the packet code is pure and tested),
-  `AndroidDevice` (which phone, plus every operation), `AndroidTools` (the 18 `android_*` tools), `PhoneMirror` (the
-  phone's screen one picture after another for the window's Phone panel, while someone watches), and three pure,
+  `AndroidDevice` (which phone, plus every operation), `AndroidTools` (the 20 `android_*` tools), `PhoneMirror` (the
+  phone's screen one picture after another for the window's Phone panel, while someone watches), `UiHierarchy` (pure:
+  `uiautomator dump` → the phone's screen as the same kind of outline the desktop and the browser get — refs `p1…`, the
+  tap point of each — behind `android_snapshot`, `android_tap` and `android_type` by `ref`, and `android_wait_for`;
+  `tests/fake-adb/adb` answers the dump with `tests/fake-ui-dump.xml`), and three pure,
   tested files — `AdbParsers` (adb and shell output), `AdbShell` (command lines; everything from a person or a
   model is single-quoted for the phone's `sh`), `PhoneLookup` (spoken name → app or contact). The phone is
   remembered by hardware serial (`config.android.serial`); `core/intent/PhoneIntents` is its fast path and
@@ -182,9 +360,19 @@ images with a 400; the `Agent` then resends without them and remembers the model
   by `app/RemoteBridge`, so remote/ depends only on core. The page itself is `remote/web/` (strict CSP: no inline
   script or style; server text only through `textContent`); it draws the same core as SVG built by `app.js` and
   moved by `style.css` with `NexaCoreSpec`'s timings, and follows the PC's state through the `state` message
-  (`mode` = the wire key, `nodes` = the satellites lit), which `welcome` carries too. Phone requests carry the
-  source `phone` or `phone-voice`. `RemoteClient` is the phone's end of the same protocol (pair, hello, backoff, trust on first
-  use pinned to the certificate's fingerprint); `RemoteProtocol` decodes both directions.
+  (`mode` = the wire key, `nodes` = the satellites lit), which `welcome` carries too; `lock` (hardcore mode holds the
+  PC's keyboard and mouse) with the phone's `unlock`, and `approval` / `settled` with the phone's `answer` (a task's
+  question, Approve / Deny on the page and in Nexa Phone). Phone requests carry the
+  Phone requests carry the source `phone` or `phone-voice`. `RemoteClient` is the phone's end of the same protocol (pair, hello, backoff, trust on first
+  use pinned to the certificate's fingerprint); `RemoteProtocol` decodes both directions; Phone and Web sync active `ThemeStyle` (`Theme` wire message; CSP-safe CSSOM variables in `web/app.js`) and support file uploads (`POST /api/upload`). **Local API (M15 Part B)**: `remote/LocalApiServer` binds `127.0.0.1` only (off by default, Settings → Local API toggle + bearer token) exposing `GET /v1/models` and `POST /v1/chat/completions` over `ProviderChain` + `TurnLedger` with zero PC-tool execution, kept decoupled from `nexa_account` via `ConfigTransform`.
+- **Windows & cross-platform** (`system/`, `packaging/`, `.github/workflows/build.yml`): `WinInputLock` (`WH_KEYBOARD_LL` / `WH_MOUSE_LL` passing `SendInput` `LLKHF_INJECTED`/`LLMHF_INJECTED`; `Ctrl+Alt+Del` and UAC prompts remain OS-handled), `WinInputBackend` (`SendInput`), `RootCommandRunner` (`ShellExecuteExW` `"runas"` UAC elevation), `AppLauncher` / `DesktopEntryIndex` (Start Menu `.lnk`), `ProcessStats` / `SystemInfo` / `WpctlAudioController` (CoreAudio COM) / `MprisController` (`VK_MEDIA_*`) / `ScreenAwake` (`SetThreadExecutionState`) / `ScreenCapture` (`QScreen::grabWindow`). Packaging: `packaging/installer.nsi` + `packaging/nexa-assistant.rc`; `.github/workflows/build.yml` runs `cppcheck`, Ubuntu `.deb` (`scripts/build-deb.sh` `-Zgzip`), and MSYS2/MinGW64 Windows (Qt plugins + OpenSSL + pinned Windows sherpa-onnx/piper + NSIS `.exe` + `portable.txt` zip + optional `WINDOWS_CERT_P12` Authenticode).
+- **Away from home** (M21): `remote/RemoteRoutes` (pure: the ways a phone reaches this PC, ordered, on the wire),
+  `RemoteServer`'s tunnel door (loopback, port + 2; its sessions are `viaTunnel`), `system/net/` (`TunnelLog` pure,
+  `TunnelProcess` = cloudflared / ngrok as a child with backoff and an `--edge` fallback, `TailscaleWatcher` =
+  `tailscale status --json`, read only, and `tailscale up --operator` for the sign-in), `app/RemoteAccess` (Mediator:
+  Settings → Remote → Away from home → the tunnels and the routes). The programs keep their own credentials
+  (tailscaled's key, `~/.cloudflared`, ngrok's config): Nexa never reads them. A live tunnel test uses an isolated copy
+  (private XDG folders, no paired phone, no keys, `tunnels` linked into its data folder) — never the owner's remote.
 - `android/` — Nexa Phone, the native client: a Qt Widgets app (`PhoneWindow` mediator, `PairPage`, `ChatPage`,
   `PhoneSettings`, `Recorder`, `SpeechPlayer`) over `remote/RemoteClient`, wearing `ui/`'s theme and core (the
   PC's state, except while the phone itself listens, waits for its words or reads a reply aloud; a tap on Talk
@@ -203,11 +391,15 @@ images with a 400; the `Agent` then resends without them and remembers the model
   screens against the real server. Keep it free of anything Android could not build (no D-Bus, no `app/`).
 - `packaging/` — `org.nexa.Assistant.desktop`, the helper's polkit policy, D-Bus and systemd files, and
   `install-helper.sh` / `uninstall-helper.sh`; `scripts/` — model and engine downloads, desktop-entry install.
-- Runtime files: `~/.config/nexa/config.json` (settings, 0600), `~/.local/share/nexa/audit.jsonl` (every action,
+- Runtime files: `~/.config/nexa/config.json` (settings, 0600; a save that removes providers first keeps the file as
+  it was in `config.json.prev` and logs which went), `~/.local/share/nexa/audit.jsonl` (every action,
   0600), `~/.local/share/nexa/models/` (whisper), `~/.local/share/nexa/piper/` (Piper and its voices),
-  `~/.local/share/nexa/memory.json` (what Nexa remembers, 0600), `~/.local/share/nexa/skills/` (the user's
-  skills), `~/.local/share/nexa/playwright/` (Playwright, its output and its Chromium if any),
-  `~/.local/share/nexa/browser-profile/` (Nexa's own Chrome profile, for when the extension is not set up).
+  `~/.local/share/nexa/memory.json` (what Nexa remembers, 0600), `~/.local/share/nexa/voice-sample.wav` + `.json`
+  (the owner's recording for "Speak in my voice", 0600), `~/.local/share/nexa/skills/` (the user's
+  skills), `~/.local/share/nexa/attachments/` (copies of attached files from outside the home folder and pasted
+  pictures, 0600), `~/.local/share/nexa/playwright/` (Playwright, its output and its Chromium if any),
+  `~/.local/share/nexa/browser-profile/` (Nexa's own Chrome profile, for when the extension is not set up),
+  `~/.local/share/nexa/sherpa/` (sherpa-onnx, the wake-name spotter's, Silero's and the noise reducer's models).
 
 ## Conventions
 
@@ -228,6 +420,20 @@ images with a 400; the `Agent` then resends without them and remembers the model
 - Nothing blocks the GUI thread: network via QNetworkAccessManager signals, processes via QProcess signals, heavy work in worker threads.
 - QObjects handed out as `shared_ptr` (e.g. `ChatStream`) use a `deleteLater()` deleter, so they can be released from their own signals.
 - Never log or display API keys/tokens.
+- **Nexa never touches a vendor program's token.** Signing in to agy, opencode or Codex is the program's own OAuth:
+  Nexa starts it, shows its link and reads its status (`ISignIn`); the program keeps the token. A status carries a plan,
+  never an email; no link, code or account is logged or shown, except the login link itself as one selectable line in
+  `ProviderSignInBlock`; `Error::message` of a sign-in is not shown as it is (`SignInPresenter` has a sentence per
+  code). An unknown reply is `failed(Parse)`, never "signed out". **No test starts a real vendor program in a way that
+  signs in or out** — the fakes in `tests/` stand in, and a probe of a real program only reads. **Claude Code** is run
+  as the unmodified binary Anthropic publishes, on the owner's own Claude Code sign-in: Anthropic's terms
+  (https://code.claude.com/docs/en/legal-and-compliance, read 2026-11-12) forbid a third-party app offering Claude.ai
+  login, routing requests through a user's subscription on their behalf, or collecting, storing or intermediating
+  Claude.ai credentials, and allow an end user to sign in to the unmodified Claude Code with their own subscription,
+  through Anthropic's own flow — so Nexa only starts `claude auth login` and shows its link, never sets a
+  `CLAUDE_CONFIG_DIR` of its own, never passes `--bare`, and reads of `claude auth status` only `loggedIn`,
+  `authMethod` and `subscriptionType` (the JSON also carries the email and the organisation: never shown, never
+  logged). The Anthropic API-key preset stays for API use.
 - Every action goes through `ToolExecutor::execute` (fast path and agent alike) — never call a tool directly.
 - The app the user is in is **what Nexa opened last** (`AppContext`), never read from the desktop: GNOME's
   `org.gnome.Shell.Introspect` is denied to anything but the portals, and the helper is write-only. A command typed
@@ -236,11 +442,18 @@ images with a 400; the `Agent` then resends without them and remembers the model
   destructive, not background, US-keyboard characters only) and shown in the chat as "Into <app>: `cmd`".
   Documents for LibreOffice are made as files with `create_document`, never typed in; a converted file is made
   in a scratch folder and renamed into place, so nothing of the user's is ever written over.
-- The model sees the PC screen **only while Share screen is on**: `AppController` withholds `take_screenshot`
-  (`ToolRegistry::withhold`) otherwise, so it is in no request and a call to it is refused with the reason; the
-  switch is off at every start. The user's own "what's on my screen?" is the one exception (they asked for that
-  picture). Never attach a screenshot to a request on Nexa's own initiative. `browser_take_screenshot` is withheld
-  with it.
+- The model sees the PC screen **only while Share screen is on**: `AppController` withholds `take_screenshot` and the
+  five `screen_*` tools — a window's contents as text are as private as its picture — (`ToolRegistry::withhold`)
+  otherwise, so they are in no request and a call to one is refused with the reason; the switch is off at every start.
+  The user's own "what's on my screen?" is the one exception (they asked for that look). Never attach a screenshot to a
+  request on Nexa's own initiative. `browser_take_screenshot` is withheld with them. **The screen as text** (M27):
+  `screen_snapshot` reads the window in front over the desktop's accessibility bus (`system/a11y/`) with a ref per
+  element for `screen_click`, `screen_type` and `screen_read`, and the prompt says to prefer it — it works whether or not
+  the model sees images; a model that takes none gets the text twin on the fast path (`IntentMatch::textToolName`,
+  chosen in `TaskRunner`: `screen_snapshot` for `take_screenshot`, `android_snapshot` for `android_screenshot`). A
+  password field's text is never read; nothing of a snapshot is kept but its refs, in memory, until the next; GNOME's
+  accessibility switch (`org.a11y.Status IsEnabled`, kept as `toolkit-accessibility`) is set only from Settings →
+  General, never by Nexa on its own; the root helper takes no part in it.
 - **Browser work: Playwright first, the screen second.** Anything on the web goes through the `browser_*` tools
   (text snapshots, so models that cannot see manage too), in the user's own Chrome through Playwright's extension —
   Chrome 136+ refuses remote debugging on the default profile, so never try `--remote-debugging-port` on it — and
@@ -252,16 +465,40 @@ images with a 400; the `Agent` then resends without them and remembers the model
 - Memories and skills reach every system prompt: they are labelled data that never outranks the user, the model
   may not save what a page or a tool's output told it to, and `save_skill` is privileged. Tools that a setting
   switches off are **removed** from the registry, not withheld (the fast path and the executor find withheld ones).
+  A file attached to a request is the same kind of data: it reaches the model only through `attachments::block`
+  (between lines naming it, after the user's own words; `TaskRequest::modelText`), never as the request itself, the
+  chat and the transcript show the words with the file names under them (`TaskRequest::attachments`), and a
+  request with files skips the fast path. Nothing of the user's is changed: a conversion is made in a scratch folder,
+  a copy is 0600 under Nexa's own folder.
 - The helper is the only root-privileged code, and it is **write-only** for input: never add a method that
-  reads keystrokes, pointer position or window contents. Authorise against what the *bus* says about the
+  reads keystrokes, pointer position or window contents. Hardcore mode's lock reads device metadata only (names,
+  capability bitmaps) and writes `inhibited`; it must always come undone — Nexa leaving the bus, a missed heartbeat,
+  the helper stopping (`ExecStopPost`) — and never lock a virtual device (Nexa's own typing) or the power button.
+  **Never start a hardcore lock against the installed helper without the owner's go**: it locks the real keyboard and
+  touchpad of this laptop (a test copy on private XDG folders does too — the helper is system-wide). While locked,
+  only the phone, the web remote or the owner's enrolled voice end the work (`AppController::mayEndHardcore`) — a
+  scripted `--ask "unlock"` is refused too, so a test ends a lock by the task's own end or by stopping Nexa. Authorise against what the *bus* says about the
   caller (uid, unique name), never an identity the caller sent — and against the login it resolves to, so the
   password is asked for once per login rather than once per process. Every call re-checks that the login is
   the one at the screen.
 - Keep the fast path's arguments matching the tool's schema; a mismatch there fails only at runtime, so
   `tests/IntentRouterTest.cc` asserts the argument shapes.
-- Nothing listens to the microphone unless the user asked: `VoicePipeline` opens it for a press of Talk, and
-  continuously only while the wake word is on — and then only a **local** recogniser sees the audio
-  (`ISpeechRecognizer::isLocal()`), so room sound never reaches a server.
+- **Only the owner's voice, hands-free**: once a voice is enrolled (Settings → Voice → My voice) and "Listen to" is the
+  owner, `VoicePipeline` asks `ISpeakerGate` before any request it did not get from a key press — the spotter's
+  capture, the second net's sentence (before whisper hears it), the request after the name, a follow-up, a barge-in.
+  Interrupting Nexa is by its name by default (`voice.bargeIn`: name | speech | off): Nexa must not hear itself. "Stop
+  talking" stops the voice only, "stop" the task in view, "stop everything" is the panic. The voice profile is a
+  person's biometric data: 0600, never logged, never sent anywhere, and no recording is kept — except the one
+  sample the owner records on purpose for "Speak in my voice" (`VoiceSample`), which is kept 0600 on this machine
+  only, used by ZipVoice locally, and removed by "Forget the sample". With that voice on, the owner gate cannot
+  tell Nexa's speech from the owner's, so the self-guard on the name in a reply is what keeps Nexa from
+  interrupting itself.
+- Nothing listens to the microphone unless the user asked: `VoicePipeline` opens it for a press of Talk, for the
+  follow-up window after a spoken reply (when that setting is on), and continuously while the wake word is on —
+  and then **only offline recognition hears the room** (the spotter and the local recogniser,
+  `ISpeechRecognizer::isLocal()`). Audio goes to a cloud recogniser only when it is addressed to Nexa: the request
+  said with the name, cut from just before the name (never the speech before it), a follow-up in the window, and
+  push-to-talk. Nexa changes the system's input volume only when the owner presses Lower it.
 - Spoken requests carry the source `"voice"`; `AppController` prefixes them with `[voice]` so the model answers
   in short plain sentences that read well aloud.
 - New fast-path phrases go into an `IIntentHandler`; they must not swallow ordinary chat (test negatives too).

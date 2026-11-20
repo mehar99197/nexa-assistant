@@ -1,0 +1,328 @@
+name: build
+
+# Builds Nexa Assistant on Ubuntu 24.04 (self-contained .deb) and Windows x64 (NSIS installer +
+# portable zip), runs cppcheck + unit suites on both, and on tag v* publishes a GitHub Release.
+# Every third-party download is pinned and SHA-256 verified.
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: build-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  QT_VERSION: '6.8.3'
+  POLKIT_QT_VERSION: '0.201.1'
+  POLKIT_QT_SHA256: '95d8e2cae530c546d9437459deb8a1bea38d572f0f9772cc2860dc143637f256'
+  SHERPA_WIN_URL: 'https://github.com/k2-fsa/sherpa-onnx/releases/download/v2.0.1/sherpa-onnx-v2.0.1-win-x64-shared-MT-Release-lib.tar.bz2'
+  SHERPA_WIN_SHA256: 'afa4de3ca4ab0afd53bb4aab40d28ee15608364b549ffc0fe0caf6489bfc39a5'
+  SHERPA_WIN_TOP: 'sherpa-onnx-v2.0.1-win-x64-shared-MT-Release-lib'
+  PIPER_WIN_URL: 'https://github.com/rhasspy/piper/releases/download/2023.11.14-2/piper_windows_amd64.zip'
+  PIPER_WIN_SHA256: 'f3c58906402b24f3a96d92145f58acba6d86c9b5db896d207f78dc80811efcea'
+
+jobs:
+  cppcheck:
+    name: Static analysis (cppcheck)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install cppcheck
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq --no-install-recommends cppcheck
+      - name: Run cppcheck on C++20 sources
+        run: |
+          cppcheck --library=qt --enable=warning,portability --inline-suppr \
+            --suppress=missingIncludeSystem --suppress=unusedFunction \
+            --suppress=unmatchedSuppression --suppress=virtualCallInConstructor \
+            --suppress='*:*sherpa/*' --error-exitcode=2 --std=c++20 -I . \
+            core system voice remote ui app
+
+  linux:
+    name: Build, test, package (Ubuntu 24.04)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install the toolchain and the libraries Qt's plugins need
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq --no-install-recommends \
+            cmake ninja-build pkg-config patchelf file dpkg-dev curl bzip2 xz-utils \
+            libxkbcommon-dev libxkbcommon-x11-dev libqrencode-dev libx11-dev libxtst-dev \
+            libpolkit-gobject-1-dev libpolkit-agent-1-dev extra-cmake-modules libglib2.0-dev \
+            libgl-dev libegl-dev libfontconfig-dev libfreetype-dev libharfbuzz-dev \
+            libxcb-cursor0 libxcb-icccm4 libxcb-image0 libxcb-keysyms1 libxcb-render-util0 \
+            libxcb-xinerama0 libxcb-xkb1 libxcb-shape0 libxcb-randr0 libxcb-util1 \
+            libasound2-dev libpulse-dev libspeechd-dev dbus dbus-x11 adb catch2
+
+      - name: Install Qt ${{ env.QT_VERSION }}
+        uses: jurplel/install-qt-action@v4
+        with:
+          version: ${{ env.QT_VERSION }}
+          modules: 'qthttpserver qtwebsockets qtmultimedia qtspeech'
+          cache: true
+
+      # Ubuntu 24.04 has no polkit-qt6 package: KDE's polkit-qt-1 is built from its release tarball against this Qt.
+      - name: Build polkit-qt-1 ${{ env.POLKIT_QT_VERSION }}
+        run: |
+          curl -fsSL -o polkit-qt-1.tar.xz "https://download.kde.org/stable/polkit-qt-1/polkit-qt-1-${POLKIT_QT_VERSION}.tar.xz"
+          echo "${POLKIT_QT_SHA256}  polkit-qt-1.tar.xz" | sha256sum -c -
+          tar -xJf polkit-qt-1.tar.xz
+          cmake -S "polkit-qt-1-${POLKIT_QT_VERSION}" -B polkit-build -G Ninja \
+            -DQT_MAJOR_VERSION=6 -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=/usr/local \
+            -DBUILD_TESTING=OFF -DBUILD_EXAMPLES=OFF
+          cmake --build polkit-build
+          sudo cmake --install polkit-build
+          # The library lands in /usr/local/lib/x86_64-linux-gnu: the linker cache must know, or linuxdeploy cannot
+          # follow the helper's dependency on it when it bundles the closure.
+          sudo ldconfig
+          ldconfig -p | grep -q libpolkit-qt6-core-1 || { echo "polkit-qt6 is not in the linker cache"; exit 1; }
+
+      - name: Configure and build (tests on, packaged)
+        run: |
+          cmake -S . -B build -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=/usr \
+            -DNEXA_PACKAGED=ON -DNEXA_BUILD_WHISPER=ON -DNEXA_BUILD_TESTS=ON -DNEXA_BUILD_PHONE=OFF \
+            -DNEXA_HARDEN_RELEASE=ON -DNEXA_OBFUSCATE_LICENSE=ON \
+            -DGGML_NATIVE=OFF -DGGML_AVX=ON -DGGML_AVX2=ON -DGGML_FMA=ON -DGGML_F16C=ON
+          cmake --build build
+
+      - name: Test (offscreen, on a session bus of its own)
+        timeout-minutes: 25
+        run: |
+          export QT_QPA_PLATFORM=offscreen
+          dbus-run-session -- ctest --test-dir build --output-on-failure --timeout 300
+          ./build/tests/nexa_guard_obf_test
+
+      - name: Package
+        run: |
+          # polkit-qt-1 from /usr/local joins the library path the Qt action set — never replaces it.
+          export LD_LIBRARY_PATH="/usr/local/lib:/usr/local/lib/x86_64-linux-gnu${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+          scripts/build-deb.sh --build-dir build --out dist --skip-configure
+
+      - name: Install the package in a clean container and run it
+        timeout-minutes: 15
+        run: scripts/test-deb.sh dist/nexa-assistant_*.deb
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: nexa-assistant-deb
+          path: dist/*.deb
+          if-no-files-found: error
+
+  windows:
+    name: Build, test, package (Windows x64)
+    runs-on: windows-latest
+    timeout-minutes: 90
+    defaults:
+      run:
+        shell: msys2 {0}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: msys2/setup-msys2@v2
+        with:
+          msystem: UCRT64
+          update: true
+          install: >-
+            mingw-w64-ucrt-x86_64-toolchain
+            mingw-w64-ucrt-x86_64-cmake
+            mingw-w64-ucrt-x86_64-ninja
+            mingw-w64-ucrt-x86_64-pkgconf
+            mingw-w64-ucrt-x86_64-qt6-base
+            mingw-w64-ucrt-x86_64-qt6-httpserver
+            mingw-w64-ucrt-x86_64-qt6-websockets
+            mingw-w64-ucrt-x86_64-qt6-multimedia
+            mingw-w64-ucrt-x86_64-qt6-speech
+            mingw-w64-ucrt-x86_64-qt6-svg
+            mingw-w64-ucrt-x86_64-qt6-tools
+            mingw-w64-ucrt-x86_64-openssl
+            mingw-w64-ucrt-x86_64-qrencode
+            mingw-w64-ucrt-x86_64-python
+            mingw-w64-ucrt-x86_64-catch
+            mingw-w64-ucrt-x86_64-nsis
+            curl
+            unzip
+
+      - name: Configure and build (Windows UCRT64)
+        run: |
+          set -euo pipefail
+          VERSION="$(sed -n 's/^\s*VERSION \([0-9][0-9.]*\).*/\1/p' CMakeLists.txt | head -1)"
+          [[ -n "$VERSION" ]]
+          echo "NEXA_VERSION=$VERSION" >> "$GITHUB_ENV"
+          cmake -S . -B build-win -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DNEXA_PACKAGED=ON -DNEXA_BUILD_WHISPER=ON -DNEXA_BUILD_TESTS=ON \
+            -DNEXA_BUILD_PHONE=OFF -DNEXA_BUILD_HELPER=OFF \
+            -DNEXA_HARDEN_RELEASE=ON -DNEXA_OBFUSCATE_LICENSE=ON \
+            -DGGML_NATIVE=OFF -DGGML_AVX=ON -DGGML_AVX2=ON -DGGML_FMA=ON -DGGML_F16C=ON
+          cmake --build build-win
+
+      - name: Test (offscreen)
+        timeout-minutes: 25
+        run: |
+          set -euo pipefail
+          export QT_QPA_PLATFORM=offscreen
+          ctest --test-dir build-win --output-on-failure --timeout 300
+          GUARD_BIN="$(find build-win -maxdepth 3 -name 'nexa_guard_obf_test.exe' | head -1)"
+          test -n "$GUARD_BIN"
+          "$GUARD_BIN"
+
+      - name: Stage Windows bundle, Qt plugins, OpenSSL, and speech engines
+        run: |
+          set -euo pipefail
+          rm -rf dist-win release-win portable-stage
+          mkdir -p dist-win/engines/sherpa/lib dist-win/engines/piper release-win
+          APP_BIN="$(find build-win -maxdepth 3 -name 'nexa-assistant.exe' | head -1)"
+          test -n "$APP_BIN"
+          cp "$APP_BIN" dist-win/
+          cp README.md THIRD_PARTY_NOTICES.md LICENSE dist-win/
+          find build-win -name '*.dll' ! -path 'build-win/tests/*' -exec cp -n {} dist-win/ \;
+
+          WINDEPLOYQT="$(command -v windeployqt6 || command -v windeployqt-qt6 || command -v windeployqt || true)"
+          if [[ -n "$WINDEPLOYQT" ]]; then
+            "$WINDEPLOYQT" --no-translations --no-system-d3d-compiler --no-opengl-sw dist-win/nexa-assistant.exe || true
+          fi
+          QTPLUGINS="$(qmake6 -query QT_INSTALL_PLUGINS 2>/dev/null || echo "/ucrt64/share/qt6/plugins")"
+          for pdir in platforms styles tls imageformats iconengines multimedia texttospeech networkinformation; do
+            if [[ -d "${QTPLUGINS}/${pdir}" ]]; then
+              mkdir -p "dist-win/${pdir}"
+              cp -n "${QTPLUGINS}/${pdir}"/*.dll "dist-win/${pdir}/" 2>/dev/null || true
+            fi
+          done
+          cp /ucrt64/bin/openssl.exe dist-win/
+          cp -n /ucrt64/bin/libssl-*.dll dist-win/ 2>/dev/null || true
+          cp -n /ucrt64/bin/libcrypto-*.dll dist-win/ 2>/dev/null || true
+
+          # Bundle full MSYS2 UCRT64 DLL closure (Qt dependencies, OpenSSL, qrencode, libstdc++/gcc/winpthread).
+          for pass in 1 2 3 4; do
+            added=0
+            while IFS= read -r dll; do
+              base="$(basename "$dll")"
+              [[ -e "dist-win/$base" ]] && continue
+              cp -L "$dll" dist-win/ && added=$((added + 1))
+            done < <(
+              find dist-win -maxdepth 3 \( -name '*.exe' -o -name '*.dll' \) -print0 \
+              | xargs -0 -n1 ldd 2>/dev/null \
+              | sed -n 's/^.* => \(\/ucrt64\/bin\/[^ ]*\).*/\1/p' | sort -u
+            )
+            [[ $added -eq 0 ]] && break
+          done
+
+          test -f dist-win/platforms/qwindows.dll || { echo "qwindows.dll missing"; exit 1; }
+          test -n "$(find dist-win/tls -name '*.dll' 2>/dev/null)" || { echo "Qt TLS plugin missing"; exit 1; }
+
+          curl -fsSL -o sherpa-win.tar.bz2 "$SHERPA_WIN_URL"
+          echo "${SHERPA_WIN_SHA256}  sherpa-win.tar.bz2" | sha256sum -c -
+          tar -xjf sherpa-win.tar.bz2
+          cp "$SHERPA_WIN_TOP"/lib/*.dll dist-win/engines/sherpa/lib/
+          rm -rf sherpa-win.tar.bz2 "$SHERPA_WIN_TOP"
+          test -f dist-win/engines/sherpa/lib/sherpa-onnx-c-api.dll
+
+          curl -fsSL -o piper-win.zip "$PIPER_WIN_URL"
+          echo "${PIPER_WIN_SHA256}  piper-win.zip" | sha256sum -c -
+          unzip -q piper-win.zip -d piper-unpack
+          cp -a piper-unpack/piper/. dist-win/engines/piper/
+          rm -rf piper-win.zip piper-unpack dist-win/engines/piper/pkgconfig
+          test -f dist-win/engines/piper/piper.exe
+          test -d dist-win/engines/piper/espeak-ng-data
+
+      - name: Sign application executable (optional Authenticode)
+        shell: pwsh
+        env:
+          WINDOWS_CERT_P12: ${{ secrets.WINDOWS_CERT_P12 }}
+          WINDOWS_CERT_PASSWORD: ${{ secrets.WINDOWS_CERT_PASSWORD }}
+        run: |
+          if ([string]::IsNullOrWhiteSpace($env:WINDOWS_CERT_P12)) {
+            Write-Host "No WINDOWS_CERT_P12 secret configured; skipping Authenticode signing."
+            exit 0
+          }
+          $signtool = Get-ChildItem "C:\Program Files (x86)\Windows Kits\10\bin\*\x64\signtool.exe" -ErrorAction SilentlyContinue |
+            Sort-Object FullName -Descending | Select-Object -First 1 -ExpandProperty FullName
+          if (-not $signtool) { throw "signtool.exe not found" }
+          $certPath = Join-Path $env:RUNNER_TEMP "nexa-sign.p12"
+          [IO.File]::WriteAllBytes($certPath, [Convert]::FromBase64String($env:WINDOWS_CERT_P12))
+          try {
+            & $signtool sign /f $certPath /p $env:WINDOWS_CERT_PASSWORD /fd SHA256 /tr http://timestamp.digicert.com /td SHA256 "dist-win/nexa-assistant.exe"
+            if ($LASTEXITCODE -ne 0) { throw "signtool failed for nexa-assistant.exe" }
+          } finally {
+            Remove-Item -Force -ErrorAction SilentlyContinue $certPath
+          }
+
+      - name: Build NSIS installer and portable ZIP, verify self-contained launch
+        run: |
+          set -euo pipefail
+          WIN_DIST="$(cygpath -w "$PWD/dist-win")"
+          WIN_OUT="$(cygpath -w "$PWD/release-win/nexa-assistant-${NEXA_VERSION}-win64-setup.exe")"
+          makensis -DNEXA_VERSION="$NEXA_VERSION" -DDIST_DIR="$WIN_DIST" -DOUT_FILE="$WIN_OUT" packaging/installer.nsi
+
+          mkdir -p portable-stage
+          cp -a dist-win/. portable-stage/
+          printf '# Remove this file to store Nexa Assistant data in AppData instead of next to the executable.\n' > portable-stage/portable.txt
+          (cd portable-stage && cmake -E tar cf "../release-win/nexa-assistant-${NEXA_VERSION}-win64-portable.zip" --format=zip .)
+          rm -rf portable-stage
+
+          # Verify zero missing MSYS2/Qt DLLs outside dist-win.
+          PATH="/c/Windows/System32:/c/Windows" ./dist-win/nexa-assistant.exe --version
+
+      - name: Sign NSIS installer (optional Authenticode)
+        shell: pwsh
+        env:
+          WINDOWS_CERT_P12: ${{ secrets.WINDOWS_CERT_P12 }}
+          WINDOWS_CERT_PASSWORD: ${{ secrets.WINDOWS_CERT_PASSWORD }}
+        run: |
+          if ([string]::IsNullOrWhiteSpace($env:WINDOWS_CERT_P12)) {
+            Write-Host "No WINDOWS_CERT_P12 secret configured; skipping installer signing."
+            exit 0
+          }
+          $signtool = Get-ChildItem "C:\Program Files (x86)\Windows Kits\10\bin\*\x64\signtool.exe" -ErrorAction SilentlyContinue |
+            Sort-Object FullName -Descending | Select-Object -First 1 -ExpandProperty FullName
+          if (-not $signtool) { throw "signtool.exe not found" }
+          $certPath = Join-Path $env:RUNNER_TEMP "nexa-sign.p12"
+          [IO.File]::WriteAllBytes($certPath, [Convert]::FromBase64String($env:WINDOWS_CERT_P12))
+          try {
+            $exe = Get-Item "release-win/nexa-assistant-*-win64-setup.exe" | Select-Object -First 1 -ExpandProperty FullName
+            & $signtool sign /f $certPath /p $env:WINDOWS_CERT_PASSWORD /fd SHA256 /tr http://timestamp.digicert.com /td SHA256 $exe
+            if ($LASTEXITCODE -ne 0) { throw "signtool failed for setup installer" }
+          } finally {
+            Remove-Item -Force -ErrorAction SilentlyContinue $certPath
+          }
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: nexa-assistant-windows
+          path: |
+            release-win/*.exe
+            release-win/*.zip
+          if-no-files-found: error
+
+  release:
+    name: GitHub Release
+    needs: [cppcheck, linux, windows]
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: nexa-assistant-deb
+          path: dist
+      - uses: actions/download-artifact@v4
+        with:
+          name: nexa-assistant-windows
+          path: dist
+      - name: Generate SHA256SUMS
+        run: (cd dist && sha256sum *.deb *.exe *.zip > SHA256SUMS.txt)
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: dist/*
+          generate_release_notes: true

@@ -1,5 +1,7 @@
 #pragma once
 
+#include "remote/RemoteRoutes.h"
+
 #include <QByteArray>
 #include <QByteArrayView>
 #include <QString>
@@ -19,12 +21,43 @@ inline constexpr qsizetype kMaxTextFrame = 16 * 1024;
 // One minute of 16 kHz mono 16-bit audio.
 inline constexpr qsizetype kMaxAudioFrame = 60 * 16'000 * 2;
 
+// Theme tokens + design layout knobs mirrored from the PC window onto both the web remote
+// and the native Nexa Phone app. Serialised as hex colour strings + enum names.
+struct ThemeStyle {
+    QString themeId;
+    QString designId;
+    QString ground;
+    QString panel;
+    QString panelRaised;
+    QString line;
+    QString text;
+    QString muted;
+    QString idle;
+    QString wake;
+    QString listen;
+    QString stt;
+    QString think;
+    QString act;
+    QString speak;
+    QString fast;
+    QString error;
+    QString onAccent;
+    QString fontFace;       // "sans" | "mono" | "serif"
+    QString bubbleStyle;    // "bubbles" | "lines" | "cards"
+    int radius{10};
+
+    bool isEmpty() const { return ground.isEmpty() && text.isEmpty(); }
+    bool operator==(const ThemeStyle &) const = default;
+};
+
 // What a client may send.
 struct ClientMessage {
-    enum class Type { Hello, Text, Cancel, Ping };
+    enum class Type { Hello, Text, Cancel, Ping, Unlock, Answer };
     Type type{Type::Ping};
     QString token;      // Hello: the token pairing handed out
     QString text;       // Text: the request, as typed
+    quint64 id{0};      // Answer: the question answered (approval's id)
+    bool allow{false};  // Answer: yes or no
 };
 
 // Anything malformed, unknown or oversized is refused rather than guessed at.
@@ -33,9 +66,15 @@ std::optional<ClientMessage> decode(QByteArrayView frame);
 // What the server sends. `mode` is the Nexa core's state as NexaCoreSpec names it on the wire
 // ("idle", "listen", "act", …) and `nodes` the satellites an action lights ("pc", "tools", …),
 // so the phone can draw the same core as the PC.
-QByteArray welcome(const QString &device, bool voice, bool busy, const QString &mode = {});
+// `routes`: every way a phone can reach this PC (it keeps them, for when it is away); `fingerprint`: Nexa's own
+// certificate, which the direct routes (the Wi-Fi, Tailscale) must show.
+QByteArray welcome(const QString &device, bool voice, bool busy, const QString &mode = {},
+                   const QList<RemoteRoute> &routes = {}, const QString &fingerprint = {},
+                   const std::optional<ThemeStyle> &theme = std::nullopt);
+QByteArray theme(const ThemeStyle &style);                          // live theme/design change on the PC
+QByteArray routes(const QList<RemoteRoute> &routes);                // the ways changed (a tunnel came up, …)
 QByteArray state(const QString &mode, const QStringList &nodes = {});
-QByteArray accepted(const QString &text, const QString &source);    // a request, from this phone or elsewhere
+QByteArray accepted(const QString &text, const QString &source, const QString &attachments = {});    // a request, from this phone or elsewhere
 QByteArray delta(const QString &text);                              // more of the reply
 QByteArray step(const QString &description, bool ok);               // a tool ran
 QByteArray finished(const QString &reason);                         // "stop", "cancelled", "error", …
@@ -46,13 +85,22 @@ QByteArray busy(bool busy);
 // `code` lets the page act without reading prose: "unauthorized", "busy", "invalid", "too-fast", "no-voice".
 QByteArray error(const QString &code, const QString &message);
 QByteArray pong();
+// Hardcore mode: whether the PC's keyboard and mouse are locked, and the sentence that says until when.
+QByteArray lock(bool locked, const QString &text);
+// A question a task waits on (the confirm-risky policy's), answered with answer(id, allow); settled when it was.
+QByteArray approval(quint64 id, const QString &agent, const QString &tool, const QString &question);
+QByteArray settled(quint64 id, bool allowed);
 
 // The same messages as Nexa's own phone app reads them (the browser page reads the JSON itself).
 struct ServerMessage {
-    enum class Type { Welcome, Accepted, Delta, Step, Finished, Failed, Transcript, Speech, Busy, Error, Pong, State };
+    enum class Type {
+        Welcome, Accepted, Delta, Step, Finished, Failed, Transcript, Speech, Busy, Error, Pong, State, Lock, Approval,
+        Settled, Routes, Theme,
+    };
     Type type{Type::Pong};
-    QString text;       // Accepted, Delta, Step, Failed, Transcript, Error: the words
+    QString text;       // Accepted, Delta, Step, Failed, Transcript, Error: the words; Lock: until when; Approval: the question
     QString source;     // Accepted: "pc", "phone" or "phone-voice"
+    QString attachments; // Accepted: human summary of attached files ("a.txt (120 B)")
     QString device;     // Welcome: this phone, as it was named when it paired
     QString reason;     // Finished
     QString url;        // Speech: the WAV, relative to the server
@@ -63,6 +111,14 @@ struct ServerMessage {
     bool ok{true};      // Step
     bool busy{false};   // Welcome, Busy
     bool voice{false};  // Welcome: the PC can hear a recording
+    bool locked{false}; // Lock: hardcore mode holds the PC's keyboard and mouse
+    quint64 id{0};      // Approval, Settled: the question
+    QString agent;      // Approval: who asks ("CODE-02")
+    QString tool;       // Approval: what for
+    bool allow{false};  // Settled: how it was answered
+    QList<RemoteRoute> routes;  // Welcome, Routes: the ways to this PC
+    QString fingerprint;        // Welcome: Nexa's own certificate
+    std::optional<ThemeStyle> theme; // Welcome, Theme: PC colour palette & design tokens
 };
 
 // Unknown types are refused; missing fields take their empty value.
@@ -73,5 +129,7 @@ QByteArray hello(const QString &token);
 QByteArray text(const QString &request);
 QByteArray cancel();
 QByteArray ping();
+QByteArray unlock();                            // Unlock PC
+QByteArray answer(quint64 id, bool allow);      // Approve / Deny
 
 } // namespace nexa::remote

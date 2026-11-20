@@ -355,6 +355,37 @@ void AndroidDevice::screenshot(std::function<void(Result<Shot>)> done) {
     });
 }
 
+void AndroidDevice::uiHierarchy(const QString &filter, std::function<void(Result<uihierarchy::PhoneOutline>)> done) {
+    shell(adbshell::uiDumpCommand(), kScreenshotTimeoutMs, [this, filter, done](Result<AdbClient::Output> output) {
+        if (!output) {
+            done(output.error());
+            return;
+        }
+        const QString xml = output.value().text();
+        const QPointer<AndroidDevice> self(this);
+        decoder_.start([self, xml, filter, done] {
+            const Result<QList<uihierarchy::UiNode>> nodes = uihierarchy::parse(xml);
+            Result<uihierarchy::PhoneOutline> result = nodes ? Result<uihierarchy::PhoneOutline>(uihierarchy::outline(nodes.value(), filter))
+                                                             : Result<uihierarchy::PhoneOutline>(nodes.error());
+            QMetaObject::invokeMethod(self, [self, result = std::move(result), done]() mutable {
+                if (!self) return;
+                if (result) self->lastUi_ = result.value();
+                done(std::move(result));
+            }, Qt::QueuedConnection);
+        });
+    });
+}
+
+std::optional<QRect> AndroidDevice::uiBounds(const QString &ref) const {
+    const auto found = lastUi_.refs.constFind(ref.trimmed());
+    if (found == lastUi_.refs.cend()) return std::nullopt;
+    return *found;
+}
+
+QString AndroidDevice::uiName(const QString &ref) const {
+    return lastUi_.names.value(ref.trimmed());
+}
+
 void AndroidDevice::contacts(std::function<void(Result<QList<phonelookup::Contact>>)> done) {
     if (contactsAge_.isValid() && contactsAge_.elapsed() < kContactsFreshMs) {
         done(contacts_);

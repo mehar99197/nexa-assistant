@@ -71,7 +71,9 @@ QPushButton#stopAll {
 QPushButton#stopAll:hover { background: @errorSoft2@; }
 QPushButton#stopAll:pressed { background: @error@; color: @ground@; }
 
-QWidget#stateHeader { background: @ground@; border-bottom: 1px solid @line@; }
+QWidget#stateHeader { background: transparent; border-bottom: 1px solid @line@; }
+QWidget#stateHeader > QWidget { background: transparent; }
+QWidget#inputBar { background: transparent; }
 QLabel#stateTitle { font-size: 22px; font-weight: 700; }
 QLabel#stateHint { color: @muted@; }
 
@@ -93,6 +95,17 @@ QToolButton#inputButton {
 }
 QToolButton#inputButton:hover { background: @panel2@; border-color: @muted@; }
 QToolButton#inputButton:pressed, QToolButton#inputButton:checked { background: @accentSoft@; border-color: @idle@; }
+
+/* the files attached to the request being typed: one chip each, a click takes it off */
+QWidget#attachmentStrip { background: transparent; }
+QToolButton#attachmentChip {
+    background: @panel@;
+    border: 1px solid @line@;
+    border-radius: 12px;
+    padding: 3px 10px;
+    color: @text@;
+}
+QToolButton#attachmentChip:hover { border-color: @error@; color: @error@; }
 
 QPushButton#send {
     background: @idle@;
@@ -338,10 +351,136 @@ nexa--ChatView {
     qproperty-monoFamily: "@mono@";
 }
 
+/* ---- Settings → Providers: the sign-in block and the provider gallery. The tones are tokens every palette has
+   (wake = green, act = amber, error = red); the words say the same, so the colour is never alone. */
+nexa--ProviderSignInBlock {
+    background: transparent;
+    qproperty-goodColor: @wake@;
+    qproperty-warnColor: @act@;
+    qproperty-badColor: @error@;
+    qproperty-mutedColor: @muted@;
+}
+QLineEdit#signInLink { font-family: "@mono@"; font-size: 11px; }
+QPushButton#galleryChip { padding: 4px 12px; border-radius: 13px; color: @muted@; }
+QPushButton#galleryChip:hover { color: @text@; border-color: @muted@; }
+QPushButton#galleryChip:checked { background: @accentSoft@; border-color: @accentLine@; color: @text@; }
+QLabel#galleryCount { color: @muted@; }
+QListWidget#galleryList::item { padding: 0; }
+
+/* ---- the theme's chrome: the window's ground wears the backdrop (a grid, dots, a glow, a horizon, scan lines —
+   or nothing), and a panel wears the chrome. In the Flat chrome the sheet draws the panel itself (panelFill is the
+   panel's colour, panelBorder a hairline); in any other the panel paints its own fill and frame in these colours,
+   and the sheet leaves it bare (panelFill transparent, panelBorder 0). */
+nexa--BackdropWidget {
+    qproperty-backdrop: @backdrop@;
+    qproperty-groundColor: @ground@;
+    qproperty-lineColor: @line@;
+    qproperty-accentColor: @idle@;
+}
+nexa--ChromeFrame {
+    qproperty-panelChrome: @panelChrome@;
+    qproperty-cornerRadius: @radius@;
+    qproperty-groundColor: @ground@;
+    qproperty-panelColor: @panel@;
+    qproperty-lineColor: @line@;
+    qproperty-accentColor: @idle@;
+    qproperty-textColor: @text@;
+}
+
 /* ---- designs: cards and tiles (Dashboard), the state in the status line (Console) */
-QFrame#tile { background: @panel@; border: 1px solid @line@; border-radius: @radius@px; }
+QFrame#tile { background: @panelFill@; border: @panelBorder@; border-radius: @radius@px; }
 QFrame#tile > QWidget { background: transparent; }
 QWidget#stateHeader[tile="true"] { border: 0; }
-nexa--ChatView[tile="true"] { background: @panel@; }
+nexa--ChatView[tile="true"] { background: @panelFill@; }
 QLabel#statusState { color: @text@; font-weight: 700; }
 QLabel#orbTitle { font-size: 30px; font-weight: 700; }
+
+/* ---- Mission Control: the agents rail, the core card, the board, the live activity. Lanes and states wear tokens every
+   palette has (stt = web, think = code, wake = screen and "online", listen = phone, speak = voice, act = what needs the
+   user, error = a failure), and every chip says its state in words too. */
+nexa--MissionPanel {
+    background: @panelFill@;
+    border: @panelBorder@;
+    border-radius: @radius@px;
+    qproperty-mutedColor: @muted@;
+    qproperty-raisedColor: @panel2@;
+    qproperty-goodColor: @wake@;
+    qproperty-warnColor: @act@;
+    qproperty-errorColor: @error@;
+    qproperty-webColor: @stt@;
+    qproperty-codeColor: @think@;
+    qproperty-screenColor: @wake@;
+    qproperty-phoneColor: @listen@;
+    qproperty-voiceColor: @speak@;
+    qproperty-monoFamily: "@mono@";
+}
+nexa--TaskStrip { background: transparent; border: 0; border-bottom: 1px solid @line@; border-radius: 0; qproperty-panelChrome: 0; }
+QStackedWidget#missionCentre { background: transparent; }
+QLabel#sectionTitle { color: @muted@; font-family: "@mono@"; font-size: 11px; font-weight: 700; background: transparent; }
+QLabel#sectionNote, QLabel#boardCounts { color: @muted@; font-family: "@mono@"; font-size: 11px; background: transparent; }
+QListView#agentList, QListView#taskList, QListView#queueList, QListView#activityList, QListView#taskStrip {
+    background: transparent; border: 0; outline: 0;
+}
+QFrame#voiceCard { background: @panel2@; border: 1px solid @line@; border-radius: @radiusSmall@px; }
+QLabel#voiceName { color: @speak@; font-family: "@mono@"; font-weight: 700; background: transparent; }
+QLabel#voiceChip {
+    color: @speak@; font-family: "@mono@"; font-size: 10px; font-weight: 700;
+    border: 1px solid @speak@; border-radius: 4px; padding: 1px 6px; background: transparent;
+}
+QLabel#voiceLine { color: @text@; background: transparent; }
+nexa--SparklineWidget { background: transparent; qproperty-lineColor: @idle@; }
+nexa--SparklineWidget#voiceLevel { qproperty-lineColor: @speak@; }
+QPushButton#spawn { background: transparent; border: 1px dashed @line@; color: @muted@; padding: 10px; }
+QPushButton#spawn:hover { color: @text@; border-color: @muted@; }
+QPushButton#ghost { background: transparent; border: 1px solid @line@; color: @text@; padding: 6px 14px; }
+QPushButton#ghost:hover { border-color: @muted@; }
+QPushButton#ghost:disabled { color: @muted@; }
+QPushButton#addTasksButton { background: @idle@; color: @onAccent@; border: 0; padding: 7px 16px; font-weight: 600; }
+QLabel#coreTitle { font-size: 22px; font-weight: 700; color: @idle@; background: transparent; }
+QLabel#micLine { color: @wake@; font-family: "@mono@"; font-size: 11px; background: transparent; }
+QLabel#micLine[trouble="true"] { color: @act@; }
+QLabel#lastHeard { color: @muted@; font-family: "@mono@"; font-size: 11px; background: transparent; }
+QFrame#metricTile { background: @panel2@; border: 1px solid @line@; border-radius: @radiusSmall@px; }
+QLabel#tileLabel { color: @muted@; font-family: "@mono@"; font-size: 10px; background: transparent; }
+QLabel#tileValue { color: @text@; font-family: "@mono@"; font-size: 18px; font-weight: 700; background: transparent; }
+QLabel#tileValue[tone="web"] { color: @stt@; }
+QLabel#tileValue[tone="code"] { color: @think@; }
+QLabel#tileValue[tone="screen"] { color: @wake@; }
+QLabel#streaming { color: @wake@; font-family: "@mono@"; font-size: 10px; background: transparent; }
+QPushButton#laneChip {
+    padding: 5px 8px; border-radius: @radiusSmall@px; color: @muted@; font-family: "@mono@"; font-size: 10px;
+    background: @panel2@; border: 1px solid @line@;
+}
+QPushButton#laneChip:checked { background: @idle@; color: @onAccent@; border-color: @idle@; }
+QFrame#approvalCard { background: @panel2@; border: 1px solid @act@; border-radius: @radiusSmall@px; }
+QLabel#approvalTitle { color: @act@; font-family: "@mono@"; font-size: 11px; font-weight: 700; background: transparent; }
+QLabel#approvalQuestion { color: @text@; background: transparent; }
+QLabel#approvalDetail { color: @muted@; font-size: 11px; background: transparent; }
+QPushButton#approve { background: @act@; color: @onAccent@; border: 0; padding: 8px; font-weight: 600; }
+QPushButton#deny { background: transparent; color: @act@; border: 1px solid @act@; padding: 8px; font-weight: 600; }
+QLabel#onlineChip {
+    color: @wake@; font-family: "@mono@"; font-size: 11px; font-weight: 700;
+    border: 1px solid @wake@; border-radius: 12px; padding: 4px 10px; margin-right: 8px;
+}
+QLabel#onlineChip[offline="true"] { color: @error@; border-color: @error@; }
+QLabel#metaPill { color: @muted@; font-family: "@mono@"; font-size: 11px; padding: 0 8px; }
+QLabel#drawerAgent { font-family: "@mono@"; font-weight: 700; background: transparent; }
+QLabel#drawerState { font-family: "@mono@"; font-size: 11px; font-weight: 700; background: transparent; }
+QLabel#drawerTitle { font-weight: 600; background: transparent; }
+
+/* Hardcore mode: the switch is on (armed), the keyboard and mouse are locked or about to be, or it could not lock. */
+QLabel#hardcoreBanner {
+    padding: 8px 20px;
+    font-weight: 600;
+    border-bottom: 1px solid @line@;
+    background: @panel2@;
+    color: @text@;
+}
+QLabel#hardcoreBanner[level="locked"] { background: @errorSoft@; color: @text@; border-bottom: 1px solid @errorLine@; }
+QLabel#hardcoreBanner[level="failed"] { background: @panel2@; color: @act@; border-bottom: 1px solid @act@; }
+
+/* Nexa Phone: the PC is locked by hardcore mode (Unlock PC); the questions its tasks wait on reuse the approval card. */
+QFrame#lockBar { background: @errorSoft@; border: 1px solid @errorLine@; border-radius: @radiusSmall@px; }
+QLabel#lockText { color: @text@; font-weight: 600; background: transparent; }
+QPushButton#unlockButton { background: @error@; color: @ground@; border: 0; padding: 8px 14px; font-weight: 700; }
+QPushButton#unlockButton:disabled { background: @errorSoft2@; color: @muted@; }

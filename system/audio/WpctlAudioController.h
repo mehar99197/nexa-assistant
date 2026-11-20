@@ -16,13 +16,15 @@ struct VolumeState {
     bool muted{false};
 };
 
-// Speaker volume through PipeWire's `wpctl` on the default sink. Every call reports the new state.
+// The speakers' — or the microphone's — volume through PipeWire's `wpctl` (the default sink or source).
+// Every call reports the new state.
 class WpctlAudioController : public QObject {
     Q_OBJECT
 public:
     using Done = std::function<void(Result<VolumeState>)>;
+    enum class Target { Speaker, Microphone };
 
-    explicit WpctlAudioController(QObject *parent = nullptr);
+    explicit WpctlAudioController(Target target = Target::Speaker, QObject *parent = nullptr);
 
     void volume(Done done);
     void setVolume(int percent, Done done);             // clamped to 0..100
@@ -34,6 +36,8 @@ public:
 
 private:
     void wpctl(const QStringList &arguments, std::function<void(Result<QString>)> done);
+
+    QString target_;    // @DEFAULT_AUDIO_SINK@ or @DEFAULT_AUDIO_SOURCE@
     void thenReport(const QStringList &arguments, Done done);
 };
 

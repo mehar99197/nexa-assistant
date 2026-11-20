@@ -4,6 +4,7 @@
 #include "core/mcp/McpTransport.h"
 
 #include <QJsonArray>
+#include <QJsonDocument>
 #include <QJsonValue>
 #include <QTimer>
 

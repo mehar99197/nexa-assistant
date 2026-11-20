@@ -6,7 +6,7 @@
 #include <QPoint>
 #include <QSize>
 
-#include <linux/input-event-codes.h>
+#include "proto/LinuxKeyCodes.h"
 
 using namespace Qt::StringLiterals;
 

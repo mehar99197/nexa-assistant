@@ -42,6 +42,13 @@ TEST_CASE("AppContext tells the kind of app from its categories or its program")
     CHECK(AppContext::kindOf(kBrowser) == AppKind::Browser);
     CHECK(AppContext::kindOf({u"Calculator"_s, u"org.gnome.Calculator.desktop"_s, u"gnome-calculator"_s, {u"Utility"_s}})
           == AppKind::Other);
+#ifdef Q_OS_WIN
+    CHECK(AppContext::kindOf({u"Command Prompt"_s, u"win:cmd.lnk"_s, u"cmd.exe"_s, {}}) == AppKind::Terminal);
+    CHECK(AppContext::kindOf({u"Terminal"_s, u"winapp:wt"_s, u"WindowsTerminal.exe"_s, {}}) == AppKind::Terminal);
+    CHECK(AppContext::kindOf({u"Notepad"_s, u"winapp:notepad"_s, u"Notepad.exe"_s, {}}) == AppKind::Editor);
+    CHECK(AppContext::kindOf({u"Google Chrome"_s, u"win:chrome.lnk"_s, u"chrome.exe"_s, {}}) == AppKind::Browser);
+    CHECK(AppContext::kindOf({u"Word"_s, u"win:word.lnk"_s, u"WINWORD.EXE"_s, {}}) == AppKind::Office);
+#endif
 }
 
 TEST_CASE("AppContext holds the app opened last until it is closed, replaced or forgotten with time") {
@@ -131,7 +138,11 @@ TEST_CASE("AppContext tells the model what the app in front means for its tools"
         CHECK_FALSE(sentence.contains(u"type_text"_s));
     }
     context.noteOpened(kBrowser);
+#ifdef Q_OS_WIN
+    CHECK(context.promptSentence({}).contains(u"start "_s));
+#else
     CHECK(context.promptSentence({}).contains(u"xdg-open"_s));
+#endif
     // With the browser tools there, a page opens through them — in the browser they work in, which
     // need not be the one in front.
     const AppContext::Situation browsing{.browserTools = true, .browserTarget = u"the user's own Google Chrome"_s};

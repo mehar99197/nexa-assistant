@@ -29,6 +29,12 @@ Result<QString> requiredString(const QJsonObject &arguments, const QString &key)
     return value;
 }
 
+Result<QString> requiredText(const QJsonObject &arguments, const QString &key) {
+    const QString value = arguments.value(key).toString();
+    if (value.trimmed().isEmpty()) return Error{ErrorCode::InvalidArgument, u"Missing \"%1\""_s.arg(key)};
+    return value;
+}
+
 ToolResult text(const QString &value) {
     return ToolResult{value, std::nullopt};
 }

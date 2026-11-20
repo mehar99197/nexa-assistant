@@ -9,11 +9,12 @@
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QJsonParseError>
+#include <QJsonValue>
 #include <QRandomGenerator>
 #include <QRegularExpression>
 #include <QSaveFile>
 #include <QSet>
-#include <QStandardPaths>
+#include "core/config/Portable.h"
 
 #include <algorithm>
 
@@ -73,7 +74,7 @@ QJsonObject toJson(const MemoryEntry &entry) {
 MemoryStore::MemoryStore(QString path, QObject *parent) : QObject(parent), path_(std::move(path)) {}
 
 QString MemoryStore::defaultPath() {
-    return QStandardPaths::writableLocation(QStandardPaths::GenericDataLocation) + u"/nexa/memory.json"_s;
+    return portable::dataDir() + u"/memory.json"_s;
 }
 
 Result<void> MemoryStore::load() {
@@ -342,7 +343,9 @@ QString MemoryStore::promptSection(int budget) const {
     if (entries_.isEmpty()) {
         lines.append(u"(Nothing saved yet.)"_s);
     } else {
-        QList<MemoryEntry> newest = entries_;
+        // Saved in the same millisecond, the later fact still comes first: the list is in the order
+        // the facts were saved, so it is walked from its end before the stable sort.
+        QList<MemoryEntry> newest(entries_.crbegin(), entries_.crend());
         std::stable_sort(newest.begin(), newest.end(),
                          [](const MemoryEntry &a, const MemoryEntry &b) { return a.updated > b.updated; });
         int used = 0;

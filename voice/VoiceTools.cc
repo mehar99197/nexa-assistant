@@ -4,6 +4,7 @@
 #include "core/tools/ToolRegistry.h"
 #include "voice/pipeline/VoicePipeline.h"
 
+#include <QJsonObject>
 #include <QPointer>
 
 using namespace Qt::StringLiterals;

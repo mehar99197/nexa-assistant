@@ -18,10 +18,16 @@
 
 #include <QGuiApplication>
 #include <QJsonArray>
-#include <QRegularExpression>
 #include <QJsonDocument>
 #include <QJsonObject>
+#include <QJsonValue>
+#include <QRegularExpression>
 #include <QScreen>
+#ifdef Q_OS_WIN
+#include <QCoreApplication>
+#include <QPointer>
+#include <QTimer>
+#endif
 
 #include <cmath>
 
@@ -79,11 +85,19 @@ Result<DesktopEntryIndex::Match> findApp(DesktopEntryIndex *apps, const QString 
 void addCommandTools(ToolRegistry &registry, LocalCommandRunner *commands) {
     ToolSpec spec{
         u"run_command"_s,
+#ifdef Q_OS_WIN
+        u"Run a Windows command on the user's PC (cmd.exe, as the user, in the home folder unless working_directory "
+        "is set; prefix with `powershell -NoProfile -Command ...` for PowerShell) and return its exit code and output. "
+        "Only for commands that finish on their own; never for graphical apps (use open_app). Set background=true to "
+        "start a server or long-running program without waiting for it."_s,
+        schema::object({{u"command"_s, schema::string(u"The command line, e.g. \"dir\" or \"powershell -NoProfile -Command Get-Process\""_s)},
+#else
         u"Run a shell command on the user's PC (bash, as the user, in the home folder unless working_directory "
         "is set) and return its exit code and output. Only for commands that finish on their own; never for "
         "graphical apps (use open_app). Set background=true to start a server or long-running program without "
         "waiting for it."_s,
         schema::object({{u"command"_s, schema::string(u"The command line, e.g. \"df -h\" or \"ls ~/Downloads | head\""_s)},
+#endif
                         {u"timeout_seconds"_s, schema::integer(u"Kill the command after this many seconds (default 30)"_s,
                                                                1, kMaxTimeoutSeconds)},
                         {u"working_directory"_s, schema::string(u"Folder to run in (default: home)"_s)},
@@ -146,8 +160,13 @@ OpenedApp openedApp(const DesktopEntry &entry) {
 void addAppTools(ToolRegistry &registry, DesktopEntryIndex *apps, const SystemServices &services) {
     registry.add(FunctionTool::sync(
         ToolSpec{u"open_app"_s,
+#ifdef Q_OS_WIN
+                 u"Open (launch) an installed Windows application by name, e.g. \"chrome\", \"notepad\", "
+                 "\"calculator\", \"settings\", \"terminal\", \"file explorer\", \"paint\". Names are matched fuzzily."_s,
+#else
                  u"Open (launch) an installed desktop application by name, e.g. \"firefox\", \"files\", "
                  "\"terminal\", \"text editor\", \"settings\", \"calculator\". Names are matched fuzzily."_s,
+#endif
                  schema::object({{u"name"_s, schema::string(u"Application name"_s)}}, {u"name"_s})},
         [apps, opened = services.appOpened](const QJsonObject &arguments) -> Result<ToolResult> {
             const Result<QString> name = requiredString(arguments, u"name"_s);
@@ -162,7 +181,12 @@ void addAppTools(ToolRegistry &registry, DesktopEntryIndex *apps, const SystemSe
         }));
 
     registry.add(FunctionTool::sync(
-        ToolSpec{u"close_app"_s, u"Close a running application by name (asks it to quit with SIGTERM)."_s,
+        ToolSpec{u"close_app"_s,
+#ifdef Q_OS_WIN
+                 u"Close a running application by name (asks its window to close)."_s,
+#else
+                 u"Close a running application by name (asks it to quit with SIGTERM)."_s,
+#endif
                  schema::object({{u"name"_s, schema::string(u"Application name"_s)}}, {u"name"_s})},
         [apps, closed = services.appClosed](const QJsonObject &arguments) -> Result<ToolResult> {
             const Result<QString> name = requiredString(arguments, u"name"_s);
@@ -440,7 +464,7 @@ void addInputTools(ToolRegistry &registry, const InputProvider &input, ScreenCap
                                                                              ITool::Done done) {
         IInputBackend *backend = backendOr(done);
         if (!backend) return;
-        const Result<QString> value = requiredString(arguments, u"text"_s);
+        const Result<QString> value = requiredText(arguments, u"text"_s);
         if (!value) {
             done(value.error());
             return;
@@ -574,6 +598,24 @@ void addInputTools(ToolRegistry &registry, const InputProvider &input, ScreenCap
         }
         const PointerTarget &at = target.value();
         // Move, then click once the pointer has actually arrived.
+#ifdef Q_OS_WIN
+        const QPointer<IInputBackend> safeBackend(backend);
+        backend->mouseMoveAbs(at.x, at.y, at.screen.width(), at.screen.height(),
+                              [safeBackend, button, count, at, what, finish, done](Result<QString> moved) {
+            if (!moved) {
+                done(moved.error());
+                return;
+            }
+            QTimer::singleShot(15, QCoreApplication::instance(), [safeBackend, button, count, at, what, finish, done] {
+                if (!safeBackend) {
+                    done(Error{ErrorCode::Cancelled, u"Input backend went away."_s});
+                    return;
+                }
+                safeBackend->mouseClick(button, count,
+                                        finish(u"%1 at %2, %3.%4"_s.arg(what).arg(at.x).arg(at.y).arg(at.note), done));
+            });
+        });
+#else
         backend->mouseMoveAbs(at.x, at.y, at.screen.width(), at.screen.height(),
                               [backend, button, count, at, what, finish, done](Result<QString> moved) {
             if (!moved) {
@@ -583,6 +625,7 @@ void addInputTools(ToolRegistry &registry, const InputProvider &input, ScreenCap
             backend->mouseClick(button, count,
                                 finish(u"%1 at %2, %3.%4"_s.arg(what).arg(at.x).arg(at.y).arg(at.note), done));
         });
+#endif
     }));
 
     ToolSpec scrollSpec{

@@ -1,12 +1,15 @@
 [Unit]
 Description=Nexa root helper (runs commands as root and injects keyboard/mouse events for Nexa)
-Documentation=file:///usr/local/share/doc/nexa/ARCHITECTURE.md
+Documentation=https://assistant.nexadownloadmanager.com/docs
 
 [Service]
 # Started on demand by the system bus, not at boot, and it exits again after ten idle minutes.
 Type=dbus
 BusName=org.nexa.Helper
-ExecStart=/usr/local/libexec/nexa-helper
+ExecStart=@NEXA_HELPER_PATH@
+# After every stop — a crash, a kill, an uninstall — whatever hardcore mode left switched off is
+# given back, from the record the helper keeps in /run/nexa-helper. The laptop is never left locked.
+ExecStopPost=@NEXA_HELPER_PATH@ --release-input
 Restart=no
 
 # Hardening is deliberately light: the helper's whole purpose is to run arbitrary commands as root

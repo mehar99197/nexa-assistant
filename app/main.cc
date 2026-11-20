@@ -2,19 +2,24 @@
 #include "app/GlobalShortcuts.h"
 #include "app/MainWindow.h"
 #include "app/PhoneLink.h"
+#include "app/RemoteAccess.h"
 #include "app/RemoteBridge.h"
 #include "app/SingleInstance.h"
 #include "app/TrayIcon.h"
 #include "app/SystemStatus.h"
 #include "app/UnixSignals.h"
-#include "core/agent/Agent.h"
+#include "core/account/AccountManager.h"
+#include "core/account/UpdateChecker.h"
 #include "core/agent/AppContext.h"
 #include "core/Logging.h"
+#include "core/ai/ProgramLookup.h"
 #include "core/ai/ProviderRegistry.h"
 #include "core/audit/AuditLog.h"
 #include "core/config/ConfigStore.h"
+#include "core/config/Portable.h"
 #include "core/intent/IntentRouter.h"
 #include "core/intent/MemoryIntents.h"
+#include "core/intent/MissionIntents.h"
 #include "core/intent/PcIntents.h"
 #include "core/intent/PhoneIntents.h"
 #include "core/net/HttpClient.h"
@@ -27,7 +32,9 @@
 #include "core/tools/ToolExecutor.h"
 #include "core/tools/ToolRegistry.h"
 #include "system/SystemTools.h"
+#include "system/files/AttachmentLoader.h"
 #include "system/office/OfficeTools.h"
+#include "remote/LocalApiServer.h"
 #include "remote/PairingManager.h"
 #include "remote/RemoteServer.h"
 #include "remote/TlsIdentity.h"
@@ -43,33 +50,48 @@
 #include "system/commands/LocalCommandRunner.h"
 #include "system/commands/RootCommandRunner.h"
 #include "system/helper/HelperClient.h"
+#include "system/input/HelperInputLock.h"
+#include "system/input/WinInputLock.h"
 #include "system/input/IInputBackend.h"
 #include "system/input/InputBackendSelector.h"
 #include "system/input/RemoteDesktopSession.h"
 #include "system/files/FileAccess.h"
 #include "system/info/SystemInfo.h"
 #include "system/media/MprisController.h"
+#include "system/a11y/AtspiBus.h"
+#include "system/a11y/AtspiScreenReader.h"
+#include "system/a11y/ScreenTools.h"
+#include "system/screen/ScreenAwake.h"
+#include "system/setup/AssetDownloader.h"
 #include "system/screen/ScreenCapture.h"
 #include "core/mcp/McpConnectors.h"
 #include "ui/NexaDesigns.h"
 #include "ui/NexaTheme.h"
 #include "ui/NexaThemes.h"
+#include "voice/EngineLocator.h"
 #include "voice/VoiceTools.h"
 #include "voice/Wav.h"
 #include "voice/capture/AudioCapture.h"
 #include "voice/capture/AudioConverter.h"
+#include "voice/capture/RecordedAudioInput.h"
+#include "voice/listen/SpeakerGate.h"
 #include "voice/pipeline/VoicePipeline.h"
+#include "voice/wake/SherpaRuntime.h"
+
 
 #include <QApplication>
 #include <QCommandLineParser>
 #include <QFile>
 #include <QFileInfo>
-#include <QMessageBox>
-#include <QStandardPaths>
 #include <QIcon>
 #include <QJsonArray>
 #include <QJsonObject>
+#include <QJsonValue>
+#include <QMessageBox>
+#include <QStandardPaths>
 #include <QTimer>
+#include <cstdio>
+#include <string_view>
 
 #include <functional>
 
@@ -92,18 +114,28 @@ Config loadConfig(const ConfigStore &store, QString &warning) {
                               "settings will overwrite it.")
                       .arg(loaded.error().message);
     }
-    if (config.providers.isEmpty()) {
-        config.providers.append(ProviderRegistry::defaultProvider());
-        config.activeProvider = config.providers.first().id;
+    // The programs installed for this user are what a first start offers (and what an upgrade puts
+    // into a list an older Nexa left empty). A list the user empties stays empty.
+    const auto installed = [](const QString &program) { return !findProgram(program).isEmpty(); };
+    if (!QFile::exists(store.path()) && warning.isEmpty()) {
+        config.providers = ProviderRegistry::defaultProviders(installed);
+        if (!config.providers.isEmpty()) config.activeProvider = config.providers.first().id;
     }
     if (config.version < Config::kVersion && warning.isEmpty()) {
-        ProviderRegistry::upgrade(config);
+        ProviderRegistry::upgrade(config, installed);
         if (const Result<void> saved = store.save(config); !saved) qCWarning(lcConfig) << saved.error().message;
     }
     return config;
 }
 
 // A WAV file → 16 kHz mono PCM, as the microphone would have delivered it.
+// --attach paths as the running copy (whose working folder is another) will find them.
+QStringList absolutePaths(const QStringList &paths) {
+    QStringList absolute;
+    for (const QString &path : paths) absolute.append(QFileInfo(path).absoluteFilePath());
+    return absolute;
+}
+
 Result<QByteArray> loadRecording(const QString &path) {
     QFile file(path);
     if (!file.open(QIODevice::ReadOnly)) return Error{ErrorCode::NotFound, file.errorString()};
@@ -135,8 +167,12 @@ public:
         InputBackendSelector::Choice choice = InputBackendSelector::choose(helper_, remoteDesktop_);
         summary_ = choice.summary;
         notes_ = choice.notes;
-        current_ = choice.backend.get();
-        if (choice.backend) kept_.push_back(std::move(choice.backend));
+        if (choice.backend) {
+            kept_.push_back(std::move(choice.backend));
+            current_ = kept_.back().get();
+        } else {
+            current_ = nullptr;
+        }
     }
 
 private:
@@ -148,6 +184,36 @@ private:
     QStringList notes_;
 };
 
+remote::ThemeStyle remoteThemeStyle(const ThemePack &pack, const DesignSpec &design) {
+    remote::ThemeStyle style;
+    style.themeId = pack.id;
+    style.designId = design.id;
+    style.ground = pack.tokens.ground.name(QColor::HexRgb);
+    style.panel = pack.tokens.panel.name(QColor::HexRgb);
+    style.panelRaised = pack.tokens.panelRaised.name(QColor::HexRgb);
+    style.line = pack.tokens.line.name(QColor::HexRgb);
+    style.text = pack.tokens.text.name(QColor::HexRgb);
+    style.muted = pack.tokens.muted.name(QColor::HexRgb);
+    style.idle = pack.tokens.idle.name(QColor::HexRgb);
+    style.wake = pack.tokens.wake.name(QColor::HexRgb);
+    style.listen = pack.tokens.listen.name(QColor::HexRgb);
+    style.stt = pack.tokens.stt.name(QColor::HexRgb);
+    style.think = pack.tokens.think.name(QColor::HexRgb);
+    style.act = pack.tokens.act.name(QColor::HexRgb);
+    style.speak = pack.tokens.speak.name(QColor::HexRgb);
+    style.fast = pack.tokens.fast.name(QColor::HexRgb);
+    style.error = pack.tokens.error.name(QColor::HexRgb);
+    style.onAccent = pack.tokens.onAccent.name(QColor::HexRgb);
+    style.fontFace = design.font == FontFace::Mono  ? u"mono"_s
+                   : design.font == FontFace::Serif ? u"serif"_s
+                                                    : u"sans"_s;
+    style.bubbleStyle = design.bubbles == BubbleStyle::Lines ? u"lines"_s
+                      : design.bubbles == BubbleStyle::Cards ? u"cards"_s
+                                                             : u"bubbles"_s;
+    style.radius = design.radius;
+    return style;
+}
+
 bool programExists(const QString &program) {
     if (program.contains(u'/')) return QFileInfo(program).isExecutable();
     return !QStandardPaths::findExecutable(program).isEmpty();
@@ -158,12 +224,18 @@ bool programExists(const QString &program) {
 // Composition root: every object is created here and wired by constructor injection.
 // Declaration order matters: users are declared after (and so destroyed before) what they use.
 int main(int argc, char *argv[]) {
+    // Before any window system is asked for: a package's smoke test and a shell ask this with no display.
+    if (argc == 2 && (std::string_view(argv[1]) == "--version" || std::string_view(argv[1]) == "-v")) {
+        std::puts("nexa-assistant " NEXA_VERSION);
+        return 0;
+    }
     QApplication app(argc, argv);
     QApplication::setApplicationName(u"nexa"_s);
     QApplication::setApplicationVersion(QString::fromLatin1(NEXA_VERSION));
     // Never "nexa": that desktop id (and /usr/bin/nexa) belongs to Nexa Download Manager. The
     // reverse-DNS form is also what the portal needs to grant global hotkeys.
     QApplication::setDesktopFileName(u"org.nexa.Assistant"_s);
+    portable::initialise();
     // The installed theme icon when there is one, else the copy built into Nexa.
     QApplication::setWindowIcon(QIcon::fromTheme(u"org.nexa.Assistant"_s, QIcon(u":/nexa/nexa.svg"_s)));
 
@@ -175,11 +247,20 @@ int main(int argc, char *argv[]) {
                                        u"Send <text> on start-up as if it were typed (repeatable; runs in order)."_s,
                                        u"text"_s);
     parser.addOption(askOption);
+    const QCommandLineOption attachOption(
+        u"attach"_s, u"Give <file> with the first --ask, as if attached in the window (repeatable)."_s, u"file"_s);
+    parser.addOption(attachOption);
     const QCommandLineOption voiceFileOption(
         u"voice-file"_s, u"Treat the WAV <file> as a spoken request (repeatable; runs before --ask)."_s, u"file"_s);
     parser.addOption(voiceFileOption);
     const QCommandLineOption sayOption(u"say"_s, u"Say <text> aloud on start-up (tests the voice)."_s, u"text"_s);
     parser.addOption(sayOption);
+    const QCommandLineOption hearOption(
+        u"hear"_s,
+        u"Play the WAV <file> into Nexa as if the microphone heard it, with the wake word on (repeatable; this run "
+        "only, in a copy of its own)."_s,
+        u"file"_s);
+    parser.addOption(hearOption);
     const QCommandLineOption newInstanceOption(
         u"new-instance"_s, u"Start even when Nexa is already running (for testing); this copy takes no requests from later ones."_s);
     parser.addOption(newInstanceOption);
@@ -187,6 +268,9 @@ int main(int argc, char *argv[]) {
         u"screenshot"_s, u"Save a picture of the window to <file> once the start-up requests are done, then quit."_s,
         u"file"_s);
     parser.addOption(screenshotOption);
+    const QCommandLineOption sizeOption(
+        u"size"_s, u"Open the window at <width>x<height> for this run (to see a design at a given size)."_s, u"size"_s);
+    parser.addOption(sizeOption);
     const QCommandLineOption themeOption(
         u"theme"_s, u"Palette for this run only: system, dark, light, or a palette's id (ocean-dark)."_s, u"palette"_s);
     parser.addOption(themeOption);
@@ -200,18 +284,26 @@ int main(int argc, char *argv[]) {
         u"pair-phone"_s,
         u"Pair Nexa Phone on the phone connected through adb: a pairing code is started here and handed to the app over adb."_s);
     parser.addOption(pairPhoneOption);
+    const QCommandLineOption hardcoreOption(
+        u"hardcore"_s,
+        u"Switch hardcore mode on without asking: the requests of this run lock the laptop's keyboard and mouse while "
+        "they run."_s);
+    parser.addOption(hardcoreOption);
     parser.process(app);
 
     // One Nexa per user: a second start hands what it was asked to do to the running one and
     // leaves, before building anything heavy.
     SingleInstance instance(u"nexa-assistant"_s);
-    if (!parser.isSet(newInstanceOption)) {
+    // --hear replaces the microphone, so it never goes to the copy already running.
+    if (!parser.isSet(newInstanceOption) && !parser.isSet(hearOption)) {
         QJsonArray voiceFiles;
         for (const QString &file : parser.values(voiceFileOption)) voiceFiles.append(QFileInfo(file).absoluteFilePath());
         const QJsonObject handOver{{u"say"_s, QJsonArray::fromStringList(parser.values(sayOption))},
                                    {u"voiceFile"_s, voiceFiles},
                                    {u"ask"_s, QJsonArray::fromStringList(parser.values(askOption))},
-                                   {u"pairPhone"_s, parser.isSet(pairPhoneOption)}};
+                                   {u"attach"_s, QJsonArray::fromStringList(absolutePaths(parser.values(attachOption)))},
+                                   {u"pairPhone"_s, parser.isSet(pairPhoneOption)},
+                                   {u"hardcore"_s, parser.isSet(hardcoreOption)}};
         if (instance.handOver(handOver)) {
             qCInfo(lcApp) << "Nexa is already running: handed over to it";
             return 0;
@@ -237,10 +329,23 @@ int main(int argc, char *argv[]) {
     if (!runDesign.isEmpty() && runPalette.isEmpty()) runPalette = NexaDesigns::resolve(runDesign).palette;
     const ThemePack startingTheme = NexaThemes::resolve(runPalette.isEmpty() ? config.ui.theme : runPalette);
     const DesignSpec startingDesign = NexaDesigns::resolve(runDesign.isEmpty() ? config.ui.design : runDesign);
-    NexaTheme::apply(&app, startingTheme.tokens, startingTheme.style, startingDesign);
+    NexaTheme::apply(&app, startingTheme.tokens, startingTheme.style, startingDesign, startingTheme.chrome);
 
-    // AI providers
+    // AI providers & account/licence manager
     HttpClient http;
+    AccountManager account;
+    QObject::connect(&http, &HttpClient::nexaRemaining, &account, &AccountManager::noteUsageRemaining);
+    QObject::connect(&app, &QCoreApplication::aboutToQuit, &account, &AccountManager::releaseSeat);
+    account.start();
+
+    UpdateChecker updater;
+    QObject::connect(&updater, &UpdateChecker::checkFailed, [](const QString &reason) {
+        qCDebug(lcApp) << "update check:" << reason;
+    });
+    if (updater.isConfigured() && !parser.isSet(settingsShotsOption) && !parser.isSet(screenshotOption)) {
+        QTimer::singleShot(5000, &updater, [&updater] { updater.check(QCoreApplication::applicationVersion()); });
+    }
+
     ProviderRegistry providers(&http);
 
     // Tools, policy, audit
@@ -256,6 +361,13 @@ int main(int argc, char *argv[]) {
     DesktopEntryIndex apps;
     apps.refresh();
     WpctlAudioController audio;
+    WpctlAudioController microphoneVolume(WpctlAudioController::Target::Microphone);   // "Lower it" only
+    // sherpa-onnx (scripts/download-sherpa.sh): the wake-name spotter, Silero and noise reduction, loaded when used.
+    // The speech engines: the user's own copies (scripts/download-*.sh) first, the package's second; the models
+    // are the user's and download from Settings → Voice.
+    EngineLocator engines;
+    SherpaRuntime sherpa(engines.sherpaModelsDir(), engines.sherpaLibraryDir());
+    AssetDownloader assets(engines.userDataDir());
     MprisController media;
     FileAccess files;
     ScreenCapture screen;
@@ -271,6 +383,14 @@ int main(int argc, char *argv[]) {
     panic.addHandler([&remoteDesktop] { remoteDesktop.close(); });
     QObject::connect(&helperClient, &HelperClient::readyChanged, &app, [&input] { input.reselect(); });
     panic.addHandler([&helperClient] { helperClient.cancelAllJobs(); });
+    // Hardcore mode's lock on the laptop's own keyboard and mouse, through the same helper; the screen stays on
+    // while it is held.
+    ScreenAwake screenAwake;
+#ifdef Q_OS_WIN
+    WinInputLock inputLock;
+#else
+    HelperInputLock inputLock(&helperClient, &screenAwake);
+#endif
 
     // The phone, through adb: over USB, or over Wi-Fi once paired in Settings → Android. Nothing
     // here starts adb until a phone is remembered or a phone tool is used.
@@ -310,10 +430,32 @@ int main(int argc, char *argv[]) {
                                               .appClosed = [&appContext](const OpenedApp &app) { appContext.noteClosed(app); }});
     // Documents, presentations and spreadsheets as files for LibreOffice.
     registerOfficeTools(tools, OfficeServices{.files = &files, .commands = &commands, .appOpened = appOpened});
+    // The screen as text (M27): the desktop's accessibility bus — what a screen reader uses — read while Share screen
+    // is on, so a model that cannot see images still works the window in front. The controller, built later, says
+    // whether the screen is shared.
+    AtspiBus a11y;
+    AtspiScreenReader screenReader(&a11y);
+    AppController *screenGate = nullptr;
+    registerScreenTools(tools, ScreenServices{.reader = &screenReader,
+                                              .input = [&input] { return input.current(); },
+                                              .allowed = [&screenGate] { return screenGate && screenGate->isScreenShared(); }});
 
-    // Voice: microphone → recognition → requests; replies → speech (backends built by AppController)
-    AudioCapture microphone;
-    VoicePipeline voice(&microphone);
+    // Voice: microphone → recognition → requests; replies → speech (backends built by AppController).
+    // With --hear, recordings stand in for the microphone.
+    const QStringList heard = parser.values(hearOption);
+    RecordedAudioInput *recording = nullptr;
+    std::unique_ptr<IAudioInput> microphone;
+    if (heard.isEmpty()) {
+        microphone = std::make_unique<AudioCapture>();
+    } else {
+        auto played = std::make_unique<RecordedAudioInput>();
+        recording = played.get();
+        microphone = std::move(played);
+    }
+    VoicePipeline voice(microphone.get());
+    // Whose voice it is: hands-free requests go on only in the owner's, once it is enrolled (Settings → Voice).
+    SpeakerGate speakerGate(&sherpa);
+    voice.setSpeakerGate(&speakerGate);
     registerVoiceTools(tools, &voice);
     panic.addHandler([&voice] { voice.cancel(); });
 
@@ -341,6 +483,7 @@ int main(int argc, char *argv[]) {
     // Fast path (no model) for common phrases; order = priority
     IntentRouter router([&tools](const QString &tool) { return tools.contains(tool); });
     router.add(std::make_unique<ControlIntent>());
+    router.add(std::make_unique<TaskIntent>());      // the mission board: "pause task two", "approve", "status"
     router.add(std::make_unique<MemoryIntent>());    // after the stops: "forget it" stays one
     router.add(std::make_unique<PhoneIntent>());     // before the PC's: "open youtube on my phone"
     router.add(std::make_unique<MediaIntent>());
@@ -350,8 +493,6 @@ int main(int argc, char *argv[]) {
     router.add(std::make_unique<CommandIntent>(&apps, programExists));
     router.add(std::make_unique<InputIntent>());
 
-    Agent agent(&executor, &tools);
-    agent.setMaxSteps(config.agent.maxToolRounds);
 
     AppController controller(
         AppServices{.store = &store,
@@ -359,11 +500,13 @@ int main(int argc, char *argv[]) {
                     .tools = &tools,
                     .executor = &executor,
                     .router = &router,
-                    .agent = &agent,
                     .panic = &panic,
                     .policy = &policy,
                     .voice = &voice,
                     .http = &http,
+                    .microphoneVolume = &microphoneVolume,
+                    .sherpa = &sherpa,
+                    .speakerGate = &speakerGate,
                     .context = &appContext,
                     // Typing goes to the window with the keyboard: when that is Nexa's own, it
                     // must not be done.
@@ -371,17 +514,49 @@ int main(int argc, char *argv[]) {
                     .canType = [&input] { return input.current() != nullptr; },
                     .memory = &memory,
                     .skills = &skills,
-                    .browserTarget = [&browser] { return browser.targetPhrase(); }},
+                    .browserTarget = [&browser] { return browser.targetPhrase(); },
+                    .inputLock = &inputLock,
+                    .account = &account},
         std::move(config), SystemInfo::summary());
+    screenGate = &controller;
     QObject::connect(&browser, &BrowserService::notice, &controller, &AppController::notify);
 
     // The web remote: a phone's browser talks to Nexa. Off until Settings → Remote switches it on;
     // then every request it makes goes through the controller like one typed here.
     PairingManager pairing(PairingManager::defaultPath());
     TlsIdentity tlsIdentity(TlsIdentity::defaultDirectory());
-    RemoteBridge remoteBridge(&controller, &http);
+    RemoteBridge remoteBridge(&controller, &http, &sherpa);
+    controller.setPhonePaired([&pairing] { return !pairing.devices().isEmpty(); });
     RemoteServer remote(&pairing, &remoteBridge, &tlsIdentity);
-    QObject::connect(&controller, &AppController::userMessageAccepted, &remote, &RemoteServer::onUserMessage);
+    // Away from home: Tailscale watched, the Cloudflare and ngrok tunnels run as Settings → Remote says (Pro / Team).
+    RemoteAccess remoteAccess(&remote);
+    remoteAccess.setEntitled(account.verifiedFeatures().awayFromHome);
+    const auto syncAwayEntitlement = [&remoteAccess, &account] {
+        remoteAccess.setEntitled(account.verifiedFeatures().awayFromHome);
+    };
+    QObject::connect(&account, &AccountManager::entitlementChanged, &remoteAccess, syncAwayEntitlement);
+    QObject::connect(&account, &AccountManager::featuresChanged, &remoteAccess, syncAwayEntitlement);
+    QObject::connect(&controller, &AppController::userMessageAccepted, &remote,
+                     [&remote](const QString &text, const QString &source, const QString &attachments) {
+                         const QString wireSource = source.startsWith(u"phone"_s) ? source : u"pc"_s;
+                         remote.onUserMessageFrom(text, wireSource, attachments);
+                     });
+    // Hardcore mode's lock and the questions tasks wait on: the phone shows them, unlocks and answers.
+    if (HardcoreMode *hardcore = controller.hardcore()) {
+        QObject::connect(hardcore, &HardcoreMode::stateChanged, &remote, [&remote, &remoteBridge] {
+            remote.onLockChanged(remoteBridge.isLocked(), remoteBridge.lockText());
+        });
+    }
+    QObject::connect(controller.mission(), &MissionControl::approvalRequested, &remote,
+                     [&remote, &controller](quint64, quint64 actionId) {
+        for (const Approval &approval : controller.mission()->approvals()) {
+            if (approval.actionId == actionId) {
+                remote.onApprovalAsked(actionId, approval.agentId, approval.tool, approval.question);
+            }
+        }
+    });
+    QObject::connect(controller.mission(), &MissionControl::approvalSettled, &remote,
+                     [&remote](quint64, quint64 actionId, bool allowed) { remote.onApprovalSettled(actionId, allowed); });
     QObject::connect(&controller, &AppController::replyStarted, &remote, &RemoteServer::onReplyStarted);
     QObject::connect(&controller, &AppController::replyDelta, &remote, &RemoteServer::onReplyDelta);
     QObject::connect(&controller, &AppController::replyStep, &remote, &RemoteServer::onReplyStep);
@@ -404,8 +579,9 @@ int main(int argc, char *argv[]) {
                                : reason == FinishReason::Cancelled ? u"cancelled"_s
                                                                    : u"other"_s);
     });
-    const auto applyRemote = [&remote, &remoteBridge, &phone](const Config &updated) {
-        remoteBridge.applyConfig(updated);
+    const auto applyRemote = [&remote, &remoteBridge, &remoteAccess, &phone, &controller](const Config &updated) {
+        remoteBridge.applyConfig(controller.runtimeConfig());
+        remoteAccess.apply(updated.remote);
         if (!updated.remote.enabled) {
             remote.stop();
             return;
@@ -418,11 +594,44 @@ int main(int argc, char *argv[]) {
     };
     applyRemote(controller.config());
 
+    // M15 Part B: Loopback-only (127.0.0.1) OpenAI-compatible HTTP proxy (off by default, no PC tools).
+    LocalApiServer localApi(&providers);
+    localApi.setConfigTransform([&account](const Config &cfg) -> Result<Config> {
+        Config copy = cfg;
+        const ProviderConfig *active = copy.active();
+        if (active && ProviderRegistry::isNexaManaged(*active) && !account.verifiedFeatures().nexaAi) {
+            return Error{ErrorCode::Unauthorized, QObject::tr("Nexa AI requires a Pro or Team plan.")};
+        }
+        for (ProviderConfig &p : copy.providers) {
+            if (ProviderRegistry::isNexaManaged(p)) {
+                p.apiKey = account.licenseToken();
+                if (p.baseUrl.isEmpty() || p.baseUrl == u"https://nexadownloadmanager.com/api/assistant/v1"_s) {
+                    p.baseUrl = account.nexaAiBaseUrl();
+                }
+            }
+        }
+        return copy;
+    });
+    const auto applyLocalApi = [&localApi, &controller](const Config &updated) {
+        if (!updated.localApi.enabled) {
+            localApi.stop();
+            return;
+        }
+        if (updated.localApi.bearerToken.trimmed().isEmpty()) {
+            Config withToken = updated;
+            withToken.localApi.bearerToken = LocalApiServer::generateBearerToken();
+            controller.updateConfig(withToken);
+            return;
+        }
+        localApi.updateConfig(updated);
+    };
+    applyLocalApi(controller.config());
+
     QObject::connect(&controller, &AppController::configChanged, &app,
-                     [applyAndroid, applyRemote, &agent, &mcp, &browser, &tools, &memory, &skills](const Config &updated) {
-                         agent.setMaxSteps(updated.agent.maxToolRounds);
+                     [applyAndroid, applyRemote, applyLocalApi, &mcp, &browser, &tools, &memory, &skills](const Config &updated) {
                          applyAndroid(updated.android);
                          applyRemote(updated);
+                         applyLocalApi(updated);
                          mcp.apply(updated.mcp.servers);
                          browser.apply(updated.browser);
                          syncMemoryTools(tools, &memory, updated.memory);
@@ -455,15 +664,43 @@ int main(int argc, char *argv[]) {
                                    .phone = &phone,
                                    .discovery = &discovery,
                                    .remote = &remote,
+                                   .remoteAccess = &remoteAccess,
                                    .pairing = &pairing,
                                    .phoneLink = &phoneLink,
                                    .mcp = &mcp,
                                    .shortcuts = &shortcuts,
                                    .browser = &browser,
                                    .memory = &memory,
-                                   .skills = &skills},
+                                   .skills = &skills,
+                                   .a11y = &a11y,
+                                   .assets = &assets,
+                                   .sherpa = &sherpa,
+                                   .voice = &voice,
+                                   .speakerGate = &speakerGate,
+                                   .microphoneSummary =
+                                       [&voice] {
+                                           const QString trouble = voice.microphoneTrouble();
+                                           return trouble.isEmpty() ? QObject::tr("fine")
+                                                                    : trouble.section(u". "_s, 0, 0) + u'.';
+                                       },
+                                   .lowerMicrophone = [&controller] { controller.lowerMicrophone(); },
+                                   .replyRunning = [&controller] { return controller.isBusy(); },
+                                   .providersChanged = [&controller] { controller.reloadProviders(); },
+                                   .account = &account,
+                                   .updater = &updater},
                       AuditLog::defaultPath());
     if (!runDesign.isEmpty() || !runPalette.isEmpty()) window.wear(runPalette, runDesign);
+    const auto syncRemoteTheme = [&window, &remote] {
+        remote.setTheme(remoteThemeStyle(window.theme(), window.design()));
+    };
+    syncRemoteTheme();
+    QObject::connect(&window, &MainWindow::visualChanged, &remote, syncRemoteTheme);
+    if (parser.isSet(sizeOption)) {
+        const QStringList parts = parser.value(sizeOption).split(u'x');
+        if (parts.size() == 2 && parts.at(0).toInt() > 0 && parts.at(1).toInt() > 0) {
+            window.resize(parts.at(0).toInt(), parts.at(1).toInt());
+        }
+    }
     window.show();
     // Nexa in the top bar where the desktop shows tray icons; then closing the window only hides
     // it, and the hotkeys, wake word and web remote keep working.
@@ -481,10 +718,12 @@ int main(int argc, char *argv[]) {
     });
 
     if (!startupWarning.isEmpty()) QMessageBox::warning(&window, QObject::tr("Nexa settings"), startupWarning);
+    if (parser.isSet(hardcoreOption)) window.setHardcore(true, false);
+    if (recording) controller.setWakeWordForced(true);     // --hear: the room is listened to, this run only
     QTimer::singleShot(0, &controller, &AppController::start);
 
-    // Scripted requests (--say, --voice-file, --ask, from this start or handed over by a later
-    // one): one step at a time, each once Nexa is idle again — reply finished and spoken.
+    // Scripted requests (--say, --voice-file, --ask, --hear, from this start or handed over by a later
+    // one): one step at a time, each once Nexa is idle again — reply finished and spoken, recording played.
     QList<std::function<void()>> steps;
     // --screenshot: once everything queued is done and Nexa is idle again, a picture of the
     // window (it also works offscreen: QT_QPA_PLATFORM=offscreen), then quit.
@@ -494,27 +733,34 @@ int main(int argc, char *argv[]) {
         if (screenshotPath.isEmpty() || screenshotTaken) return;
         screenshotTaken = true;
         QTimer::singleShot(700, &window, [&window, screenshotPath] {
+            qCInfo(lcApp) << "window" << window.size() << "smallest" << window.minimumSizeHint();
             const bool saved = window.grab().save(screenshotPath);
             qCInfo(lcApp).noquote() << (saved ? u"Saved %1"_s.arg(screenshotPath) : u"Could not save %1"_s.arg(screenshotPath));
             QCoreApplication::quit();
         });
     };
-    std::function<void()> runNext = [&controller, &voice, &steps, takeScreenshot] {
+    std::function<void()> runNext;
+    const std::function<void()> later = [&runNext] { QTimer::singleShot(250, runNext); };
+    runNext = [&controller, &voice, &steps, takeScreenshot, recording, &later] {
         if (controller.isBusy() || voice.state() != VoiceState::Idle) return;
+        if (recording && recording->playing()) return;
         if (!steps.isEmpty()) {
             steps.takeFirst()();
+            // A request answered on the spot ("share my screen") is never busy, so nothing else would call again.
+            later();
         } else {
             takeScreenshot();
         }
     };
-    const auto later = [&runNext] { QTimer::singleShot(250, runNext); };
     QObject::connect(&controller, &AppController::busyChanged, &controller, [later](bool busy) {
         if (!busy) later();
     });
     QObject::connect(&voice, &VoicePipeline::stateChanged, &controller, [later](VoiceState state) {
         if (state == VoiceState::Idle) later();
     });
-    const auto queue = [&](const QStringList &say, const QStringList &voiceFiles, const QStringList &ask, int delayMs) {
+    if (recording) QObject::connect(recording, &RecordedAudioInput::drained, &controller, later);
+    const auto queue = [&](const QStringList &say, const QStringList &voiceFiles, const QStringList &ask,
+                           const QStringList &attach, int delayMs) {
         for (const QString &text : say) steps.append([&voice, text] { voice.speak(text); });
         for (const QString &file : voiceFiles) {
             steps.append([&voice, &window, file] {
@@ -527,10 +773,52 @@ int main(int argc, char *argv[]) {
                 }
             });
         }
-        for (const QString &text : ask) steps.append([&controller, text] { controller.submit(text); });
+        QStringList files = attach;         // --attach: with the first request
+        for (const QString &text : ask) {
+            // A command about Nexa itself ("unlock", "stop everything", "pause all") acts at once: queued behind the
+            // task it is about, it would wait for that task to end.
+            if (const std::optional<IntentMatch> match = router.route(text);
+                match && (match->panic || match->control != Control::None)) {
+                QTimer::singleShot(0, &controller, [&controller, text] { controller.submit(text); });
+                continue;
+            }
+            if (files.isEmpty()) {
+                steps.append([&controller, text] { controller.submit(text); });
+                continue;
+            }
+            // Read here and now (a scripted run; the window reads them on a worker): the request follows at once,
+            // so the next step waits for it like for any other.
+            steps.append([&controller, &window, text, files = std::exchange(files, {})] {
+                QList<PreparedAttachment> prepared;
+                for (const QString &path : files) {
+                    const Result<Attachment> file = attachments::describe(path);
+                    if (!file) {
+                        QMessageBox::warning(&window, QObject::tr("Nexa"), file.error().message);
+                        continue;
+                    }
+                    prepared.append(AttachmentLoader::prepareOne(file.value(), AttachmentLoader::defaultKeepDir(),
+                                                                 QStandardPaths::findExecutable(u"soffice"_s),
+                                                                 QStandardPaths::findExecutable(u"pdftotext"_s)));
+                }
+                controller.submit(text, u"gui"_s, prepared);
+            });
+        }
         if (!steps.isEmpty()) QTimer::singleShot(delayMs, runNext);
     };
-    queue(parser.values(sayOption), parser.values(voiceFileOption), parser.values(askOption), 800);
+    queue(parser.values(sayOption), parser.values(voiceFileOption), parser.values(askOption),
+          absolutePaths(parser.values(attachOption)), 800);
+    // --hear: each recording played into the microphone, as if the room said it.
+    for (const QString &file : heard) {
+        steps.append([recording, &window, file] {
+            const Result<QByteArray> pcm = loadRecording(file);
+            if (pcm) {
+                recording->play(pcm.value());
+            } else {
+                QMessageBox::warning(&window, QObject::tr("Nexa"), QObject::tr("Cannot read %1: %2").arg(file, pcm.error().message));
+            }
+        });
+    }
+    if (!heard.isEmpty()) QTimer::singleShot(1500, runNext);
     if (steps.isEmpty() && !screenshotPath.isEmpty()) QTimer::singleShot(1500, runNext);
     if (parser.isSet(settingsShotsOption)) {
         const QString directory = parser.value(settingsShotsOption);
@@ -548,8 +836,10 @@ int main(int argc, char *argv[]) {
             for (const QJsonValue &value : message.value(key).toArray()) values.append(value.toString());
             return values;
         };
-        const QStringList say = strings(u"say"_s), voiceFiles = strings(u"voiceFile"_s), asks = strings(u"ask"_s);
+        const QStringList say = strings(u"say"_s), voiceFiles = strings(u"voiceFile"_s), asks = strings(u"ask"_s),
+                          attach = strings(u"attach"_s);
         const bool pairThePhone = message.value(u"pairPhone"_s).toBool();
+        if (message.value(u"hardcore"_s).toBool()) window.setHardcore(true, false);
         if (say.isEmpty() && voiceFiles.isEmpty() && asks.isEmpty() && !pairThePhone) {
             window.show();
             window.raise();
@@ -558,7 +848,7 @@ int main(int argc, char *argv[]) {
         }
         if (!window.isVisible()) window.show();
         if (pairThePhone) pairPhone();
-        queue(say, voiceFiles, asks, 250);
+        queue(say, voiceFiles, asks, attach, 250);
     });
     return app.exec();
 }

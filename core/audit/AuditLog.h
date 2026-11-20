@@ -22,6 +22,7 @@ public:
         qint64 elapsedMs{0};
         bool destructive{false};
         bool confirmed{false};      // the user approved it in a confirmation prompt
+        quint64 task{0};            // the task on the mission board it was done for (0: none)
     };
 
     explicit AuditLog(QString path = defaultPath());

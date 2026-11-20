@@ -6,8 +6,10 @@
 #include "voice/Wav.h"
 #include "voice/capture/AudioConverter.h"
 #include "voice/capture/EnergyVad.h"
+#include "voice/capture/RecordedAudioInput.h"
 #include "voice/pipeline/WakeWordDetector.h"
 #include "voice/stt/CloudRecognizer.h"
+#include "voice/stt/ISpeechRecognizer.h"
 #include "voice/stt/Transcript.h"
 #include "voice/tts/CloudSynthesizer.h"
 #include "voice/tts/SentenceChunker.h"
@@ -16,6 +18,8 @@
 #include "VoiceTestAudio.h"
 
 #include <QJsonArray>
+#include <QSignalSpy>
+#include <QTest>
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QtEndian>
@@ -164,6 +168,21 @@ TEST_CASE("EnergyVad finds an utterance between quiet stretches") {
     CHECK(vad.takeUtterance().isEmpty());
 }
 
+TEST_CASE("EnergyVad reports where the utterance was") {
+    EnergyVad vad;
+    QList<EnergyVad::Event> events = vad.feed(testaudio::quiet(500) + testaudio::speech(600));
+    REQUIRE(events == QList{EnergyVad::Event::SpeechStarted});
+    // The speech starts at 500 ms; the utterance keeps 300 ms before it.
+    CHECK(std::abs(vad.utteranceStart() - 3200) <= 320);
+    events = vad.feed(testaudio::quiet(1200));
+    REQUIRE(events == QList{EnergyVad::Event::SpeechEnded});
+    const EnergyVad::Span span = vad.lastSpan();
+    CHECK(std::abs(span.start - 3200) <= 320);
+    // The speech ends at 1100 ms; 200 ms of quiet are kept after it.
+    CHECK(std::abs(span.end - 20800) <= 320);
+    CHECK(span.end - span.start == vad.takeUtterance().size() / 2);
+}
+
 TEST_CASE("EnergyVad ignores clicks and gives the same result for any chunking") {
     EnergyVad vad;
     QByteArray audio = testaudio::quiet(800) + testaudio::speech(60) + testaudio::quiet(800);
@@ -267,22 +286,102 @@ TEST_CASE("SentenceChunker skips code blocks and splits long lines") {
     for (const QString &part : parts) CHECK(part.size() <= 330);
 }
 
-TEST_CASE("WakeWordDetector finds the wake phrase and the command after it") {
-    auto command = [](const QString &text) -> std::optional<QString> {
-        const auto match = WakeWordDetector::match(text);
-        return match ? std::optional(match->command) : std::nullopt;
-    };
-    CHECK(command(u"Hey Nexa, open Firefox."_s) == u"open Firefox."_s);
-    CHECK(command(u"hey nexa"_s) == u""_s);
-    CHECK(command(u"OK Nexa. Play some music."_s) == u"Play some music."_s);
-    CHECK(command(u"Hey Nexus, what time is it?"_s) == u"what time is it?"_s);
-    CHECK(command(u"Nexa, stop."_s) == u"stop."_s);
-    CHECK(command(u"Nexa open files"_s) == u"open files"_s);
-    CHECK(command(u"  Hey,  Nexa!"_s) == u""_s);
-    CHECK_FALSE(command(u"Next song please"_s));
-    CHECK_FALSE(command(u"The Nexus phone is great"_s));
-    CHECK_FALSE(command(u"Hey, can you hear me?"_s));
-    CHECK_FALSE(command(u"I told Nexa nothing"_s));
+TEST_CASE("WakeWordDetector finds any name anywhere") {
+    const WakeWordDetector nexa(u"Nexa"_s);
+    const auto mid = nexa.find(u"I was just saying that, hey Nexa, pause the music."_s);
+    REQUIRE(mid);
+    CHECK(mid->command == u"pause the music."_s);
+    CHECK(mid->firstWord == 5);
+    CHECK(mid->greeted);
+    CHECK(nexa.find(u"Hey Nexa, open Firefox."_s)->command == u"open Firefox."_s);
+    CHECK(nexa.find(u"Hey Nexus, what time is it?"_s)->command == u"what time is it?"_s);
+    CHECK(nexa.find(u"heynecks, pause it"_s)->command == u"pause it"_s);
+    CHECK(nexa.find(u"OK Neksa. Play some music."_s)->command == u"Play some music."_s);
+    CHECK(nexa.find(u"That's it. Nexa, stop."_s)->command == u"stop."_s);
+    CHECK(nexa.find(u"Nexa open files"_s)->command == u"open files"_s);
+    CHECK(nexa.find(u"  Hey,  Nexa!"_s)->command.isEmpty());
+    CHECK_FALSE(nexa.find(u"Nexa open files"_s)->greeted);
+    for (const QString &text : {u"Next song please"_s, u"The Nexus phone is really good"_s, u"I need an extra hour"_s,
+                                u"I told Nexa nothing"_s, u"Hey Nick, can you pass the salt?"_s,
+                                u"Hey, can you hear me?"_s,
+                                // One sound away from "Nexa", but another word: a greeting before them is common talk.
+                                u"Okay, next song please"_s, u"Hey Max, come here"_s, u"Hey Rex, sit"_s,
+                                u"Hi six people came"_s, u"OK next one"_s}) {
+        INFO(text.toStdString());
+        CHECK_FALSE(nexa.find(text));
+    }
+    CHECK(nexa.find(u"Hey Nexer, lights off"_s));       // a recogniser's slip of the name itself still counts
+
+    const WakeWordDetector jarvis(u"Jarvis"_s);
+    CHECK(jarvis.find(u"Hey Jervis, open YouTube"_s)->command == u"open YouTube"_s);
+    CHECK_FALSE(jarvis.find(u"I love Jarvis movies"_s));
+    CHECK(jarvis.commandOf(u"Hey Jarvis."_s).isEmpty());
+    CHECK(jarvis.commandOf(u"Hey Jarvis, open YouTube"_s) == u"open YouTube"_s);
+    CHECK(jarvis.commandOf(u"open YouTube"_s) == u"open YouTube"_s);
+    CHECK(WakeWordDetector(u"Mister Robot"_s).find(u"hey mister robot, lights off"_s)->command == u"lights off"_s);
+
+    CHECK(WakeWordDetector::soundKey(u"Nexa"_s) == u"nks"_s);
+    CHECK(WakeWordDetector::soundKey(u"Necksa"_s) == u"nks"_s);
+    CHECK(WakeWordDetector::soundKey(u"Jarvis"_s) == u"jrvs"_s);
+    CHECK(nexa.recognizerPrompt() == u"Hey Nexa."_s);
+    CHECK(jarvis.name() == u"Jarvis"_s);
+
+    // Saying the name at all, as Nexa may in its own replies.
+    CHECK(nexa.mentions(u"I am Nexa, your assistant."_s));
+    CHECK(nexa.mentions(u"I'm Necksa."_s));
+    CHECK_FALSE(nexa.mentions(u"The weather is fine today."_s));
+}
+
+namespace {
+
+// A recogniser that knows no word times: transcribeWords() must still answer through transcribe().
+class PlainRecognizer : public ISpeechRecognizer {
+public:
+    explicit PlainRecognizer(Result<QString> answer) : answer_(std::move(answer)) {}
+    QString name() const override { return u"plain"_s; }
+    bool isLocal() const override { return true; }
+    void transcribe(const QByteArray &, const QString &, Done done) override { done(answer_); }
+    void cancel() override {}
+
+private:
+    Result<QString> answer_;
+};
+
+} // namespace
+
+TEST_CASE("A recogniser without word times still answers transcribeWords") {
+    PlainRecognizer plain(QString(u"hello there"_s));
+    std::optional<Result<TimedTranscript>> got;
+    plain.transcribeWords(QByteArray(3200, 0), u"Hey Nexa."_s, [&got](Result<TimedTranscript> result) { got = result; });
+    REQUIRE(got);
+    REQUIRE(got->isOk());
+    CHECK(got->value().text == u"hello there"_s);
+    CHECK(got->value().words.isEmpty());
+
+    PlainRecognizer failing(Error{ErrorCode::Network, u"offline"_s});
+    std::optional<Result<TimedTranscript>> failed;
+    failing.transcribeWords(QByteArray(3200, 0), QString(), [&failed](Result<TimedTranscript> result) { failed = result; });
+    REQUIRE(failed);
+    REQUIRE_FALSE(failed->isOk());
+    CHECK(failed->error().code == ErrorCode::Network);
+}
+
+TEST_CASE("RecordedAudioInput plays in real time, then silence") {
+    RecordedAudioInput recording;
+    QList<QByteArray> chunks;
+    QObject::connect(&recording, &IAudioInput::audio, &recording, [&chunks](const QByteArray &pcm) { chunks.append(pcm); });
+    QSignalSpy drained(&recording, &RecordedAudioInput::drained);
+    REQUIRE(recording.start().isOk());
+    recording.play(testaudio::speech(1000));
+    CHECK(recording.playing());
+    QTest::qWait(1250);
+    REQUIRE(chunks.size() >= 11);
+    for (int i = 0; i < 10; ++i) CHECK(chunks[i] == testaudio::speech(1000).mid(i * 3200, 3200));
+    CHECK(chunks[10] == QByteArray(3200, '\0'));         // the recording is over: silence
+    REQUIRE(drained.wait(6000));
+    CHECK_FALSE(recording.playing());
+    recording.stop();
+    CHECK_FALSE(recording.isActive());
 }
 
 TEST_CASE("cleanTranscript drops non-speech annotations") {
@@ -291,6 +390,23 @@ TEST_CASE("cleanTranscript drops non-speech annotations") {
     CHECK(cleanTranscript(u" ..."_s).isEmpty());
     CHECK(cleanTranscript(u"  Open   the [noise] calculator. "_s) == u"Open the calculator."_s);
     CHECK(cleanTranscript(u"*laughs* Pause it"_s) == u"Pause it"_s);
+}
+
+TEST_CASE("What whisper makes up from noise is not a request") {
+    for (const QString &made : {u"Thank you."_s, u"Thanks for watching!"_s, u" you "_s, u"Thank you for watching."_s,
+                                u"Subtitles by the Amara.org community"_s, u"Bye."_s, u"Please subscribe."_s}) {
+        INFO(made.toStdString());
+        CHECK(looksMadeUp(made));
+        CHECK(cleanTranscript(made).isEmpty());
+    }
+    // The prompt it was given, read back from silence.
+    CHECK(looksMadeUp(u"Hey Nexa. Ammi ko call karo. Volume kam karo."_s));
+    for (const QString &said : {u"Thank you, now open Firefox"_s, u"you can turn it down"_s, u"open YouTube"_s,
+                                u"Ammi ko call karo"_s}) {
+        INFO(said.toStdString());
+        CHECK_FALSE(looksMadeUp(said));
+        CHECK_FALSE(cleanTranscript(said).isEmpty());
+    }
 }
 
 TEST_CASE("MultipartForm builds a form-data body") {
@@ -358,22 +474,28 @@ TEST_CASE("CloudSynthesizer asks for WAV with the configured voice and speed") {
 TEST_CASE("ProviderRegistry::upgrade gives v1 providers the preset speech models") {
     Config config;
     config.version = 1;
-    ProviderConfig omniroute = ProviderRegistry::defaultProvider();
-    omniroute.sttModel.clear();
-    omniroute.ttsModel.clear();
-    omniroute.ttsVoice.clear();
-    omniroute.apiKey = u"sk-kept"_s;
-    config.providers = {omniroute, ProviderConfig{.id = u"mine"_s, .baseUrl = u"http://localhost:1/v1"_s}};
+    ProviderPreset openAiPreset;
+    for (const ProviderPreset &preset : ProviderRegistry::presets()) {
+        if (preset.id == u"openai"_s) openAiPreset = preset;
+    }
+    REQUIRE(openAiPreset.id == u"openai"_s);
+    ProviderConfig openai = ProviderRegistry::fromPreset(openAiPreset);
+    openai.sttModel.clear();
+    openai.ttsModel.clear();
+    openai.ttsVoice.clear();
+    openai.apiKey = u"sk-kept"_s;
+    config.providers = {openai, ProviderConfig{.id = u"mine"_s, .baseUrl = u"http://localhost:1/v1"_s}};
+    const auto nothingInstalled = [](const QString &) { return false; };
 
-    ProviderRegistry::upgrade(config);
+    ProviderRegistry::upgrade(config, nothingInstalled);
     CHECK(config.version == Config::kVersion);
-    CHECK(config.providers[0].sttModel == u"anyapi/google/gemini-2.5-flash-lite"_s);
-    CHECK(config.providers[0].ttsModel == u"gtts/default"_s);
-    CHECK(config.providers[0].ttsVoice == u"en"_s);
+    CHECK(config.providers[0].sttModel == u"whisper-1"_s);
+    CHECK(config.providers[0].ttsModel == u"tts-1"_s);
+    CHECK(config.providers[0].ttsVoice == u"alloy"_s);
     CHECK(config.providers[0].apiKey == u"sk-kept"_s);
     CHECK(config.providers[1].sttModel.isEmpty());
 
     config.providers[0].ttsModel.clear();     // a v2 choice to have no cloud voice stays
-    ProviderRegistry::upgrade(config);
+    ProviderRegistry::upgrade(config, nothingInstalled);
     CHECK(config.providers[0].ttsModel.isEmpty());
 }

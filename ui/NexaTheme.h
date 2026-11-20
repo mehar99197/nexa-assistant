@@ -1,5 +1,6 @@
 #pragma once
 
+#include "ui/NexaChrome.h"
 #include "ui/NexaCoreSpec.h"
 #include "ui/NexaDesigns.h"
 
@@ -49,15 +50,18 @@ public:
     // `base` scaled by `factor`, in points or in pixels — Android's fonts carry no point size.
     static QFont scaled(const QFont &base, double factor, const QString &family = {});
     // theme.qss with every token filled in: Nexa's own scheme in the Studio design, or any
-    // palette with a motion style, in any design (corners, type, core shape, transcript).
+    // palette with a motion style, in any design (corners, type, core shape, transcript), wearing a chrome
+    // (how the panels are framed and what lies behind them; Flat on the bare ground unless the pack says).
     static QString styleSheet(ThemeScheme scheme);
     static QString styleSheet(const ThemeTokens &tokens, CoreStyle style);
-    static QString styleSheet(const ThemeTokens &tokens, CoreStyle style, const DesignSpec &design);
+    static QString styleSheet(const ThemeTokens &tokens, CoreStyle style, const DesignSpec &design,
+                              const ThemeChrome &chrome = {});
     static QPalette palette(ThemeScheme scheme);
     static QPalette palette(const ThemeTokens &tokens);
     static void apply(QApplication *app, ThemeScheme scheme);
     static void apply(QApplication *app, const ThemeTokens &tokens, CoreStyle style);
-    static void apply(QApplication *app, const ThemeTokens &tokens, CoreStyle style, const DesignSpec &design);
+    static void apply(QApplication *app, const ThemeTokens &tokens, CoreStyle style, const DesignSpec &design,
+                      const ThemeChrome &chrome = {});
 };
 
 } // namespace nexa

@@ -9,12 +9,17 @@
 #include <QHash>
 #include <QObject>
 #include <QStringList>
+#include <QTimer>
 
 #include <functional>
 #include <vector>
 
+class QDBusServiceWatcher;
+class QFileSystemWatcher;
+
 namespace nexa {
 
+class DeviceLock;
 class JobManager;
 class LoginSessions;
 class PolkitAuthorizer;
@@ -32,11 +37,20 @@ class UinputDevice;
 //
 // The password is asked for once per login, not once per caller: see SessionGrants for why that
 // needs saying, and for what is and is not remembered.
+//
+// Hardcore mode's lock (LockInput) is held for one caller, and ends by itself — InputUnlocked says why — when that
+// caller leaves the bus, misses its heartbeat (a LockInput every few seconds) for kHeartbeatMs, or its login stops
+// being the one at the screen. A keyboard or pointer that appears meanwhile is locked as it arrives.
 class HelperService : public QObject, protected QDBusContext {
     Q_OBJECT
 public:
+    static constexpr int kHeartbeatMs = 30'000;
+
     HelperService(PolkitAuthorizer *authorizer, LoginSessions *sessions, SessionGrants *grants, JobManager *jobs,
-                  UinputDevice *input, QObject *parent = nullptr);
+                  UinputDevice *input, DeviceLock *lock, QObject *parent = nullptr);
+    ~HelperService() override;
+
+    bool isInputLocked() const;     // locked, or a device not given back yet: the helper must not exit
 
 public slots:
     void Ping();
@@ -51,10 +65,13 @@ public slots:
     void MouseMoveAbs(int x, int y, int screenW, int screenH);
     void MouseButton(uint button, bool down);
     void MouseScroll(int dx, int dy);
+    QStringList LockInput();
+    void UnlockInput();
 
 signals:
     void OutputChunk(qulonglong jobId, uchar stream, const QByteArray &data);
     void Finished(qulonglong jobId, int exitCode, const QString &status);
+    void InputUnlocked(const QString &reason);
     void called();      // any call arrived: the idle timer starts again
 
 private:
@@ -70,12 +87,20 @@ private:
     // The caller's graphical login. The user id comes from the bus, so it cannot be faked; an
     // invalid result means there is nobody to ask.
     LoginSession callerSession() const;
+    // The lock ends: the devices back, the watchers gone; `byItself` says so on the bus.
+    void endLock(const QString &reason, bool byItself);
+    void watchLockHolder(const QDBusConnection &bus, const QString &holder);
 
     PolkitAuthorizer *authorizer_;
     LoginSessions *sessions_;
     SessionGrants *grants_;
     JobManager *jobs_;
     UinputDevice *input_;
+    DeviceLock *lock_;
+    QTimer heartbeat_;                              // the holder's LockInput calls keep it from running out
+    QTimer retry_;                                  // devices the kernel did not give back: tried again until it does
+    QDBusServiceWatcher *holderWatcher_{nullptr};   // the holder leaving the bus
+    QFileSystemWatcher *hotplug_{nullptr};          // /dev/input: a device plugged in while locked
     // Calls that arrived while one password prompt was already on screen, by login. They are all
     // answered by that one prompt; otherwise a handful of quick actions means a handful of prompts.
     QHash<QString, std::vector<Pending>> waiting_;

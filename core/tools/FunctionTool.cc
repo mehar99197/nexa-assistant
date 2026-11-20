@@ -1,5 +1,7 @@
 #include "core/tools/FunctionTool.h"
 
+#include <QJsonObject>
+
 namespace nexa {
 
 FunctionTool::FunctionTool(ToolSpec spec, Invoke invoke, std::function<void()> cancel)

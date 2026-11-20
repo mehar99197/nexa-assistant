@@ -30,6 +30,9 @@ public:
     bool isAuthenticated() const { return !deviceId_.isEmpty(); }
     QString deviceId() const { return deviceId_; }
     QString deviceName() const { return deviceName_; }
+    // It came through a tunnel (Cloudflare, ngrok): from the internet, not this network or adb.
+    bool viaTunnel() const { return viaTunnel_; }
+    void setViaTunnel(bool viaTunnel) { viaTunnel_ = viaTunnel; }
 
     void send(const QByteArray &message);
     void close(const QString &reason);
@@ -39,6 +42,8 @@ signals:
     void textRequest(const QString &text);
     void audioRequest(const QByteArray &pcm16k);
     void cancelRequested();
+    void unlockRequested();
+    void answered(quint64 id, bool allow);
     void closed();
 
 private:
@@ -51,6 +56,7 @@ private:
     QTimer helloTimeout_;
     QString deviceId_;
     QString deviceName_;
+    bool viaTunnel_{false};
     QElapsedTimer clock_;
     QList<qint64> recent_;          // when the requests of the last minute arrived
     bool closing_{false};

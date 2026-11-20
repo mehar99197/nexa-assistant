@@ -4,7 +4,8 @@
 #   PATH="$PWD/tests/fake-adb:$PATH" QT_QPA_PLATFORM=offscreen ./build/app/nexa-assistant --new-instance \
 #       --ask "on my phone open youtube" --screenshot /tmp/nexa.png
 # `devices -l` lists a Pixel 9 over USB, `shell` answers every command with the phone's properties
-# (so the tools see a phone, even if what they asked for makes no sense of the answer), and
+# (so the tools see a phone, even if what they asked for makes no sense of the answer) — except a
+# `uiautomator dump`, answered with the screen of a video app as text (tests/fake-ui-dump.xml) — and
 # `exec-out screencap -p` sends a drawn screen — rows of cards under a status bar — after a pause
 # like a real phone's. Everything else succeeds quietly.
 screen="${TMPDIR:-/tmp}/nexa-fake-adb-screen.png"
@@ -36,8 +37,16 @@ case "$1" in
     ;;
   mdns) echo "List of discovered mdns services" ;;
   shell)
-    echo "manufacturer=Google"; echo "model=Pixel 9"; echo "release=15"; echo "hardware=FAKE123"
-    echo "  level: 76"; echo "Physical size: 1080x2400"; echo "Success"
+    case "$2" in
+      uiautomator*)
+        # The screen as text: a video app's home screen (tests/fake-ui-dump.xml), as `uiautomator dump` describes it.
+        cat "$(dirname "$0")/../fake-ui-dump.xml"
+        ;;
+      *)
+        echo "manufacturer=Google"; echo "model=Pixel 9"; echo "release=15"; echo "hardware=FAKE123"
+        echo "  level: 76"; echo "Physical size: 1080x2400"; echo "Success"
+        ;;
+    esac
     ;;
   exec-out) sleep 0.3; cat "$screen" ;;
 esac

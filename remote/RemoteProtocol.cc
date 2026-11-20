@@ -5,6 +5,9 @@
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QJsonParseError>
+#include <QJsonValue>
+
+#include <cmath>
 
 using namespace Qt::StringLiterals;
 
@@ -15,6 +18,62 @@ namespace {
 QByteArray message(const QString &type, QJsonObject fields = {}) {
     fields.insert(u"t"_s, type);
     return QJsonDocument(fields).toJson(QJsonDocument::Compact);
+}
+
+QJsonObject encodeTheme(const ThemeStyle &s) {
+    QJsonObject obj{
+        {u"themeId"_s, s.themeId},
+        {u"designId"_s, s.designId},
+        {u"ground"_s, s.ground},
+        {u"panel"_s, s.panel},
+        {u"panelRaised"_s, s.panelRaised},
+        {u"line"_s, s.line},
+        {u"text"_s, s.text},
+        {u"muted"_s, s.muted},
+        {u"idle"_s, s.idle},
+        {u"wake"_s, s.wake},
+        {u"listen"_s, s.listen},
+        {u"stt"_s, s.stt},
+        {u"think"_s, s.think},
+        {u"act"_s, s.act},
+        {u"speak"_s, s.speak},
+        {u"fast"_s, s.fast},
+        {u"error"_s, s.error},
+        {u"onAccent"_s, s.onAccent},
+        {u"fontFace"_s, s.fontFace},
+        {u"bubbleStyle"_s, s.bubbleStyle},
+        {u"radius"_s, s.radius},
+    };
+    return obj;
+}
+
+std::optional<ThemeStyle> decodeTheme(const QJsonValue &val) {
+    if (!val.isObject()) return std::nullopt;
+    const QJsonObject o = val.toObject();
+    ThemeStyle s;
+    s.themeId = o.value(u"themeId"_s).toString();
+    s.designId = o.value(u"designId"_s).toString();
+    s.ground = o.value(u"ground"_s).toString();
+    s.panel = o.value(u"panel"_s).toString();
+    s.panelRaised = o.value(u"panelRaised"_s).toString();
+    s.line = o.value(u"line"_s).toString();
+    s.text = o.value(u"text"_s).toString();
+    s.muted = o.value(u"muted"_s).toString();
+    s.idle = o.value(u"idle"_s).toString();
+    s.wake = o.value(u"wake"_s).toString();
+    s.listen = o.value(u"listen"_s).toString();
+    s.stt = o.value(u"stt"_s).toString();
+    s.think = o.value(u"think"_s).toString();
+    s.act = o.value(u"act"_s).toString();
+    s.speak = o.value(u"speak"_s).toString();
+    s.fast = o.value(u"fast"_s).toString();
+    s.error = o.value(u"error"_s).toString();
+    s.onAccent = o.value(u"onAccent"_s).toString();
+    s.fontFace = o.value(u"fontFace"_s).toString();
+    s.bubbleStyle = o.value(u"bubbleStyle"_s).toString();
+    s.radius = o.value(u"radius"_s).toInt(10);
+    if (s.isEmpty()) return std::nullopt;
+    return s;
 }
 
 } // namespace
@@ -40,24 +99,50 @@ std::optional<ClientMessage> decode(QByteArrayView frame) {
         parsed.type = ClientMessage::Type::Cancel;
     } else if (type == u"ping") {
         parsed.type = ClientMessage::Type::Ping;
+    } else if (type == u"unlock") {
+        parsed.type = ClientMessage::Type::Unlock;
+    } else if (type == u"answer") {
+        // Exactly a positive whole number and a yes or no: an answer is never guessed into a "yes".
+        const QJsonValue id = object.value(u"id"_s);
+        const QJsonValue allow = object.value(u"allow"_s);
+        if (!id.isDouble() || !allow.isBool()) return std::nullopt;
+        const double number = id.toDouble();
+        if (number < 1 || number > 9.0e15 || number != std::floor(number)) return std::nullopt;
+        parsed.type = ClientMessage::Type::Answer;
+        parsed.id = quint64(number);
+        parsed.allow = allow.toBool();
     } else {
         return std::nullopt;
     }
     return parsed;
 }
 
-QByteArray welcome(const QString &device, bool voice, bool busy, const QString &mode) {
+QByteArray welcome(const QString &device, bool voice, bool busy, const QString &mode, const QList<RemoteRoute> &routes,
+                   const QString &fingerprint, const std::optional<ThemeStyle> &themeStyle) {
     QJsonObject fields{{u"version"_s, kVersion}, {u"device"_s, device}, {u"voice"_s, voice}, {u"busy"_s, busy}};
     if (!mode.isEmpty()) fields.insert(u"mode"_s, mode);
+    if (!routes.isEmpty()) fields.insert(u"routes"_s, encodeRoutes(routes));
+    if (!fingerprint.isEmpty()) fields.insert(u"fingerprint"_s, fingerprint);
+    if (themeStyle && !themeStyle->isEmpty()) fields.insert(u"theme"_s, encodeTheme(*themeStyle));
     return message(u"welcome"_s, fields);
+}
+
+QByteArray theme(const ThemeStyle &style) {
+    return message(u"theme"_s, {{u"theme"_s, encodeTheme(style)}});
+}
+
+QByteArray routes(const QList<RemoteRoute> &list) {
+    return message(u"routes"_s, {{u"routes"_s, encodeRoutes(list)}});
 }
 
 QByteArray state(const QString &mode, const QStringList &nodes) {
     return message(u"state"_s, {{u"mode"_s, mode}, {u"nodes"_s, QJsonArray::fromStringList(nodes)}});
 }
 
-QByteArray accepted(const QString &text, const QString &source) {
-    return message(u"accepted"_s, {{u"text"_s, text}, {u"source"_s, source}});
+QByteArray accepted(const QString &text, const QString &source, const QString &attachments) {
+    QJsonObject fields{{u"text"_s, text}, {u"source"_s, source}};
+    if (!attachments.isEmpty()) fields.insert(u"attachments"_s, attachments);
+    return message(u"accepted"_s, fields);
 }
 
 QByteArray delta(const QString &text) {
@@ -96,6 +181,19 @@ QByteArray pong() {
     return message(u"pong"_s);
 }
 
+QByteArray lock(bool locked, const QString &text) {
+    return message(u"lock"_s, {{u"locked"_s, locked}, {u"text"_s, text}});
+}
+
+QByteArray approval(quint64 id, const QString &agent, const QString &tool, const QString &question) {
+    return message(u"approval"_s,
+                   {{u"id"_s, qint64(id)}, {u"agent"_s, agent}, {u"tool"_s, tool}, {u"text"_s, question}});
+}
+
+QByteArray settled(quint64 id, bool allowed) {
+    return message(u"settled"_s, {{u"id"_s, qint64(id)}, {u"allow"_s, allowed}});
+}
+
 std::optional<ServerMessage> decodeServer(QByteArrayView frame) {
     QJsonParseError error{};
     const QJsonDocument document = QJsonDocument::fromJson(frame.toByteArray(), &error);
@@ -108,6 +206,8 @@ std::optional<ServerMessage> decodeServer(QByteArrayView frame) {
         {u"step"_s, Type::Step},         {u"finished"_s, Type::Finished}, {u"failed"_s, Type::Failed},
         {u"transcript"_s, Type::Transcript}, {u"speech"_s, Type::Speech}, {u"busy"_s, Type::Busy},
         {u"error"_s, Type::Error},       {u"pong"_s, Type::Pong},         {u"state"_s, Type::State},
+        {u"lock"_s, Type::Lock},         {u"approval"_s, Type::Approval}, {u"settled"_s, Type::Settled},
+        {u"routes"_s, Type::Routes},     {u"theme"_s, Type::Theme},
     };
     const auto type = types.constFind(object.value(u"t"_s).toString());
     if (type == types.cend()) return std::nullopt;
@@ -116,6 +216,7 @@ std::optional<ServerMessage> decodeServer(QByteArrayView frame) {
     parsed.type = *type;
     parsed.text = object.value(u"text"_s).toString();
     parsed.source = object.value(u"source"_s).toString();
+    parsed.attachments = object.value(u"attachments"_s).toString();
     parsed.device = object.value(u"device"_s).toString();
     parsed.reason = object.value(u"reason"_s).toString();
     parsed.url = object.value(u"url"_s).toString();
@@ -125,6 +226,14 @@ std::optional<ServerMessage> decodeServer(QByteArrayView frame) {
     parsed.busy = object.value(u"busy"_s).toBool();
     parsed.voice = object.value(u"voice"_s).toBool();
     parsed.mode = object.value(u"mode"_s).toString();
+    parsed.locked = object.value(u"locked"_s).toBool();
+    parsed.id = quint64(std::max<qint64>(0, object.value(u"id"_s).toInteger()));
+    parsed.agent = object.value(u"agent"_s).toString();
+    parsed.tool = object.value(u"tool"_s).toString();
+    parsed.allow = object.value(u"allow"_s).toBool();
+    parsed.routes = decodeRoutes(object.value(u"routes"_s).toArray());
+    parsed.fingerprint = object.value(u"fingerprint"_s).toString();
+    parsed.theme = decodeTheme(object.value(u"theme"_s));
     for (const QJsonValue &node : object.value(u"nodes"_s).toArray()) {
         if (node.isString()) parsed.nodes.append(node.toString());
     }
@@ -145,6 +254,14 @@ QByteArray cancel() {
 
 QByteArray ping() {
     return message(u"ping"_s);
+}
+
+QByteArray unlock() {
+    return message(u"unlock"_s);
+}
+
+QByteArray answer(quint64 id, bool allow) {
+    return message(u"answer"_s, {{u"id"_s, qint64(id)}, {u"allow"_s, allow}});
 }
 
 } // namespace nexa::remote

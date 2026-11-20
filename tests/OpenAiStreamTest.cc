@@ -69,7 +69,7 @@ QByteArray sse(const QByteArray &json) { return "data: " + json + "\n\n"; }
 
 TEST_CASE("OpenAiChatStream streams text split across reads and finishes on [DONE]") {
     FakeHttpServer server;
-    const QByteArray events = sse(R"({"choices":[{"index":0,"delta":{},"finish_reason":null}]})")  // OmniRoute keep-alive
+    const QByteArray events = sse(R"({"choices":[{"index":0,"delta":{},"finish_reason":null}]})")  // a gateway's keep-alive
         + sse(R"({"choices":[{"delta":{"role":"assistant"}}]})")
         + sse(R"({"choices":[{"delta":{"content":"p"}}]})")
         + sse(R"({"choices":[{"delta":{"content":"ong"}}]})")
@@ -234,4 +234,21 @@ TEST_CASE("OpenAiProvider::listModels fetches, sorts and authenticates") {
     CHECK(models->value() == QStringList{u"alpha"_s, u"zeta"_s});
     CHECK(server.requestHead().startsWith("GET /v1/models "));
     CHECK(server.requestHead().contains("Authorization: Bearer sk-test"));
+}
+
+TEST_CASE("listModels asks modelsUrl when one is set") {
+    FakeHttpServer server;
+    server.respond({.contentType = "application/json", .chunks = {R"({"object":"list","data":[{"id":"m"}]})"}});
+
+    HttpClient http;
+    ProviderConfig config = configFor(server.baseUrl());
+    config.modelsUrl = server.baseUrl().toString() + u"/catalog"_s;
+    OpenAiProvider provider(config, &http);
+    std::optional<Result<QStringList>> models;
+    provider.listModels([&](Result<QStringList> result) { models = std::move(result); });
+    REQUIRE(QTest::qWaitFor([&] { return models.has_value(); }, kWaitMs));
+
+    REQUIRE(models->isOk());
+    CHECK(models->value() == QStringList{u"m"_s});
+    CHECK(server.requestHead().startsWith("GET /v1/catalog "));
 }

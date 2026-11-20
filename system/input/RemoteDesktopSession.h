@@ -2,7 +2,9 @@
 
 #include "core/Result.h"
 
+#ifdef Q_OS_UNIX
 #include <QDBusConnection>
+#endif
 #include <QList>
 #include <QObject>
 #include <QPoint>
@@ -111,7 +113,9 @@ private:
     QString tokenPath_;
     QString restoreToken_;
     StreamUnits units_;
+#ifdef Q_OS_UNIX
     QDBusConnection bus_;
+#endif
     bool registered_{false};
 
     State state_{State::Idle};

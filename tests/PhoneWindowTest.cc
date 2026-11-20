@@ -17,8 +17,14 @@
 
 #include "QtStringMakers.h"
 
+#include "remote/RemoteRoutes.h"
+#include "ui/ElidedLabel.h"
+
 #include <QAbstractButton>
 #include <QApplication>
+#include <QFrame>
+#include <QFile>
+#include <QFileInfo>
 #include <QLabel>
 #include <QLineEdit>
 #include <QListWidget>
@@ -42,6 +48,11 @@ class FakeHost : public IRemoteHost {
 public:
     bool isBusy() const override { return false; }
     void submit(const QString &text, const QString &source) override { submitted.append(source + u": "_s + text); }
+    void submitWithAttachments(const QString &text, const QString &source, const QStringList &savedPaths) override {
+        submitted.append(source + u": "_s + text);
+        uploadedPaths.append(savedPaths);
+    }
+    QString attachmentDir() const override { return uploadDir; }
     void cancel() override { ++cancels; }
     void transcribe(const QByteArray &, std::function<void(Result<QString>)> done) override {
         done(u"open the calculator"_s);
@@ -51,8 +62,15 @@ public:
         done(QByteArrayLiteral("RIFF-fake-wav"));
     }
 
+    void unlock() override { ++unlocks; }
+    void answer(quint64 id, bool allow) override { answers.append(u"%1:%2"_s.arg(id).arg(allow ? u"yes"_s : u"no"_s)); }
+
     QStringList submitted;
+    QString uploadDir;
+    QStringList uploadedPaths;
     int cancels{0};
+    int unlocks{0};
+    QStringList answers;
 };
 
 int freePortPair() {
@@ -186,8 +204,10 @@ TEST_CASE("The phone app pairs, chats, cancels and forgets, through adb's plain 
     REQUIRE(QTest::qWaitFor([&f] { return f.onChat(); }, 10'000));
     CHECK(f.settings.isPaired());
     CHECK(f.settings.token() == f.client.token());
-    CHECK(f.settings.fingerprint().isEmpty());        // plain HTTP: nothing to trust
-    CHECK(f.status->text().contains(u"Test phone"_s));
+    // Plain HTTP over adb shows no certificate; the PC's welcome hands over its fingerprint (for Tailscale's HTTPS),
+    // taken because adb is the phone's own loopback.
+    CHECK(QTest::qWaitFor([&f] { return f.settings.fingerprint() == f.server.fingerprint(); }, 5000));
+    CHECK(static_cast<ElidedLabel *>(f.status)->fullText() == u"Your PC · connected"_s);
     REQUIRE(f.pairing.devices().size() == 1);
     CHECK(f.pairing.devices().first().name == u"Test phone"_s);
     CHECK(QTest::qWaitFor([&f] { return f.talk->isVisibleTo(f.chat); }, 5000));
@@ -316,4 +336,216 @@ TEST_CASE("Over the network the phone app shows Nexa's fingerprint and trusts it
     REQUIRE(QTest::qWaitFor([&f] { return f.onChat(); }, 10'000));
     CHECK(dialogs == 1);
     user.stop();
+}
+
+TEST_CASE("The phone app shows the PC locked, unlocks it, and answers the question a task waits on") {
+    if (!haveOpenssl()) SKIP("openssl is needed to make the certificate");
+    Fixture f;
+    REQUIRE(f.wired());
+    REQUIRE(f.start());
+    f.window.show();
+    f.window.start();
+    f.address->setText(u"127.0.0.1:%1"_s.arg(f.port + 1));
+    f.pairing.startPairing();
+    f.code->setText(f.pairing.code());
+    f.clickPair();
+    REQUIRE(QTest::qWaitFor([&f] { return f.onChat(); }, 10'000));
+
+    QFrame *bar = f.chat->findChild<QFrame *>(u"lockBar"_s);
+    QPushButton *unlock = f.chat->findChild<QPushButton *>(u"unlockButton"_s);
+    REQUIRE(bar);
+    REQUIRE(unlock);
+    CHECK_FALSE(bar->isVisibleTo(f.chat));
+    f.server.onLockChanged(true, u"Keyboard and mouse locked until “sort the photos” is done."_s);
+    REQUIRE(QTest::qWaitFor([bar, &f] { return bar->isVisibleTo(f.chat); }, 5000));
+    CHECK(f.chat->findChild<QLabel *>(u"lockText"_s)->text().contains(u"sort the photos"_s));
+
+    f.server.onApprovalAsked(7, u"CODE-02"_s, u"run_command"_s, u"Run this command? rm -r ~/Downloads/duplicates"_s);
+    REQUIRE(QTest::qWaitFor([&f] { return f.chat->findChild<QPushButton *>(u"deny"_s) != nullptr; }, 5000));
+    snapshot(f.window, u"phone-hardcore"_s);
+
+    QTest::mouseClick(f.chat->findChild<QPushButton *>(u"deny"_s), Qt::LeftButton);
+    CHECK(QTest::qWaitFor([&f] { return f.host.answers == QStringList{u"7:no"_s}; }, 5000));
+    f.server.onApprovalSettled(7, false);
+    CHECK(QTest::qWaitFor([&f] { return f.chat->findChild<QPushButton *>(u"deny"_s) == nullptr; }, 5000));
+
+    QTest::mouseClick(unlock, Qt::LeftButton);
+    CHECK(QTest::qWaitFor([&f] { return f.host.unlocks == 1; }, 5000));
+    f.server.onLockChanged(false, {});
+    CHECK(QTest::qWaitFor([bar, &f] { return !bar->isVisibleTo(f.chat); }, 5000));
+}
+
+TEST_CASE("On a phone 360 pixels wide every control stays on the screen") {
+    if (!haveOpenssl()) SKIP("openssl is needed to make the certificate");
+    Fixture f;
+    REQUIRE(f.wired());
+    REQUIRE(f.start());
+    // The OnePlus Nord N100: 720 × 1600 at density 320, so 360 × 800 for the layout.
+    f.window.resize(360, 800);
+    f.window.show();
+    f.window.start();
+    f.address->setText(u"127.0.0.1:%1"_s.arg(f.port + 1));
+    f.pairing.startPairing();
+    f.code->setText(f.pairing.code());
+    f.name->setText(u"Nexa app on BE2012"_s);
+    f.clickPair();
+    REQUIRE(QTest::qWaitFor([&f] { return f.onChat(); }, 10'000));
+    QTest::qWait(100);
+
+    CHECK(f.chat->minimumSizeHint().width() <= 360);
+    CHECK(f.window.width() == 360);
+    const auto onScreen = [&f](QWidget *widget) {
+        const QRect box(widget->mapTo(&f.window, QPoint(0, 0)), widget->size());
+        INFO(widget->objectName().toStdString() << " at " << box.x() << "," << box.y() << " " << box.width() << "x"
+                                                << box.height());
+        return QRect(0, 0, f.window.width(), f.window.height()).contains(box);
+    };
+    CHECK(onScreen(f.send));
+    CHECK(onScreen(f.input));
+    CHECK(onScreen(f.status));
+    CHECK(onScreen(f.chat->findChild<QWidget *>(u"moreButton"_s)));
+    snapshot(f.window, u"phone-360"_s);
+
+    // Locked by hardcore mode, with a question: the bar and the card fit too.
+    f.server.onLockChanged(true, u"Keyboard and mouse locked until “sort the photos in Downloads by year” is done."_s);
+    f.server.onApprovalAsked(7, u"CODE-02"_s, u"run_command"_s, u"Run this command? rm -r ~/Downloads/duplicates"_s);
+    REQUIRE(QTest::qWaitFor([&f] { return f.chat->findChild<QPushButton *>(u"deny"_s) != nullptr; }, 5000));
+    QTest::qWait(100);
+    CHECK(f.chat->minimumSizeHint().width() <= 360);
+    CHECK(onScreen(f.chat->findChild<QPushButton *>(u"unlockButton"_s)));
+    CHECK(onScreen(f.chat->findChild<QPushButton *>(u"deny"_s)));
+    snapshot(f.window, u"phone-360-locked"_s);
+}
+
+TEST_CASE("The pairing page fits a phone 360 pixels wide") {
+    Fixture f;
+    REQUIRE(f.wired());
+    f.window.resize(360, 800);
+    f.window.show();
+    f.window.start();
+    QTest::qWait(100);
+    CHECK(f.pair->minimumSizeHint().width() <= 360);
+    CHECK(f.window.width() == 360);
+    const QRect button(f.pairButton->mapTo(&f.window, QPoint(0, 0)), f.pairButton->size());
+    CHECK(QRect(0, 0, 360, 800).contains(button));
+    snapshot(f.window, u"phone-360-pair"_s);
+}
+
+TEST_CASE("With the keyboard up, the page is short and the core moves beside its title instead of over it") {
+    if (!haveOpenssl()) SKIP("openssl is needed to make the certificate");
+    Fixture f;
+    REQUIRE(f.wired());
+    REQUIRE(f.start());
+    f.window.resize(360, 800);
+    f.window.show();
+    f.window.start();
+    f.address->setText(u"127.0.0.1:%1"_s.arg(f.port + 1));
+    f.pairing.startPairing();
+    f.code->setText(f.pairing.code());
+    f.clickPair();
+    REQUIRE(QTest::qWaitFor([&f] { return f.onChat(); }, 10'000));
+    // The OnePlus Nord N100 with its keyboard up: about 360 × 450 left for the app. Android fixes the window's size
+    // (an offscreen window would grow back to its layout's minimum instead), so the test does too.
+    f.window.setFixedSize(360, 450);
+    // Laid out again once the resize has gone through (the presence turns into a row on the next turn of the loop).
+    const auto sendInside = [&f] {
+        return QRect(0, 0, 360, 450).contains(QRect(f.send->mapTo(&f.window, QPoint(0, 0)), f.send->size()));
+    };
+    const bool settled = QTest::qWaitFor([&f, &sendInside] { return f.window.height() == 450 && sendInside(); }, 5000);
+    INFO("window " << f.window.width() << "x" << f.window.height() << ", smallest " << f.window.minimumSizeHint().width()
+                   << "x" << f.window.minimumSizeHint().height() << ", chat smallest " << f.chat->minimumSizeHint().height()
+                   << ", messages " << f.messages->count());
+    REQUIRE(settled);
+    auto *core = f.chat->findChild<QWidget *>(u"core"_s);
+    auto *title = f.chat->findChild<QLabel *>(u"stateTitle"_s);
+    REQUIRE(core);
+    REQUIRE(title);
+    const QRect coreBox(core->mapTo(f.chat, QPoint(0, 0)), core->size());
+    const QRect titleBox(title->mapTo(f.chat, QPoint(0, 0)), title->size());
+    CHECK_FALSE(coreBox.intersects(titleBox));
+    CHECK(core->height() <= 80);
+    CHECK(f.chat->minimumSizeHint().height() <= 450);
+    CHECK(sendInside());
+    snapshot(f.window, u"phone-360-keyboard"_s);
+    // The keyboard goes: the large presence comes back while there is no conversation.
+    f.window.setFixedSize(360, 800);
+    CHECK(QTest::qWaitFor([core] { return core->height() >= 150; }, 5000));
+}
+
+TEST_CASE("Connected over adb, the phone app keeps every way to the PC and its certificate, and says the way it uses") {
+    if (!haveOpenssl()) SKIP("openssl is needed to make the certificate");
+    Fixture f;
+    REQUIRE(f.wired());
+    REQUIRE(f.start());
+    f.server.setRoutes({{RemoteRoute::Kind::Tailscale, u"https://100.101.102.103:%1"_s.arg(f.port)},
+                        {RemoteRoute::Kind::Cloudflare, u"https://nexa.nexacodesolutions.online"_s}});
+    f.window.show();
+    f.window.start();
+    f.address->setText(u"127.0.0.1:%1"_s.arg(f.port + 1));      // over adb: plain, on the phone's own loopback
+    f.pairing.startPairing();
+    f.code->setText(f.pairing.code());
+    f.clickPair();
+    REQUIRE(QTest::qWaitFor([&f] { return f.onChat(); }, 10'000));
+    REQUIRE(QTest::qWaitFor([&f] { return f.settings.routes().size() == 2; }, 5000));
+    const QList<RemoteRoute> kept = f.settings.routes();
+    CHECK(std::any_of(kept.cbegin(), kept.cend(), [](const RemoteRoute &r) { return r.kind == RemoteRoute::Kind::Tailscale; }));
+    CHECK(std::any_of(kept.cbegin(), kept.cend(), [](const RemoteRoute &r) { return r.kind == RemoteRoute::Kind::Cloudflare; }));
+    CHECK(f.settings.fingerprint() == f.server.fingerprint());     // taken over adb, for Tailscale's HTTPS
+    CHECK(static_cast<ElidedLabel *>(f.status)->fullText() == u"Your PC · connected"_s);
+
+    // Away, through Tailscale: the pill says so.
+    emit f.client.connectedVia(u"Tailscale"_s);
+    CHECK(static_cast<ElidedLabel *>(f.status)->fullText() == u"Your PC · connected · via Tailscale"_s);
+}
+
+TEST_CASE("PhoneWindow syncs PC theme/design tokens and uploads file attachments") {
+    if (!haveOpenssl()) SKIP("openssl is needed to make the certificate");
+    Fixture f;
+    f.host.uploadDir = f.directory.filePath(u"phone-uploads"_s);
+    REQUIRE(f.wired());
+    REQUIRE(f.start());
+
+    remote::ThemeStyle theme;
+    theme.themeId = u"ember"_s;
+    theme.designId = u"cards"_s;
+    theme.ground = u"#120e0c"_s;
+    theme.panel = u"#1d1612"_s;
+    theme.line = u"#362822"_s;
+    theme.text = u"#f5e9e2"_s;
+    theme.idle = u"#ff7b54"_s;
+    theme.onAccent = u"#120e0c"_s;
+    theme.bubbleStyle = u"cards"_s;
+    theme.fontFace = u"mono"_s;
+    theme.radius = 8;
+    f.server.setTheme(theme);
+
+    f.window.show();
+    f.window.start();
+    f.address->setText(u"127.0.0.1:%1"_s.arg(f.port + 1));
+    f.pairing.startPairing();
+    f.code->setText(f.pairing.code());
+    f.clickPair();
+    REQUIRE(QTest::qWaitFor([&f] { return f.onChat(); }, 10'000));
+
+    // Welcome theme synced onto ChatPage stylesheet + delegate.
+    REQUIRE(QTest::qWaitFor([&f] { return f.chat->styleSheet().contains(u"#120e0c"_s); }, 5'000));
+
+    // Attach a sample file and submit.
+    const QString samplePath = f.directory.filePath(u"report.txt"_s);
+    QFile sample(samplePath);
+    REQUIRE(sample.open(QIODevice::WriteOnly));
+    sample.write("phone attached bytes");
+    sample.close();
+
+    f.chat->addPendingFiles({samplePath});
+    CHECK(f.chat->pendingFiles().size() == 1);
+    f.input->setText(u"read my report"_s);
+    QTest::mouseClick(f.send, Qt::LeftButton);
+    REQUIRE(QTest::qWaitFor([&f] { return f.host.uploadedPaths.size() == 1; }, 5'000));
+    CHECK(QFileInfo(f.host.uploadedPaths.first()).fileName() == u"report.txt"_s);
+    CHECK(f.host.submitted.last() == u"phone: read my report"_s);
+
+    f.server.onUserMessageFrom(u"read my report"_s, u"phone"_s, u"report.txt (20 B)"_s);
+    REQUIRE(QTest::qWaitFor([&f] { return !f.shown().isEmpty(); }, 5'000));
+    CHECK(f.shown().last().contains(u"report.txt (20 B)"_s));
 }

@@ -5,7 +5,8 @@
 #include <QFileInfo>
 #include <QJsonArray>
 #include <QJsonDocument>
-#include <QStandardPaths>
+#include <QJsonValue>
+#include "core/config/Portable.h"
 
 using namespace Qt::StringLiterals;
 
@@ -41,7 +42,7 @@ QJsonValue clipValue(const QJsonValue &value) {
 AuditLog::AuditLog(QString path) : path_(std::move(path)) {}
 
 QString AuditLog::defaultPath() {
-    return QStandardPaths::writableLocation(QStandardPaths::GenericDataLocation) + u"/nexa/audit.jsonl"_s;
+    return portable::dataDir() + u"/audit.jsonl"_s;
 }
 
 QJsonObject AuditLog::toJson(const Entry &entry) {
@@ -56,6 +57,7 @@ QJsonObject AuditLog::toJson(const Entry &entry) {
     };
     if (entry.destructive) json.insert(u"destructive"_s, true);
     if (entry.confirmed) json.insert(u"confirmed"_s, true);
+    if (entry.task != 0) json.insert(u"task"_s, qint64(entry.task));
     return json;
 }
 

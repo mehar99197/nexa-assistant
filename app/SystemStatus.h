@@ -7,8 +7,11 @@
 
 namespace nexa {
 
+class AccountManager;
 class AdbDiscovery;
 class AndroidDevice;
+class AssetDownloader;
+class AtspiBus;
 class BrowserService;
 class GlobalShortcuts;
 class HelperClient;
@@ -16,7 +19,12 @@ class McpConnectors;
 class MemoryStore;
 class PairingManager;
 class PhoneLink;
+class RemoteAccess;
 class RemoteServer;
+class SherpaRuntime;
+class SpeakerGate;
+class UpdateChecker;
+class VoicePipeline;
 class SkillCatalog;
 
 // What the GUI needs to show about the parts of Nexa that live outside it: the root helper,
@@ -30,6 +38,7 @@ struct SystemStatus {
     AndroidDevice *phone{nullptr};
     AdbDiscovery *discovery{nullptr};
     RemoteServer *remote{nullptr};
+    RemoteAccess *remoteAccess{nullptr};    // away from home: Tailscale, Cloudflare, ngrok
     PairingManager *pairing{nullptr};
     PhoneLink *phoneLink{nullptr};          // pairs Nexa Phone over adb (Settings → Android)
     McpConnectors *mcp{nullptr};            // the MCP servers' state (Settings → Connectors)
@@ -37,6 +46,19 @@ struct SystemStatus {
     BrowserService *browser{nullptr};       // Playwright: installed? which browser? (status bar, Settings → Browser)
     MemoryStore *memory{nullptr};           // Settings → Memory
     SkillCatalog *skills{nullptr};          // Settings → Skills
+    AtspiBus *a11y{nullptr};                // the accessibility bus: the screen as text (Settings → General)
+    AssetDownloader *assets{nullptr};       // the speech models' downloader (Settings → Voice, the status bar)
+    SherpaRuntime *sherpa{nullptr};         // instant spotting installed? (Settings → Voice)
+    VoicePipeline *voice{nullptr};          // records the owner's voice for enrolment
+    SpeakerGate *speakerGate{nullptr};      // and turns it into their profile
+    std::function<QString()> microphoneSummary;     // "fine", or what is wrong with its sound
+    std::function<void()> lowerMicrophone;          // Settings → Voice → Lower it
+    // Settings → Providers → sign-in: a chat turn is in flight (opencode's event stream and agy's app-data folder
+    // must not be disturbed), and a sign-in or sign-out succeeded (the providers are built again).
+    std::function<bool()> replyRunning;
+    std::function<void()> providersChanged;
+    AccountManager *account{nullptr};
+    UpdateChecker *updater{nullptr};
 };
 
 } // namespace nexa

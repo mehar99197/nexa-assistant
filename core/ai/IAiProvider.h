@@ -8,12 +8,14 @@
 
 #include <functional>
 #include <memory>
+#include <optional>
 
 namespace nexa {
 
 class ChatStream;
 
-// Strategy interface, implemented once per API family (OpenAI-compatible, Anthropic, Gemini).
+// Strategy interface, implemented once per API family (OpenAI-compatible, Anthropic, Gemini) and per
+// program Nexa drives (agy, opencode).
 class IAiProvider : public QObject {
     Q_OBJECT
 public:
@@ -36,6 +38,16 @@ public:
     // The stream is released with deleteLater(), so it is safe to drop the last reference from
     // inside one of its own signals.
     virtual std::shared_ptr<ChatStream> chat(const ChatRequest &request) = 0;
+    // Start whatever makes the first answer slow (a program, a server); the default has nothing to start.
+    virtual void warmUp() {}
+    // Whether `model` takes images, when the provider knows (agy never does; opencode says per model);
+    // empty: not known — the request goes, and a refusal is handled as for any model.
+    virtual std::optional<bool> takesImages(const QString &model) const {
+        Q_UNUSED(model);
+        return std::nullopt;
+    }
+    // The models known to take images, of those listModels() gave: the toolbar marks them.
+    virtual QStringList imageModels() const { return {}; }
 };
 
 } // namespace nexa

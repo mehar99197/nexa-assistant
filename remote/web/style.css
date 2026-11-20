@@ -19,7 +19,10 @@
   --nx-fast: #E6FFFB;
   --nx-error: #FF7A66;
   --on-accent: #06201C;
+  --radius: 12px;
+  --ui-font: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
   --mono: ui-monospace, "IBM Plex Mono", "JetBrains Mono", Menlo, Consolas, monospace;
+  --serif: Georgia, "Noto Serif", "Times New Roman", serif;
 }
 
 @media (prefers-color-scheme: light) {
@@ -49,8 +52,11 @@ html, body {
   height: 100%;
   background: var(--ground);
   color: var(--text);
-  font: 16px/1.45 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  font: 16px/1.45 var(--ui-font);
 }
+body.font-mono { --ui-font: var(--mono); }
+body.font-serif { --ui-font: var(--serif); }
+body.font-sans { --ui-font: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
 
 body {
   display: flex;
@@ -160,10 +166,34 @@ button:active { filter: brightness(0.9); }
 #messages li {
   max-width: 88%;
   padding: 9px 13px;
-  border-radius: 14px;
+  border-radius: var(--radius);
   white-space: pre-wrap;
   overflow-wrap: anywhere;
 }
+#messages li .attach-line {
+  display: block;
+  margin-top: 6px;
+  font-size: 12px;
+  font-family: var(--mono);
+  color: var(--muted);
+}
+body.design-lines #messages li.user {
+  background: transparent;
+  border: none;
+  border-right: 3px solid var(--nx-idle);
+  border-radius: 0;
+  padding-right: 10px;
+}
+body.design-cards #messages li.user,
+body.design-cards #messages li.nexa {
+  max-width: 100%;
+  align-self: stretch;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: 11px 14px;
+}
+body.design-cards #messages li.user.from-pc { background: var(--panel2); }
 #messages li.meta {
   padding: 8px 2px 0;
   font-family: var(--mono);
@@ -190,12 +220,68 @@ button:active { filter: brightness(0.9); }
 #messages li.step.failed::before { content: "✗ "; color: var(--nx-error); }
 #messages li.error { align-self: stretch; max-width: none; background: none; color: var(--nx-error); font-size: 14px; }
 
+/* ---- hardcore mode: the PC is locked; the questions tasks wait on */
+
+#lock-bar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin: 8px 16px 0;
+  padding: 10px 12px;
+  border: 1px solid var(--nx-error);
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--nx-error) 14%, var(--panel));
+}
+#lock-bar[hidden] { display: none; }
+#lock-bar p { flex: 1; margin: 0; font-size: 14px; font-weight: 600; }
+button.danger { background: var(--nx-error); color: var(--ground); border-color: transparent; font-weight: 700; }
+
+#approvals { list-style: none; margin: 0; padding: 0 16px; display: flex; flex-direction: column; gap: 8px; }
+#approvals:empty { display: none; }
+#approvals li.approval {
+  margin-top: 8px;
+  padding: 10px 12px;
+  border: 1px solid var(--nx-act);
+  border-radius: 12px;
+  background: var(--panel2);
+}
+#approvals .approval-title { margin: 0 0 4px; color: var(--nx-act); font-family: var(--mono); font-size: 12px; font-weight: 700; }
+#approvals li.approval p { margin: 0 0 8px; }
+.approval-buttons { display: flex; gap: 8px; }
+.approval-buttons button { flex: 1; }
+
+#file-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding: 6px 16px 0;
+}
+.file-chip {
+  min-width: 0;
+  min-height: 30px;
+  padding: 4px 10px;
+  border-radius: 999px;
+  background: var(--panel2);
+  border: 1px solid var(--line);
+  font-size: 12px;
+  font-weight: 500;
+}
+
 #ask {
   display: flex;
   gap: 10px;
   padding: 10px 16px 6px;
 }
-#text { flex: 1; resize: none; max-height: 30vh; border-radius: 12px; }
+#attach {
+  width: 48px;
+  min-width: 48px;
+  padding: 0;
+  display: grid;
+  place-items: center;
+  border-radius: var(--radius);
+}
+#attach svg { width: 20px; height: 20px; }
+#text { flex: 1; resize: none; max-height: 30vh; border-radius: var(--radius); }
 #send {
   width: 48px;
   min-width: 48px;

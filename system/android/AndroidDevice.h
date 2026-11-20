@@ -4,6 +4,7 @@
 #include "system/android/AdbClient.h"
 #include "system/android/AdbParsers.h"
 #include "system/android/PhoneLookup.h"
+#include "system/android/UiHierarchy.h"
 #include "system/screen/ScreenCapture.h"
 
 #include <QElapsedTimer>
@@ -13,6 +14,7 @@
 #include <QThreadPool>
 
 #include <functional>
+#include <optional>
 
 namespace nexa {
 
@@ -61,6 +63,11 @@ public:
     void openApp(const QString &name, Done done);
     void launchableApps(std::function<void(Result<QStringList>)> done);
     void screenshot(std::function<void(Result<Shot>)> done);
+    // The screen as text (uiautomator dump → UiHierarchy): the outline, whose refs stay the current ones for
+    // android_tap and android_type until the next.
+    void uiHierarchy(const QString &filter, std::function<void(Result<uihierarchy::PhoneOutline>)> done);
+    std::optional<QRect> uiBounds(const QString &ref) const;     // of a ref from the last outline
+    QString uiName(const QString &ref) const;
     QSize lastScreenSize() const { return lastScreenSize_; }    // real pixels; invalid before any
     double lastScale() const { return lastScale_; }
     void screenSize(std::function<void(Result<QSize>)> done);
@@ -106,6 +113,7 @@ private:
     QList<phonelookup::Contact> contacts_;
     QElapsedTimer contactsAge_;
     QSize screen_;
+    uihierarchy::PhoneOutline lastUi_;
     QSize lastScreenSize_;
     double lastScale_{1.0};
     int reversePort_{7778};

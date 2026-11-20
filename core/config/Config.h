@@ -2,6 +2,7 @@
 
 #include <QJsonObject>
 #include <QList>
+#include <QMap>
 #include <QString>
 #include <QStringList>
 
@@ -11,13 +12,18 @@ namespace nexa {
 inline constexpr QLatin1StringView kKindOpenAiCompatible{"openai-compatible"};
 inline constexpr QLatin1StringView kKindAnthropic{"anthropic"};
 inline constexpr QLatin1StringView kKindGemini{"gemini"};
+// Programs Nexa runs rather than APIs it posts to: they answer with their own sign-in and quota.
+inline constexpr QLatin1StringView kKindAgy{"agy"};
+inline constexpr QLatin1StringView kKindOpenCode{"opencode"};
+inline constexpr QLatin1StringView kKindCodex{"codex"};
+inline constexpr QLatin1StringView kKindClaudeCode{"claude-code"};
 
 // One configured AI endpoint; `kind` selects the IAiProvider implementation.
 struct ProviderConfig {
-    QString id;                 // stable key, e.g. "omniroute"
+    QString id;                 // stable key, e.g. "opencode"
     QString kind;
     QString name;               // shown in the UI
-    QString baseUrl;
+    QString baseUrl;            // agy: the program (empty: found); opencode: a server to use (empty: Nexa's own)
     QString apiKey;
     QString defaultModel;       // the model chosen in the toolbar
     bool requiresKey{true};
@@ -25,6 +31,8 @@ struct ProviderConfig {
     QString ttsModel;           // speech output (empty: no cloud voice)
     QString ttsVoice;           // voice name; a language code for gtts/*
     bool textTools{false};      // the model cannot call tools: describe them in the prompt instead
+    bool fallback{true};        // may answer when the providers before it in the list cannot
+    QString modelsUrl;          // where the model list is, when not {baseUrl}/models
 
     QJsonObject toJson() const;
     static ProviderConfig fromJson(const QJsonObject &json);
@@ -45,8 +53,22 @@ struct VoiceConfig {
     QString speechdVoice;                               // speech-dispatcher voice (empty: its default)
     double ttsRate{0.0};                                // -1 (slow) … 1 (fast)
     QString speakReplies{QStringLiteral("voice")};      // voice (replies to spoken requests) | always | never
-    bool wakeWord{false};                               // listen for "Hey Nexa" (local recognition only)
-    bool bargeIn{false};                                // talking interrupts the speech (best with headphones)
+    bool wakeWord{false};                               // listen for the wake name (local recognition only)
+    // What interrupts Nexa while it speaks: name (saying its name — the owner's voice, not the speakers'), speech (any
+    // voice: with headphones only, or Nexa hears itself) or off. Until v5 a switch: on and off both became "name".
+    QString bargeIn{QStringLiteral("name")};
+    QString wakeName{QStringLiteral("Nexa")};           // what the owner calls Nexa ("Hey Jarvis")
+    QString wakeSensitivity{QStringLiteral("normal")};  // low | normal | high: how easily the name wakes Nexa
+    QString endPause{QStringLiteral("normal")};         // short (0.9 s) | normal (1.4 s) | long (2 s) of quiet ends a request
+    bool followUps{true};                               // listen a few seconds after a spoken reply, no name needed
+    bool noiseReduction{true};                          // clean the sound for the speech detector and the spotter
+    QString sttProvider;                                // the provider that recognises requests; empty: automatic
+    QString ttsProvider;                                // the provider whose voice speaks; empty: automatic
+    bool ownVoice{false};                               // speak in the owner's voice, from the sample they recorded
+    QString listenTo{QStringLiteral("owner")};          // owner (once the voice is enrolled) | anyone
+    QString ownerStrictness{QStringLiteral("normal")};  // low | normal | high: how sure "it is the owner" must be
+    bool conversation{false};                           // keep listening to the owner after each reply, no name needed
+    QString announceTasks{QStringLiteral("voice")};     // off | voice (tasks asked by voice) | all: said aloud when they end
 
     QJsonObject toJson() const;
     static VoiceConfig fromJson(const QJsonObject &json);
@@ -70,6 +92,14 @@ struct AndroidConfig {
 struct RemoteConfig {
     bool enabled{false};
     int port{7777};                 // HTTPS on the network; plain HTTP on loopback at port + 1
+    bool announceMessages{true};    // the PC says when a request comes from the phone ("Message received…")
+    // Away from home (Settings → Remote): the ways a phone reaches this PC from anywhere.
+    bool tailscale{true};                           // offer the Tailscale address when this PC is on the tailnet
+    QString cloudflare{QStringLiteral("off")};      // off | quick (a trycloudflare.com address) | named (your domain)
+    QString cloudflareTunnel{QStringLiteral("nexa")};   // the named tunnel (cloudflared tunnel create <name>)
+    QString cloudflareHostname;                     // "nexa.nexacodesolutions.online"
+    bool ngrok{false};
+    QString ngrokDomain;                            // the account's fixed domain, or empty for ngrok's own choice
 
     QJsonObject toJson() const;
     static RemoteConfig fromJson(const QJsonObject &json);
@@ -77,10 +107,11 @@ struct RemoteConfig {
     bool operator==(const RemoteConfig &) const = default;
 };
 
-// The agent loop. Driving a phone by screenshot and tap takes a dozen rounds for one request, so
-// the cap is generous; it only stops a model that is going in circles.
+// The agent loop. Driving a phone by screenshot and tap takes a dozen rounds for one request, and a
+// longer task many dozens, so the cap is generous; it only stops a model that is going in circles.
 struct AgentConfig {
-    int maxToolRounds{20};
+    static constexpr int kMaxToolRounds = 1000;
+    int maxToolRounds{200};
 
     QJsonObject toJson() const;
     static AgentConfig fromJson(const QJsonObject &json);
@@ -116,11 +147,36 @@ struct McpConfig {
     bool operator==(const McpConfig &) const = default;
 };
 
-// Settings → General → Appearance, and the toolbar's theme toggle. "system" follows the desktop's
-// own light or dark setting.
+// Which provider and model a task, or a role's agent, runs on. Auto (no provider): the first choice and its chain.
+struct ModelChoice {
+    QString provider;       // a provider's id
+    QString model;          // empty: that provider's own default model
+    bool isAuto() const { return provider.isEmpty(); }
+
+    QJsonObject toJson() const;
+    static ModelChoice fromJson(const QJsonObject &json);
+
+    bool operator==(const ModelChoice &) const = default;
+};
+
+// Settings → Mission: how many tasks run at once (the rest wait in the queue), and the model of each kind of agent
+// (keys: AgentRole's keys — web, code, screen, phone, general; a role left out is Auto).
+struct MissionConfig {
+    static constexpr int kMaxSlots = 8;
+    int maxConcurrent{3};
+    QMap<QString, ModelChoice> roleModels;
+
+    QJsonObject toJson() const;
+    static MissionConfig fromJson(const QJsonObject &json);
+
+    bool operator==(const MissionConfig &) const = default;
+};
+
+// Settings → General → Appearance, and the toolbar's palette button. Every theme is dark; "system",
+// "dark" and "light" (from when there was a light look) mean Nexa's own.
 struct UiConfig {
-    QString theme{QStringLiteral("system")};    // system | dark | light | a palette's id
-    QString design{QStringLiteral("studio")};   // one of ui/NexaDesigns: the shape of everything else
+    QString theme{QStringLiteral("system")};    // a theme pack's id, or system | dark | light = Nexa's own
+    QString design{QStringLiteral("mission")};  // one of ui/NexaDesigns: the shape of everything else
 
     QJsonObject toJson() const;
     static UiConfig fromJson(const QJsonObject &json);
@@ -165,11 +221,29 @@ struct SkillsConfig {
     bool operator==(const SkillsConfig &) const = default;
 };
 
+// Settings → Account / Local API (M15 Part B): loopback-only OpenAI-compatible HTTP server
+// (127.0.0.1, off by default, Bearer-token protected, no PC tool execution).
+struct LocalApiConfig {
+    static constexpr quint16 kDefaultPort = 18765;
+
+    bool enabled{false};
+    quint16 port{kDefaultPort};
+    QString bearerToken;
+
+    QJsonObject toJson() const;
+    static LocalApiConfig fromJson(const QJsonObject &json);
+
+    bool operator==(const LocalApiConfig &) const = default;
+};
+
 // Typed view of ~/.config/nexa/config.json. Sections this build does not know stay in `extra` and
 // are written back unchanged, so no build drops settings it does not understand.
 struct Config {
     // 2: providers carry speech models (sttModel, ttsModel, ttsVoice).
-    static constexpr int kVersion = 2;
+    // 3: providers carry fallback and modelsUrl; an empty list gets the installed agy and opencode once.
+    // 4: the agent's old default of 20 tool rounds becomes the new default.
+    // 5: Mission Control — the mission section; the old default design (studio) becomes the new one (mission).
+    static constexpr int kVersion = 5;
 
     int version{kVersion};
     QList<ProviderConfig> providers;
@@ -185,6 +259,8 @@ struct Config {
     BrowserConfig browser;
     MemoryConfig memory;
     SkillsConfig skills;
+    MissionConfig mission;
+    LocalApiConfig localApi;
     QJsonObject extra;
 
     QJsonObject toJson() const;

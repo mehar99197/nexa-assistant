@@ -4,10 +4,12 @@ pkg_check_modules(QRENCODE REQUIRED IMPORTED_TARGET libqrencode)
 
 add_library(nexa_remote STATIC
     IRemoteHost.h
+    LocalApiServer.h LocalApiServer.cc
     PairingManager.h PairingManager.cc
     QrCode.h QrCode.cc
     RemoteClient.h RemoteClient.cc
     RemoteProtocol.h RemoteProtocol.cc
+    RemoteRoutes.h RemoteRoutes.cc
     RemoteServer.h RemoteServer.cc
     RemoteSession.h RemoteSession.cc
     TlsIdentity.h TlsIdentity.cc

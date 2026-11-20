@@ -2,8 +2,15 @@
 // ends a request, speaking replies sentence by sentence, barge-in, the wake word and failures.
 
 #include "voice/capture/IAudioInput.h"
+#include "voice/capture/EnergyVad.h"
+#include "voice/capture/MicrophoneCheck.h"
+#include "voice/listen/EnergyVoiceDetector.h"
+#include "voice/listen/IAudioFilter.h"
+#include "voice/listen/ISpeakerGate.h"
+#include "voice/listen/ListeningFront.h"
 #include "voice/pipeline/VoicePipeline.h"
 #include "voice/stt/ISpeechRecognizer.h"
+#include "voice/wake/IWakeSpotter.h"
 #include "voice/tts/ITextToSpeech.h"
 
 #include "QtStringMakers.h"
@@ -45,23 +52,47 @@ public:
     explicit FakeRecognizer(bool local) : local_(local) {}
     QString name() const override { return local_ ? u"local"_s : u"cloud"_s; }
     bool isLocal() const override { return local_; }
-    void transcribe(const QByteArray &pcm16k, const QString &, Done done) override {
+    void transcribe(const QByteArray &pcm16k, const QString &prompt, Done done) override {
         audio = pcm16k;
+        lastPrompt = prompt;
         ++requests;
         done_ = std::move(done);
     }
+    void transcribeWords(const QByteArray &pcm16k, const QString &prompt, DoneWords done) override {
+        audio = pcm16k;
+        lastPrompt = prompt;
+        ++requests;
+        doneWords_ = std::move(done);
+    }
     void cancel() override {
         if (done_) std::exchange(done_, nullptr)(Error{ErrorCode::Cancelled, u"Cancelled"_s});
+        if (doneWords_) std::exchange(doneWords_, nullptr)(Error{ErrorCode::Cancelled, u"Cancelled"_s});
     }
-    bool pending() const { return bool(done_); }
-    void answer(Result<QString> text) { std::exchange(done_, nullptr)(std::move(text)); }
+    bool pending() const { return bool(done_) || bool(doneWords_); }
+    void answer(Result<QString> text) {
+        if (doneWords_) {
+            if (!text) {
+                std::exchange(doneWords_, nullptr)(text.error());
+            } else {
+                std::exchange(doneWords_, nullptr)(TimedTranscript{.text = text.value(), .words = {}});
+            }
+            return;
+        }
+        std::exchange(done_, nullptr)(std::move(text));
+    }
+    // With the time of each word, as whisper.cpp gives them.
+    void answerWords(const QString &text, const QList<TimedWord> &words) {
+        std::exchange(doneWords_, nullptr)(TimedTranscript{.text = text, .words = words});
+    }
 
     QByteArray audio;
+    QString lastPrompt;
     int requests{0};
 
 private:
     bool local_;
     Done done_;
+    DoneWords doneWords_;
 };
 
 class FakeVoice : public ITextToSpeech {
@@ -146,8 +177,8 @@ TEST_CASE("Releasing the key: a hold ends the request, a tap keeps listening") {
     tapped.pipeline.startListening(true);
     tapped.pipeline.releaseHold();                      // let go at once: a tap
     CHECK(tapped.pipeline.state() == VoiceState::Listening);
-    tapped.microphone.play(testaudio::quiet(400) + testaudio::speech(600) + testaudio::quiet(1200));
-    CHECK(tapped.pipeline.state() == VoiceState::Transcribing);      // the pause ended it
+    tapped.microphone.play(testaudio::quiet(400) + testaudio::speech(600) + testaudio::quiet(1600));
+    CHECK(tapped.pipeline.state() == VoiceState::Transcribing);      // the pause (1.4 s) ended it
     CHECK(tapped.recognizer->requests == 1);
 
     Rig held;
@@ -164,7 +195,7 @@ TEST_CASE("Toggle mode ends the request at the pause; silence ends it unheard") 
     Rig rig;
     QSignalSpy notices(&rig.pipeline, &VoicePipeline::notice);
     rig.pipeline.toggleListening();
-    rig.microphone.play(testaudio::quiet(500) + testaudio::speech(800) + testaudio::quiet(1200));
+    rig.microphone.play(testaudio::quiet(500) + testaudio::speech(800) + testaudio::quiet(1600));
     CHECK(rig.pipeline.state() == VoiceState::Transcribing);
     CHECK(rig.recognizer->requests == 1);
     rig.recognizer->answer(u"[BLANK_AUDIO]"_s);
@@ -179,6 +210,25 @@ TEST_CASE("Toggle mode ends the request at the pause; silence ends it unheard") 
     CHECK(rig.recognizer->requests == 1);
     CHECK(rig.pipeline.state() == VoiceState::Idle);
     CHECK(notices.size() == 2);
+}
+
+TEST_CASE("A pause shorter than the setting does not end the request") {
+    const QByteArray said = testaudio::quiet(300) + testaudio::speech(600) + testaudio::quiet(1200)
+                          + testaudio::speech(600) + testaudio::quiet(1600);
+    Rig normal;
+    normal.pipeline.setSettings({.endPauseMs = 1400});
+    normal.pipeline.startListening(false);      // a tap: hands-free until the pause
+    normal.microphone.play(said);
+    CHECK(normal.pipeline.state() == VoiceState::Transcribing);
+    CHECK(normal.recognizer->requests == 1);
+    CHECK(normal.recognizer->audio.size() / 32 >= 2400);    // both stretches of speech
+
+    Rig quick;
+    quick.pipeline.setSettings({.endPauseMs = 900});
+    quick.pipeline.startListening(false);
+    quick.microphone.play(said);
+    CHECK(quick.recognizer->requests == 1);
+    CHECK(quick.recognizer->audio.size() / 32 < 1400);      // only the first
 }
 
 TEST_CASE("A direct action is confirmed aloud; typed requests stay silent unless asked") {
@@ -227,7 +277,7 @@ TEST_CASE("Pressing the key while Nexa talks cuts the speech and replaces the re
 
 TEST_CASE("Barge-in by voice stops the speech when enabled") {
     Rig rig;
-    rig.pipeline.setSettings({.bargeIn = true});
+    rig.pipeline.setSettings({.bargeIn = VoicePipeline::BargeIn::Speech});
     rig.pipeline.speak(u"Here is a long story."_s);
     CHECK(rig.pipeline.state() == VoiceState::Speaking);
     CHECK(rig.microphone.active);       // listening for the user while speaking
@@ -254,7 +304,7 @@ TEST_CASE("Cancel drops the utterance, the transcription and the speech") {
     CHECK_FALSE(rig.microphone.active);
 }
 
-TEST_CASE("Wake word: only utterances that start with it become requests") {
+TEST_CASE("Wake word: only utterances with the name become requests") {
     Rig rig;
     auto wake = std::make_unique<FakeRecognizer>(true);
     FakeRecognizer *local = wake.get();
@@ -274,15 +324,408 @@ TEST_CASE("Wake word: only utterances that start with it become requests") {
     local->answer(u"Hey Nexa, pause the music."_s);
     CHECK(rig.requests == QStringList{u"pause the music."_s});
 
-    // The name alone: the next utterance is the command.
+    // The name alone: the next utterance is the request — said to Nexa, so the request recogniser hears it.
     rig.microphone.play(testaudio::speech(500) + testaudio::quiet(1200));
     local->answer(u"Hey Nexa."_s);
     CHECK(rig.pipeline.state() == VoiceState::Listening);
-    rig.microphone.play(testaudio::speech(900) + testaudio::quiet(1200));
-    local->answer(u"Open the calculator."_s);
+    rig.microphone.play(testaudio::speech(900) + testaudio::quiet(1600));     // a request: the 1.4 s pause
+    REQUIRE(rig.recognizer->pending());
+    rig.recognizer->answer(u"Open the calculator."_s);
     CHECK(rig.requests.last() == u"Open the calculator."_s);
 
     rig.pipeline.setSettings({.wakeWord = false});
+    CHECK_FALSE(rig.microphone.active);
+}
+
+namespace {
+
+// Halves every sample: what the detectors hear is quieter than what was said.
+class HalvingFilter : public IAudioFilter {
+public:
+    QByteArray process(QByteArrayView pcm16k) override {
+        QByteArray out(pcm16k.data(), pcm16k.size());
+        auto *samples = reinterpret_cast<qint16 *>(out.data());
+        for (qsizetype i = 0; i < out.size() / 2; ++i) samples[i] = qint16(samples[i] / 2);
+        heard += out.size() / 2;
+        return out;
+    }
+    void reset() override {}
+    qint64 heard{0};
+};
+
+double levelOf(const QByteArray &pcm) {
+    return EnergyVad::rmsDb(reinterpret_cast<const qint16 *>(pcm.constData()), pcm.size() / 2);
+}
+
+} // namespace
+
+TEST_CASE("The recogniser gets the raw audio while the detectors hear it filtered") {
+    Rig rig;
+    auto filter = std::make_unique<HalvingFilter>();
+    HalvingFilter *halving = filter.get();
+    ListeningFront::Parts parts;
+    parts.detector = std::make_unique<EnergyVoiceDetector>();
+    parts.filter = std::move(filter);
+    rig.pipeline.setListeningFront(std::make_unique<ListeningFront>(std::move(parts), ListeningFront::Threading::Inline));
+    auto wake = std::make_unique<FakeRecognizer>(true);
+    FakeRecognizer *local = wake.get();
+    rig.pipeline.setWakeRecognizer(std::move(wake));
+    rig.pipeline.setSettings({.wakeWord = true});
+
+    rig.microphone.play(testaudio::quiet(800) + testaudio::speech(700) + testaudio::quiet(1200));
+    REQUIRE(local->pending());
+    CHECK(halving->heard > 0);
+    // testaudio::speech is about -15 dBFS; halved it would be about -21.
+    CHECK(levelOf(local->audio) > -18.0);
+}
+
+TEST_CASE("A failing microphone leaves the pipeline idle and the front reset") {
+    Rig rig;
+    auto wake = std::make_unique<FakeRecognizer>(true);
+    FakeRecognizer *local = wake.get();
+    rig.pipeline.setWakeRecognizer(std::move(wake));
+    rig.pipeline.setSettings({.wakeWord = true});
+    QSignalSpy notices(&rig.pipeline, &VoicePipeline::notice);
+
+    rig.microphone.play(testaudio::quiet(800) + testaudio::speech(700));     // an utterance in progress
+    emit rig.microphone.failed(Error{ErrorCode::Io, u"The microphone was unplugged."_s});
+    CHECK(notices.count() == 1);
+    CHECK(rig.pipeline.state() == VoiceState::Idle);
+    rig.microphone.play(testaudio::quiet(1200));
+    CHECK(local->requests == 0);    // the cut-off utterance is not checked for the name
+}
+
+namespace {
+
+// A rig listening for the name, with the offline recogniser the second net uses.
+struct WakeRig : Rig {
+    FakeRecognizer *local{nullptr};
+    WakeRig() {
+        auto wake = std::make_unique<FakeRecognizer>(true);
+        local = wake.get();
+        pipeline.setWakeRecognizer(std::move(wake));
+        pipeline.setSettings({.wakeWord = true});
+    }
+};
+
+const QList<TimedWord> kMidWords{{u"I"_s, 0, 300},        {u"was"_s, 300, 500},    {u"just"_s, 500, 800},
+                                 {u"saying"_s, 800, 1300}, {u"that,"_s, 1300, 2000}, {u"hey"_s, 2000, 2200},
+                                 {u"Nexa,"_s, 2200, 2600}, {u"pause"_s, 2600, 2900}, {u"the"_s, 2900, 3000},
+                                 {u"music."_s, 3000, 3300}};
+const QString kMidText = u"I was just saying that, hey Nexa, pause the music."_s;
+
+} // namespace
+
+TEST_CASE("Second net: the name mid-utterance → the request from the word time") {
+    WakeRig rig;
+    rig.microphone.play(testaudio::quiet(800) + testaudio::speech(3000) + testaudio::quiet(1200));
+    REQUIRE(rig.local->pending());
+    const QByteArray utterance = rig.local->audio;
+    rig.local->answerWords(kMidText, kMidWords);
+    REQUIRE(rig.recognizer->pending());
+    CHECK(rig.recognizer->audio == utterance.mid(1800 * 32));      // from 0.2 s before "hey"
+    CHECK(rig.recognizer->lastPrompt == VoicePipeline::requestPrompt(u"Nexa"_s));
+    CHECK(rig.pipeline.state() == VoiceState::Transcribing);
+    rig.recognizer->answer(u"Hey Nexa, pause the music."_s);
+    CHECK(rig.requests == QStringList{u"pause the music."_s});
+}
+
+TEST_CASE("Second net: a failing request recogniser → the offline text after the name") {
+    WakeRig rig;
+    rig.microphone.play(testaudio::quiet(800) + testaudio::speech(3000) + testaudio::quiet(1200));
+    rig.local->answerWords(kMidText, kMidWords);
+    REQUIRE(rig.recognizer->pending());
+    rig.recognizer->answer(Error{ErrorCode::Network, u"offline"_s});
+    CHECK(rig.requests == QStringList{u"pause the music."_s});
+}
+
+TEST_CASE("An utterance arriving while whisper is busy is checked afterwards, not dropped") {
+    WakeRig rig;
+    rig.microphone.play(testaudio::quiet(800) + testaudio::speech(700) + testaudio::quiet(1200));
+    REQUIRE(rig.local->requests == 1);
+    rig.microphone.play(testaudio::speech(700) + testaudio::quiet(1200));    // waits
+    rig.microphone.play(testaudio::speech(500) + testaudio::quiet(1200));    // newer: replaces the waiting one
+    CHECK(rig.local->requests == 1);
+    rig.local->answer(u"So I said to him, no way."_s);
+    REQUIRE(rig.local->requests == 2);
+    CHECK(rig.local->audio.size() / 32 < 1200);     // the newest one (500 ms of speech), not the 700 ms one
+    rig.local->answer(u"Hey Nexa, open files."_s);
+    CHECK(rig.requests == QStringList{u"open files."_s});
+}
+
+TEST_CASE("The name alone: Nexa listens for the request") {
+    WakeRig rig;
+    rig.microphone.play(testaudio::quiet(800) + testaudio::speech(500) + testaudio::quiet(1200));
+    rig.local->answer(u"Hey Nexa."_s);
+    CHECK(rig.pipeline.state() == VoiceState::Listening);
+    rig.microphone.play(testaudio::speech(900) + testaudio::quiet(1600));
+    REQUIRE(rig.recognizer->pending());
+    CHECK(rig.local->requests == 1);       // the request is not the offline recogniser's
+    rig.recognizer->answer(u"Open the calculator."_s);
+    CHECK(rig.requests == QStringList{u"Open the calculator."_s});
+}
+
+TEST_CASE("Only the name back from the recogniser: Nexa waits for the request") {
+    Rig rig;
+    QSignalSpy notices(&rig.pipeline, &VoicePipeline::notice);
+    rig.pipeline.startListening(true);
+    rig.microphone.play(testaudio::quiet(300) + testaudio::speech(600) + testaudio::quiet(300));
+    rig.pipeline.stopListening();
+    rig.recognizer->answer(u"Hey Nexa."_s);
+    CHECK(rig.pipeline.state() == VoiceState::Listening);
+    CHECK(notices.isEmpty());
+    CHECK(rig.requests.isEmpty());
+    // The microphone opens again for the request; the room is heard before the speech.
+    rig.microphone.play(testaudio::quiet(500) + testaudio::speech(900) + testaudio::quiet(1600));
+    REQUIRE(rig.recognizer->pending());
+    rig.recognizer->answer(u"What time is it?"_s);
+    CHECK(rig.requests == QStringList{u"What time is it?"_s});
+}
+
+TEST_CASE("A request started by the name ends at 15 s when the room never goes quiet") {
+    WakeRig rig;
+    rig.microphone.play(testaudio::quiet(800) + testaudio::speech(500) + testaudio::quiet(1200));
+    rig.local->answer(u"Hey Nexa."_s);
+    // Speech that never pauses for long: 400 ms of words, 100 ms between them, for 16.5 s.
+    QByteArray endless;
+    for (int i = 0; i < 33; ++i) endless += testaudio::speech(400, std::uint32_t(i + 3)) + testaudio::quiet(100);
+    rig.microphone.play(endless);
+    REQUIRE(rig.recognizer->pending());
+    const qint64 ms = rig.recognizer->audio.size() / 32;
+    CHECK(ms >= 14800);
+    CHECK(ms <= 15600);
+}
+
+namespace {
+
+// Hears a phrase that began at `hitAt` (a sample position), once — half a second later, as the real spotter
+// notices the name only after it has been said.
+class ScriptedSpotter : public IWakeSpotter {
+public:
+    ScriptedSpotter(QString label, qint64 hitAt) : label_(std::move(label)), hitAt_(hitAt) {}
+    QList<Hit> feed(QByteArrayView pcm16k) override {
+        seen_ += pcm16k.size() / 2;
+        if (fired_ || seen_ <= hitAt_ + 8000) return {};
+        fired_ = true;
+        return {Hit{.label = label_, .phraseStart = hitAt_, .heardAt = seen_}};
+    }
+    void reset() override {
+        seen_ = 0;
+        fired_ = false;
+    }
+
+private:
+    QString label_;
+    qint64 hitAt_;
+    qint64 seen_{0};
+    bool fired_{false};
+};
+
+std::unique_ptr<ListeningFront> spottingFront(const QString &label, qint64 hitAt,
+                                              ListeningFront::Threading threading = ListeningFront::Threading::Inline) {
+    ListeningFront::Parts parts;
+    parts.detector = std::make_unique<EnergyVoiceDetector>();
+    parts.spotter = std::make_unique<ScriptedSpotter>(label, hitAt);
+    return std::make_unique<ListeningFront>(std::move(parts), threading);
+}
+
+// A rig listening for the name with a spotter that hears it at `hitAt`.
+struct SpotterRig : WakeRig {
+    SpotterRig(const QString &label, qint64 hitAt) { pipeline.setListeningFront(spottingFront(label, hitAt)); }
+};
+
+constexpr qint64 kSecond = 16'000;
+
+// Speech as people talk: words of 400 ms with 100 ms between them (a gapless tone becomes the energy
+// detector's idea of the room after 1.5 s).
+QByteArray talking(int ms) {
+    QByteArray pcm;
+    for (int at = 0; at < ms; at += 500) pcm += testaudio::speech(400, std::uint32_t(at / 500 + 7)) + testaudio::quiet(100);
+    return pcm;
+}
+
+} // namespace
+
+TEST_CASE("A spotter hit mid-speech: Listening at once; the request from 0.3 s before the phrase") {
+    SpotterRig rig(u"HEY_NEXA"_s, 2 * kSecond);
+    rig.microphone.play(testaudio::quiet(1000) + talking(2000));
+    CHECK(rig.pipeline.state() == VoiceState::Listening);      // before the speech has ended
+    rig.microphone.play(talking(1000) + testaudio::quiet(1600));
+    REQUIRE(rig.recognizer->pending());
+    // From 1.7 s to the end of the speech (3.9 s) plus the 200 ms kept after it.
+    CHECK(std::abs(rig.recognizer->audio.size() / 2 - (41 * kSecond / 10 - 17 * kSecond / 10)) <= 320);
+    CHECK(rig.local->requests == 0);       // the sentence with the name is not the second net's
+    rig.recognizer->answer(u"Hey Nexa, open YouTube"_s);
+    CHECK(rig.requests == QStringList{u"open YouTube"_s});
+}
+
+TEST_CASE("A bare-name hit counts only when the name opens the utterance") {
+    SpotterRig inside(u"NEXA"_s, 25 * kSecond / 10);         // 1.5 s into what is being said
+    inside.microphone.play(testaudio::quiet(1000) + testaudio::speech(3000));
+    CHECK(inside.pipeline.state() == VoiceState::Idle);
+
+    SpotterRig opening(u"NEXA"_s, 11 * kSecond / 10);         // as the speech begins
+    opening.microphone.play(testaudio::quiet(1000) + testaudio::speech(1500));
+    CHECK(opening.pipeline.state() == VoiceState::Listening);
+}
+
+TEST_CASE("A hit while speaking stops the speech; Nexa's own name in its speech is ignored") {
+    SpotterRig rig(u"HEY_NEXA"_s, 15 * kSecond / 10);
+    rig.pipeline.onReplyStarted(u"voice"_s);
+    rig.pipeline.onReplyDelta(u"The weather is fine today. It is"_s);
+    REQUIRE(rig.pipeline.state() == VoiceState::Speaking);
+    rig.microphone.play(testaudio::quiet(1000) + testaudio::speech(1200));
+    CHECK(rig.pipeline.state() == VoiceState::Listening);
+    CHECK(rig.voice->stops >= 1);
+    CHECK(rig.interrupts == 0);     // the reply goes on until the words confirm the name
+
+    SpotterRig own(u"HEY_NEXA"_s, 15 * kSecond / 10);
+    own.pipeline.onReplyStarted(u"voice"_s);
+    own.pipeline.onReplyDelta(u"I am Nexa, your assistant. How"_s);
+    REQUIRE(own.pipeline.state() == VoiceState::Speaking);
+    own.microphone.play(testaudio::quiet(1000) + testaudio::speech(1200));
+    CHECK(own.pipeline.state() == VoiceState::Speaking);
+}
+
+TEST_CASE("A hit from a replaced listening front is ignored") {
+    WakeRig rig;
+    rig.pipeline.setListeningFront(spottingFront(u"HEY_NEXA"_s, kSecond / 2, ListeningFront::Threading::Worker));
+    rig.microphone.play(testaudio::quiet(500) + testaudio::speech(1000));
+    // The name is chosen again before the old front's hit is delivered.
+    ListeningFront::Parts parts;
+    parts.detector = std::make_unique<EnergyVoiceDetector>();
+    rig.pipeline.setListeningFront(std::make_unique<ListeningFront>(std::move(parts), ListeningFront::Threading::Inline));
+    QTest::qWait(300);
+    CHECK(rig.pipeline.state() == VoiceState::Idle);
+}
+
+TEST_CASE("Talk while capturing a request after the name: one request, from the key") {
+    SpotterRig rig(u"HEY_NEXA"_s, 15 * kSecond / 10);
+    rig.microphone.play(testaudio::quiet(1000) + testaudio::speech(1200));
+    REQUIRE(rig.pipeline.state() == VoiceState::Listening);
+    rig.pipeline.startListening(true);
+    rig.microphone.play(testaudio::quiet(300) + testaudio::speech(600) + testaudio::quiet(300));
+    rig.pipeline.stopListening();
+    CHECK(rig.recognizer->requests == 1);
+    rig.recognizer->answer(u"open files"_s);
+    rig.microphone.play(testaudio::quiet(1600));
+    CHECK(rig.recognizer->requests == 1);
+    CHECK(rig.requests == QStringList{u"open files"_s});
+}
+
+namespace {
+
+// A spoken request answered aloud — what opens the follow-up window.
+void askAndHear(Rig &rig) {
+    rig.pipeline.startListening(false);
+    rig.microphone.play(testaudio::quiet(400) + testaudio::speech(800) + testaudio::quiet(1600));
+    REQUIRE(rig.recognizer->pending());
+    rig.recognizer->answer(u"What's the weather?"_s);
+    rig.reply({u"It is sunny. Twenty"_s, u" degrees today."_s});
+    rig.voice->finishSpeaking();
+}
+
+} // namespace
+
+TEST_CASE("A follow-up in the window after the spoken reply is a request without the name") {
+    Rig rig;
+    rig.pipeline.setSettings({.followUpMs = 2000});
+    askAndHear(rig);
+    QTest::qWait(250);      // the window opens 150 ms after the speech
+    CHECK(rig.pipeline.state() == VoiceState::Listening);
+    rig.microphone.play(testaudio::quiet(500) + testaudio::speech(800) + testaudio::quiet(1600));
+    REQUIRE(rig.recognizer->pending());
+    rig.recognizer->answer(u"And tomorrow?"_s);
+    CHECK(rig.requests == QStringList{u"What's the weather?"_s, u"And tomorrow?"_s});
+}
+
+TEST_CASE("Silence after the reply ends the window") {
+    Rig rig;
+    rig.pipeline.setSettings({.followUpMs = 300});
+    askAndHear(rig);
+    QTest::qWait(250);
+    CHECK(rig.pipeline.state() == VoiceState::Listening);
+    QTest::qWait(400);
+    CHECK(rig.pipeline.state() == VoiceState::Idle);
+    CHECK_FALSE(rig.microphone.active);
+}
+
+TEST_CASE("No follow-up after a typed request or with the setting off") {
+    Rig typed;
+    typed.pipeline.setSettings({.speak = VoicePipeline::SpeakMode::Always, .followUpMs = 2000});
+    typed.pipeline.onReplyStarted(u"gui"_s);
+    typed.pipeline.onReplyDelta(u"Done it. All"_s);
+    typed.pipeline.onReplyFinished(FinishReason::Stop, false);
+    typed.voice->finishSpeaking();
+    QTest::qWait(250);
+    CHECK(typed.pipeline.state() == VoiceState::Idle);
+
+    Rig off;
+    off.pipeline.setSettings({.followUps = false});
+    askAndHear(off);
+    QTest::qWait(250);
+    CHECK(off.pipeline.state() == VoiceState::Idle);
+}
+
+TEST_CASE("Speech already going on, or much quieter than the request, does not count") {
+    WakeRig rig;
+    rig.pipeline.setSettings({.wakeWord = true, .followUpMs = 1500});
+    rig.pipeline.startListening(false);
+    rig.microphone.play(testaudio::quiet(400) + testaudio::speech(800) + testaudio::quiet(1600));
+    rig.recognizer->answer(u"What's the weather?"_s);
+    rig.reply({u"It is sunny. Twenty"_s, u" degrees today."_s});
+    rig.microphone.play(testaudio::quiet(500) + testaudio::speech(500));       // someone starts talking
+    rig.voice->finishSpeaking();
+    QTest::qWait(250);
+    REQUIRE(rig.pipeline.state() == VoiceState::Listening);
+    rig.microphone.play(testaudio::speech(400) + testaudio::quiet(800));       // …and stops: it began before
+    const QByteArray softly = testaudio::make(700, 0.08, 0.006);              // 10 dB below the request
+    rig.microphone.play(testaudio::quiet(300) + softly + testaudio::quiet(1600));
+    CHECK(rig.recognizer->requests == 1);
+    QTest::qWait(1500);
+    CHECK(rig.pipeline.state() == VoiceState::Idle);
+    CHECK(rig.recognizer->requests == 1);
+}
+
+TEST_CASE("Talk in the follow-up window: one request, from the key") {
+    Rig rig;
+    rig.pipeline.setSettings({.followUpMs = 2000});
+    askAndHear(rig);
+    QTest::qWait(250);
+    REQUIRE(rig.pipeline.state() == VoiceState::Listening);
+    rig.pipeline.startListening(true);
+    rig.microphone.play(testaudio::quiet(300) + testaudio::speech(600) + testaudio::quiet(300));
+    rig.pipeline.stopListening();
+    CHECK(rig.recognizer->requests == 2);
+    rig.recognizer->answer(u"open files"_s);
+    rig.microphone.play(testaudio::quiet(1600));
+    CHECK(rig.recognizer->requests == 2);
+    CHECK(rig.requests == QStringList{u"What's the weather?"_s, u"open files"_s});
+}
+
+TEST_CASE("An overloaded microphone is reported, at most once a minute") {
+    WakeRig rig;
+    QSignalSpy overloaded(&rig.pipeline, &VoicePipeline::microphoneOverloaded);
+    const QByteArray clipped = testaudio::make(3000, 1.2, 0.0);     // a tone too loud for the input: clipped
+    rig.microphone.play(clipped);
+    REQUIRE(overloaded.count() == 1);
+    CHECK(overloaded.at(0).at(0).toString().contains(u"% of the sound is clipped"_s));
+    CHECK_FALSE(rig.pipeline.microphoneTrouble().isEmpty());
+    rig.microphone.play(clipped);
+    CHECK(overloaded.count() == 1);
+}
+
+TEST_CASE("Measuring the microphone keeps it open for the time asked") {
+    Rig rig;
+    CHECK_FALSE(rig.microphone.active);
+    std::optional<MicrophoneCheck::Stats> measured;
+    rig.pipeline.measureLevels(300, [&measured](MicrophoneCheck::Stats stats) { measured = stats; });
+    CHECK(rig.microphone.active);
+    rig.microphone.play(testaudio::quiet(300));
+    QTest::qWait(450);
+    REQUIRE(measured);
+    CHECK(measured->clippedShare == 0.0);
+    CHECK(measured->p90Db < -50.0);
     CHECK_FALSE(rig.microphone.active);
 }
 
@@ -300,10 +743,10 @@ TEST_CASE("Failures are reported and leave the pipeline idle") {
     rig.pipeline.startListening(true);
     rig.microphone.play(testaudio::speech(500) + testaudio::quiet(200));
     rig.pipeline.stopListening();
-    rig.recognizer->answer(Error{ErrorCode::Network, u"OmniRoute is down"_s});
+    rig.recognizer->answer(Error{ErrorCode::Network, u"the provider is down"_s});
     CHECK(rig.pipeline.state() == VoiceState::Idle);
     REQUIRE(notices.size() == 1);
-    CHECK(notices.at(0).at(0).toString().contains(u"OmniRoute is down"_s));
+    CHECK(notices.at(0).at(0).toString().contains(u"the provider is down"_s));
     CHECK(notices.at(0).at(1).toBool());
 
     rig.microphone.broken = true;
@@ -315,4 +758,140 @@ TEST_CASE("Failures are reported and leave the pipeline idle") {
     rig.pipeline.startListening(false);
     CHECK(notices.size() == 3);
     CHECK_FALSE(rig.pipeline.canListen());
+}
+
+TEST_CASE("With interruption by name, talking over Nexa does nothing; with none, not even the name") {
+    Rig rig;        // barge-in by name, the default
+    rig.pipeline.speak(u"Here is a long story."_s);
+    REQUIRE(rig.pipeline.state() == VoiceState::Speaking);
+    CHECK_FALSE(rig.microphone.active);         // no wake word: nothing to listen for while it speaks
+    rig.microphone.play(testaudio::quiet(800) + testaudio::speech(700));
+    CHECK(rig.voice->speaking);
+    CHECK(rig.pipeline.state() == VoiceState::Speaking);
+
+    SpotterRig off(u"HEY_NEXA"_s, 15 * kSecond / 10);
+    off.pipeline.setSettings({.wakeWord = true, .bargeIn = VoicePipeline::BargeIn::Off});
+    off.pipeline.onReplyStarted(u"voice"_s);
+    off.pipeline.onReplyDelta(u"The weather is fine today. It is"_s);
+    REQUIRE(off.pipeline.state() == VoiceState::Speaking);
+    off.microphone.play(testaudio::quiet(1000) + testaudio::speech(1200));
+    CHECK(off.pipeline.state() == VoiceState::Speaking);
+}
+
+TEST_CASE("A spotter hit the words do not confirm is dropped, and the reply it heard over goes on") {
+    SpotterRig rig(u"HEY_NEXA"_s, 2 * kSecond);
+    rig.pipeline.onReplyStarted(u"gui"_s);          // a reply still being written
+    rig.microphone.play(testaudio::quiet(1000) + talking(2000));
+    CHECK(rig.pipeline.state() == VoiceState::Listening);
+    rig.microphone.play(talking(1000) + testaudio::quiet(1600));
+    REQUIRE(rig.recognizer->pending());
+    rig.recognizer->answer(u"and that is the news for tonight"_s);
+    CHECK(rig.requests.isEmpty());
+    CHECK(rig.interrupts == 0);
+    CHECK(rig.pipeline.state() == VoiceState::Idle);
+
+    SpotterRig greeted(u"HEY_NEXA"_s, 2 * kSecond);
+    greeted.microphone.play(testaudio::quiet(1000) + talking(3000) + testaudio::quiet(1600));
+    REQUIRE(greeted.recognizer->pending());
+    greeted.recognizer->answer(u"Hey Necks, what time is it?"_s);     // the name spelled otherwise, a greeting first
+    CHECK(greeted.requests.size() == 1);
+}
+
+namespace {
+
+// Says, per recording, whether it is the owner's — later, as the real gate does on its thread.
+class ScriptedGate : public ISpeakerGate {
+public:
+    bool active() const override { return on; }
+    void check(const QByteArray &, std::function<void(bool, double)> done) override {
+        ++checks;
+        const bool owner = owners.isEmpty() ? true : owners.takeFirst();
+        QTimer::singleShot(0, this, [done = std::move(done), owner] { done(owner, owner ? 0.8 : 0.1); });
+    }
+    bool on{true};
+    QList<bool> owners;     // the next answers; true once they run out
+    int checks{0};
+};
+
+} // namespace
+
+TEST_CASE("Only the owner's voice: a stranger's follow-up, name and sentence go nowhere; Talk is never asked") {
+    // A follow-up from someone else.
+    Rig rig;
+    ScriptedGate gate;
+    rig.pipeline.setSpeakerGate(&gate);
+    QSignalSpy strangers(&rig.pipeline, &VoicePipeline::strangerIgnored);
+    rig.pipeline.setSettings({.followUpMs = 2000});
+    askAndHear(rig);                        // pressed Talk: not asked
+    CHECK(gate.checks == 0);
+    QTest::qWait(250);
+    REQUIRE(rig.pipeline.state() == VoiceState::Listening);
+    gate.owners = {false};
+    rig.microphone.play(testaudio::quiet(500) + testaudio::speech(800) + testaudio::quiet(1600));
+    REQUIRE(QTest::qWaitFor([&gate] { return gate.checks == 1; }, 2000));
+    QTest::qWait(50);
+    CHECK(rig.recognizer->requests == 1);   // only the first, the owner's own
+    CHECK(strangers.size() == 1);
+    CHECK(rig.pipeline.state() == VoiceState::Idle);
+
+    // The name, said by someone else: the spotter's capture is dropped before any recogniser hears it.
+    SpotterRig spotted(u"HEY_NEXA"_s, 2 * kSecond);
+    ScriptedGate other;
+    other.owners = {false};
+    spotted.pipeline.setSpeakerGate(&other);
+    spotted.microphone.play(testaudio::quiet(1000) + talking(3000) + testaudio::quiet(1600));
+    REQUIRE(QTest::qWaitFor([&other] { return other.checks == 1; }, 2000));
+    QTest::qWait(50);
+    CHECK_FALSE(spotted.recognizer->pending());
+    CHECK(spotted.requests.isEmpty());
+
+    // A sentence in the room from a stranger: the second net does not even transcribe it.
+    WakeRig room;
+    ScriptedGate tv;
+    tv.owners = {false};
+    room.pipeline.setSpeakerGate(&tv);
+    room.pipeline.setSettings({.wakeWord = true});
+    room.microphone.play(testaudio::quiet(800) + testaudio::speech(900) + testaudio::quiet(1200));
+    REQUIRE(QTest::qWaitFor([&tv] { return tv.checks == 1; }, 2000));
+    QTest::qWait(50);
+    CHECK(room.local->requests == 0);
+    // …and the owner's next sentence is checked and transcribed.
+    room.microphone.play(testaudio::speech(900) + testaudio::quiet(1200));
+    REQUIRE(QTest::qWaitFor([&room] { return room.local->pending(); }, 2000));
+    CHECK(tv.checks == 2);
+}
+
+TEST_CASE("A request says whether the owner's own voice was heard: only the gate's yes counts, never Talk") {
+    Rig rig;
+    ScriptedGate gate;
+    rig.pipeline.setSpeakerGate(&gate);
+    rig.pipeline.setSettings({.followUpMs = 2000});
+    QList<bool> fromOwner;
+    QObject::connect(&rig.pipeline, &VoicePipeline::request, &rig.pipeline,
+                     [&rig, &fromOwner] { fromOwner.append(rig.pipeline.lastRequestFromOwner()); });
+    askAndHear(rig);                        // pressed Talk: nobody checked whose voice it was
+    QTest::qWait(250);
+    REQUIRE(rig.pipeline.state() == VoiceState::Listening);
+    gate.owners = {true};
+    rig.microphone.play(testaudio::quiet(500) + testaudio::speech(800) + testaudio::quiet(1600));
+    REQUIRE(QTest::qWaitFor([&rig] { return rig.recognizer->pending(); }, 2000));
+    rig.recognizer->answer(u"Unlock."_s);
+    REQUIRE(rig.requests.size() == 2);
+    CHECK(fromOwner == QList<bool>{false, true});
+
+    // Without an enrolled voice (the gate off), a hands-free request is anyone's.
+    Rig open;
+    ScriptedGate off;
+    off.on = false;
+    open.pipeline.setSpeakerGate(&off);
+    open.pipeline.setSettings({.followUpMs = 2000});
+    bool openOwner = true;
+    QObject::connect(&open.pipeline, &VoicePipeline::request, &open.pipeline,
+                     [&open, &openOwner] { openOwner = open.pipeline.lastRequestFromOwner(); });
+    askAndHear(open);
+    QTest::qWait(250);
+    open.microphone.play(testaudio::quiet(500) + testaudio::speech(800) + testaudio::quiet(1600));
+    REQUIRE(QTest::qWaitFor([&open] { return open.recognizer->pending(); }, 2000));
+    open.recognizer->answer(u"Unlock."_s);
+    CHECK_FALSE(openOwner);
 }

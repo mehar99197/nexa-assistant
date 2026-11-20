@@ -5,6 +5,7 @@
 #include "remote/IRemoteHost.h"
 #include "remote/PairingManager.h"
 #include "remote/RemoteClient.h"
+#include "remote/RemoteRoutes.h"
 #include "remote/RemoteServer.h"
 #include "remote/TlsIdentity.h"
 
@@ -55,8 +56,10 @@ int freePortPair() {
         probe.close();
         QTcpServer first;
         QTcpServer second;
+        QTcpServer third;
         if (port < 65000 && first.listen(QHostAddress::Any, quint16(port))
-            && second.listen(QHostAddress::LocalHost, quint16(port + 1))) {
+            && second.listen(QHostAddress::LocalHost, quint16(port + 1))
+            && third.listen(QHostAddress::LocalHost, quint16(port + 2))) {
             return port;
         }
     }
@@ -304,4 +307,97 @@ TEST_CASE("Through adb reverse there is no certificate, and a lost server is wai
     CHECK(states.last().at(1).toString().contains(u"trying again"_s));
     f.client.disconnectFromNexa();
     CHECK(f.client.state() == RemoteClient::State::Offline);
+}
+
+namespace {
+
+// A port where nothing answers: a phone away from home, knocking on the Wi-Fi address of a network it is not on.
+int deadPort() {
+    QTcpServer probe;
+    if (!probe.listen(QHostAddress::LocalHost, 0)) return 0;
+    const int port = probe.serverPort();
+    probe.close();
+    return port;
+}
+
+} // namespace
+
+TEST_CASE("Away from home the phone tries the next way, learns every way, and takes the PC's certificate") {
+    if (!haveOpenssl()) SKIP("openssl is needed to make the certificate");
+    Fixture f;
+    REQUIRE(f.start());
+    // Paired over adb (plain): no fingerprint pinned yet.
+    f.client.setEndpoint(f.local());
+    const auto paired = f.pair(f.freshCode());
+    REQUIRE(paired);
+    REQUIRE(paired->isOk());
+    f.server.setRoutes({{RemoteRoute::Kind::Tailscale, u"https://127.0.0.1:%1"_s.arg(f.port)}});
+
+    // The Wi-Fi it paired on does not answer; adb does.
+    f.client.setEndpoint(RemoteEndpoint{u"127.0.0.1"_s, deadPort(), false, {}, u"Wi-Fi"_s});
+    RemoteEndpoint adb = f.local();
+    adb.via = u"adb"_s;
+    f.client.setAlternates({adb});
+    QSignalSpy learned(&f.client, &RemoteClient::routesLearned);
+    QSignalSpy via(&f.client, &RemoteClient::connectedVia);
+    f.client.connectToNexa();
+    REQUIRE(via.wait(10'000));
+    CHECK(via.last().at(0).toString() == u"adb"_s);
+    REQUIRE_FALSE(learned.isEmpty());
+    const QList<RemoteRoute> routes = learned.last().at(0).value<QList<RemoteRoute>>();
+    REQUIRE(routes.size() == 1);
+    CHECK(routes.first().kind == RemoteRoute::Kind::Tailscale);
+    const QString fingerprint = learned.last().at(1).toString();
+    CHECK(fingerprint == f.server.fingerprint());
+    f.client.disconnectFromNexa();
+
+    // With that certificate pinned, the direct way (Tailscale, Nexa's own HTTPS) is taken when the others fail.
+    f.client.setPinnedFingerprint(fingerprint);
+    f.client.setEndpoint(RemoteEndpoint{u"127.0.0.1"_s, deadPort(), false, {}, u"Wi-Fi"_s});
+    const std::optional<RemoteEndpoint> tailscale = RemoteEndpoint::fromRoute(routes.first());
+    REQUIRE(tailscale);
+    CHECK(tailscale->via == u"Tailscale"_s);
+    CHECK(tailscale->tls);
+    CHECK_FALSE(tailscale->tunnel);
+    f.client.setAlternates({*tailscale});
+    f.client.connectToNexa();
+    REQUIRE(via.wait(10'000));
+    CHECK(via.last().at(0).toString() == u"Tailscale"_s);
+    CHECK(f.client.via() == u"Tailscale"_s);
+    f.client.disconnectFromNexa();
+}
+
+TEST_CASE("A tunnel's address showing Nexa's own certificate is refused, and the token is never sent to it") {
+    if (!haveOpenssl()) SKIP("openssl is needed to make the certificate");
+    Fixture f;
+    REQUIRE(f.start());
+    f.client.setEndpoint(f.local());
+    const auto paired = f.pair(f.freshCode());
+    REQUIRE(paired);
+    REQUIRE(paired->isOk());
+    // Pinned, as at home; but a "Cloudflare" way that answers with a self-signed certificate is not Cloudflare.
+    f.client.setPinnedFingerprint(f.server.fingerprint());
+    RemoteEndpoint impostor{u"127.0.0.1"_s, f.port, true, {}, u"Cloudflare"_s, true};
+    f.client.setEndpoint(impostor);
+    f.client.setAlternates({});
+    QSignalSpy rejected(&f.client, &RemoteClient::certificateRejected);
+    f.client.connectToNexa();
+    REQUIRE(rejected.wait(10'000));
+    QTest::qWait(500);
+    CHECK(f.server.clientCount() == 0);
+    CHECK(f.client.state() != RemoteClient::State::Online);
+    f.client.disconnectFromNexa();
+}
+
+TEST_CASE("A tunnel's web address has the web's port, Nexa's own address has Nexa's") {
+    const auto cloudflare = RemoteEndpoint::fromRoute({RemoteRoute::Kind::Cloudflare, u"https://nexa.nexacodesolutions.online"_s});
+    REQUIRE(cloudflare);
+    CHECK(cloudflare->port == 443);
+    CHECK(cloudflare->tunnel);
+    CHECK(cloudflare->socketUrl() == u"wss://nexa.nexacodesolutions.online:443/ws"_s);
+    CHECK(RemoteEndpoint::parse(u"pc.local"_s)->port == RemoteEndpoint::kDefaultPort);
+    const auto adb = RemoteEndpoint::fromRoute({RemoteRoute::Kind::Adb, u"http://localhost:7777"_s});
+    REQUIRE(adb);
+    CHECK_FALSE(adb->tls);
+    CHECK(adb->via == u"adb"_s);
 }

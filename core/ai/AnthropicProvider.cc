@@ -5,6 +5,7 @@
 
 #include <QJsonArray>
 #include <QJsonDocument>
+#include <QJsonValue>
 #include <QNetworkReply>
 
 using namespace Qt::StringLiterals;
@@ -77,9 +78,12 @@ IAiProvider::Capabilities AnthropicProvider::capabilities() const {
 QNetworkRequest AnthropicProvider::request(const QString &path) const {
     QString base = config_.baseUrl.trimmed();
     while (base.endsWith(u'/')) base.chop(1);
-    const QUrl url(base + path);
-    // A gateway (OmniRoute and the like) takes the key as a bearer token. Anthropic itself reads
-    // only x-api-key, and would take a bearer token for an OAuth one.
+    return requestFor(QUrl(base + path));
+}
+
+QNetworkRequest AnthropicProvider::requestFor(const QUrl &url) const {
+    // A gateway takes the key as a bearer token. Anthropic itself reads only x-api-key, and would
+    // take a bearer token for an OAuth one.
     const bool direct = url.host().endsWith(u"anthropic.com"_s);
     QNetworkRequest request = HttpClient::jsonRequest(url, direct ? QString() : config_.apiKey);
     if (!config_.apiKey.isEmpty()) request.setRawHeader("x-api-key", config_.apiKey.toUtf8());
@@ -88,7 +92,9 @@ QNetworkRequest AnthropicProvider::request(const QString &path) const {
 }
 
 void AnthropicProvider::listModels(std::function<void(Result<QStringList>)> done) {
-    http_->get(request(u"/models?limit=1000"_s), kModelsTimeoutMs, this,
+    const QNetworkRequest models =
+        config_.modelsUrl.isEmpty() ? request(u"/models?limit=1000"_s) : requestFor(QUrl(config_.modelsUrl));
+    http_->get(models, kModelsTimeoutMs, this,
                [done = std::move(done)](Result<QByteArray> body) {
                    if (!body) {
                        done(body.error());

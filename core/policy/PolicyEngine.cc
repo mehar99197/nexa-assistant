@@ -1,6 +1,7 @@
 #include "core/policy/PolicyEngine.h"
 
 #include <QJsonArray>
+#include <QJsonValue>
 #include <QRegularExpression>
 
 #include <array>

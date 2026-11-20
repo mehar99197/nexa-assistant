@@ -10,9 +10,11 @@
 #include "core/tools/ToolRegistry.h"
 
 #include "QtStringMakers.h"
+#include "ScriptedProvider.h"
 
 #include <QFile>
 #include <QJsonDocument>
+#include <QSignalSpy>
 #include <QTemporaryDir>
 #include <QTest>
 #include <QTimer>
@@ -26,57 +28,8 @@ namespace {
 
 constexpr int kWaitMs = 5'000;
 
-class ScriptedStream : public ChatStream {
-public:
-    void play(const QString &text, const QList<ToolCall> &calls, std::optional<Error> error) {
-        QTimer::singleShot(0, this, [this, text, calls, error] {
-            emitText(text);
-            if (error) {
-                fail(*error);
-            } else {
-                complete(calls.isEmpty() ? FinishReason::Stop : FinishReason::ToolCalls, calls);
-            }
-        });
-    }
-    bool aborted{false};
-
-protected:
-    void abortTransport() override { aborted = true; }
-};
-
-// One scripted reply per chat() call; an empty script leaves the stream hanging (for cancel tests).
-class ScriptedProvider : public IAiProvider {
-public:
-    struct Reply {
-        QString text;
-        QList<ToolCall> calls;
-        std::optional<Error> error;
-    };
-
-    QString id() const override { return u"scripted"_s; }
-    QString displayName() const override { return u"Scripted"_s; }
-    Capabilities capabilities() const override { return {.nativeTools = nativeTools}; }
-    void listModels(std::function<void(Result<QStringList>)> done) override { done(QStringList{u"m"_s}); }
-
-    std::shared_ptr<ChatStream> chat(const ChatRequest &request) override {
-        requests.append(request);
-        auto stream = std::make_shared<ScriptedStream>();
-        lastStream = stream.get();
-        if (!script.isEmpty()) {
-            const Reply reply = script.takeFirst();
-            stream->play(reply.text, reply.calls, reply.error);
-        } else if (repeat) {
-            stream->play(repeat->text, repeat->calls, repeat->error);
-        }
-        return stream;
-    }
-
-    QList<Reply> script;
-    std::optional<Reply> repeat;
-    bool nativeTools{true};
-    QList<ChatRequest> requests;
-    ScriptedStream *lastStream{nullptr};
-};
+using test::ScriptedProvider;
+using test::ScriptedStream;
 
 ToolCall call(const QString &id, const QString &name, const QString &arguments) {
     return ToolCall{id, name, arguments};
@@ -165,7 +118,9 @@ TEST_CASE("Agent runs tool calls, feeds the results back and audits them") {
     CHECK(entry.value(u"tool"_s).toString() == u"echo"_s);
     CHECK(entry.value(u"source"_s).toString() == u"gui"_s);
     CHECK(entry.value(u"ok"_s).toBool());
+#ifdef Q_OS_UNIX
     CHECK((QFile::permissions(f.audit.path()) & (QFileDevice::ReadOther | QFileDevice::ReadGroup)) == 0);
+#endif
 }
 
 TEST_CASE("Agent reports bad arguments and unknown tools to the model and continues") {
@@ -356,8 +311,8 @@ TEST_CASE("ToolExecutor asks for confirmation and honours the answer") {
     f.policy.setMode(PolicyMode::ConfirmAll);
     QStringList questions;
     bool allow = false;
-    f.executor.setConfirmer([&](const QString &question, std::function<void(bool)> answer) {
-        questions.append(question);
+    f.executor.setConfirmer([&](const ConfirmRequest &request, std::function<void(bool)> answer) {
+        questions.append(request.question);
         answer(allow);
     });
 
@@ -383,7 +338,7 @@ TEST_CASE("A tool that goes while its question is open is not run when the answe
     Fixture f;
     f.policy.setMode(PolicyMode::ConfirmAll);
     std::function<void(bool)> pending;
-    f.executor.setConfirmer([&](const QString &, std::function<void(bool)> answer) { pending = std::move(answer); });
+    f.executor.setConfirmer([&](const ConfirmRequest &, std::function<void(bool)> answer) { pending = std::move(answer); });
 
     std::optional<Result<ToolResult>> result;
     f.executor.execute(u"echo"_s, {{u"msg"_s, u"a"_s}}, u"gui"_s, [&](Result<ToolResult> r) { result = std::move(r); });
@@ -431,7 +386,7 @@ TEST_CASE("A model that cannot call tools is taught the convention, and its call
     }
     CHECK(resultAsText);
 
-    // The person sees the words, never the call markup — the reply is shown once it is complete.
+    // The person sees the words, never the call markup.
     CHECK(shown == QStringList{u"Let me echo that."_s, u"It said: echoed x"_s});
 }
 
@@ -451,4 +406,202 @@ TEST_CASE("A call a native model writes as text is still made") {
     REQUIRE(messages[1].toolCalls.size() == 1);
     CHECK(messages[1].toolCalls[0].id == u"text_1_1"_s);
     CHECK(messages[2].text == u"echoed y"_s);
+}
+
+TEST_CASE("A text-tools reply streams its prose and never shows the call markup") {
+    Fixture f;
+    f.provider.nativeTools = false;
+    f.provider.script = {
+        {{}, {}, {}, {u"Opening the calculator.\n<tool"_s,
+                      u"_call>{\"name\": \"echo\", \"arguments\": {\"msg\": \"x\"}}</tool_call>"_s}},
+        {{}, {}, {}, {u"Do"_s, u"ne."_s}},
+    };
+    QStringList shown;
+    int deltasBeforeTool = -1;
+    QObject::connect(&f.agent, &Agent::textDelta, [&shown](const QString &delta) { shown.append(delta); });
+    QObject::connect(&f.agent, &Agent::toolStarted, [&](const QString &, const QJsonObject &) {
+        if (deltasBeforeTool < 0) deltasBeforeTool = int(shown.size());
+    });
+    f.agent.run(&f.provider, &f.conversation, u"m"_s, u"gui"_s);
+    REQUIRE(f.waitDone());
+    CHECK(f.toolRuns == QStringList{u"echo:ok"_s});
+    const QString all = shown.join(QString());
+    CHECK(all.contains(u"Opening the calculator."_s));
+    CHECK(all.contains(u"Done."_s));
+    CHECK_FALSE(all.contains(u"<tool"_s));
+    CHECK(deltasBeforeTool == 1);       // the prose was on screen before the tool ran
+    CHECK(shown.size() >= 3);           // "Done." arrived in pieces, as streamed
+}
+
+TEST_CASE("A reply that is JSON but not a call is shown in full at the end") {
+    Fixture f;
+    f.provider.nativeTools = false;
+    f.provider.script = {{{}, {}, {}, {u"{\"answer\": "_s, u"42}"_s}}};
+    QStringList shown;
+    QObject::connect(&f.agent, &Agent::textDelta, [&shown](const QString &delta) { shown.append(delta); });
+    f.agent.run(&f.provider, &f.conversation, u"m"_s, u"gui"_s);
+    REQUIRE(f.waitDone());
+    CHECK(shown.join(QString()) == u"{\"answer\": 42}"_s);
+}
+
+TEST_CASE("A text-tools reply that starts with spaces is not shown twice") {
+    Fixture f;
+    f.provider.nativeTools = false;
+    f.provider.script = {{{}, {}, {}, {u"\n  Hel"_s, u"lo there"_s}}};
+    QStringList shown;
+    QObject::connect(&f.agent, &Agent::textDelta, [&shown](const QString &delta) { shown.append(delta); });
+    f.agent.run(&f.provider, &f.conversation, u"m"_s, u"gui"_s);
+    REQUIRE(f.waitDone());
+    CHECK(shown.join(QString()) == u"Hello there"_s);
+}
+
+TEST_CASE("A fallback that answered is reported") {
+    Fixture f;
+    f.provider.script = {{u"hi"_s, {}, {}, {}, u"Two · m2"_s}};
+    QStringList reroutes;
+    QObject::connect(&f.agent, &Agent::rerouted, [&](const QString &route, const QString &reason) {
+        reroutes.append(route + u" | "_s + reason);
+    });
+    f.agent.run(&f.provider, &f.conversation, u"m"_s, u"gui"_s);
+    REQUIRE(f.waitDone());
+    CHECK(reroutes == QStringList{u"Two · m2 | One: down"_s});
+}
+
+TEST_CASE("A provider that cannot see gets the words and a note, and the user is told once") {
+    Fixture f;
+    f.provider.vision = false;
+    f.provider.script = {{u"I cannot look at it."_s, {}, {}}, {u"Still cannot."_s, {}, {}}};
+    QStringList notices;
+    QObject::connect(&f.agent, &Agent::notice, [&notices](const QString &message) { notices.append(message); });
+    f.conversation.addUser(u"what is on this screenshot?"_s, {ImageAttachment{"JPEG", u"image/jpeg"_s}});
+    f.agent.run(&f.provider, &f.conversation, u"m"_s, u"gui"_s);
+    REQUIRE(f.waitDone());
+    REQUIRE(f.provider.requests.size() == 1);
+    for (const ChatMessage &message : f.provider.requests.first().messages) CHECK(message.images.isEmpty());
+    CHECK(f.provider.requests.first().messages.last().text.contains(u"cannot see images"_s));
+    CHECK(notices.size() == 1);
+
+    f.finish.reset();
+    f.conversation.addUser(u"and now?"_s);
+    f.agent.run(&f.provider, &f.conversation, u"m"_s, u"gui"_s);
+    REQUIRE(f.waitDone());
+    CHECK(notices.size() == 1);     // said once, not at every request that still carries the picture
+}
+
+TEST_CASE("A native first choice falling back to a text-only provider never shows the call markup") {
+    Fixture f;
+    f.provider.nativeTools = true;     // the first choice could call tools; the fallback that answered cannot
+    ScriptedProvider::Reply first;
+    first.route = u"agy · m2"_s;
+    first.chunks = {u"Checking.\n<tool_call>{\"name\": \"echo\", \"arguments\": {\"msg\": \"x\"}}</tool_call>"_s};
+    f.provider.script = {first, {u"Done."_s, {}, {}}};
+    QStringList shown;
+    QObject::connect(&f.agent, &Agent::textDelta, [&shown](const QString &delta) { shown.append(delta); });
+    f.agent.run(&f.provider, &f.conversation, u"m"_s, u"gui"_s);
+    REQUIRE(f.waitDone());
+    CHECK(f.toolRuns == QStringList{u"echo:ok"_s});
+    const QString all = shown.join(QString());
+    CHECK(all.contains(u"Checking."_s));
+    CHECK_FALSE(all.contains(u"<tool"_s));
+}
+
+TEST_CASE("A picture is kept when some provider of the chain can see it, though the first choice cannot") {
+    Fixture f;
+    f.provider.vision = false;      // the first choice (agy) cannot…
+    f.provider.images = true;       // …but the chain can take the picture to one that can
+    f.provider.script = {{u"A red square."_s, {}, {}}};
+    QStringList notices;
+    QObject::connect(&f.agent, &Agent::notice, [&notices](const QString &message) { notices.append(message); });
+    f.conversation.addUser(u"what is on this picture?"_s, {ImageAttachment{"PNG", u"image/png"_s}});
+    f.agent.run(&f.provider, &f.conversation, u"m"_s, u"gui"_s);
+    REQUIRE(f.waitDone());
+    REQUIRE(f.provider.requests.size() == 1);
+    CHECK(f.provider.requests.first().messages.last().images.size() == 1);
+    CHECK(notices.isEmpty());
+}
+
+TEST_CASE("An agent given a task runs its tools for that task, and says when each step starts") {
+    Fixture f;
+    f.agent.setTask(5);
+    QSignalSpy started(&f.executor, &ToolExecutor::actionStarted);
+    QSignalSpy steps(&f.agent, &Agent::stepStarted);
+    f.provider.script = {{{}, {call(u"c1"_s, u"echo"_s, u"{\"msg\":\"x\"}"_s)}, {}}, {u"Done."_s, {}, {}}};
+    f.agent.run(&f.provider, &f.conversation, u"m"_s, u"gui"_s);
+    REQUIRE(f.waitDone());
+    REQUIRE(started.size() == 1);
+    CHECK(started.at(0).at(4).toULongLong() == 5);
+    REQUIRE(steps.size() == 2);
+    CHECK(steps.at(0).at(0).toInt() == 1);
+    CHECK(steps.at(1).at(0).toInt() == 2);
+}
+
+TEST_CASE("A hidden tool is not offered, and a call to it is answered with the reason, nothing run") {
+    Fixture f;
+    f.agent.setHiddenTools({u"echo"_s}, u"it is not available in a sub-task"_s);
+    f.provider.script = {{{}, {call(u"c1"_s, u"echo"_s, u"{}"_s)}, {}}, {u"Fine."_s, {}, {}}};
+    f.agent.run(&f.provider, &f.conversation, u"m"_s, u"gui"_s);
+    REQUIRE(f.waitDone());
+    REQUIRE(f.provider.requests.size() == 2);
+    for (const ToolSpec &spec : f.provider.requests[0].tools) CHECK(spec.name != u"echo"_s);
+    CHECK(f.toolRuns == QStringList{u"echo:fail"_s});
+    CHECK(f.provider.requests[1].messages.last().text.contains(u"not available in a sub-task"_s));
+    const QFile audit(f.audit.path());
+    CHECK((!audit.exists() || audit.size() == 0));
+}
+
+TEST_CASE("Cancelling with a note closes the open call with it") {
+    Fixture f;
+    f.provider.script = {{{}, {call(u"c1"_s, u"slow"_s, u"{}"_s)}, {}}};
+    f.agent.run(&f.provider, &f.conversation, u"m"_s, u"gui"_s);
+    REQUIRE(QTest::qWaitFor([&f] { return bool(f.pendingSlow); }, kWaitMs));
+    f.agent.cancel(u"Paused by the user."_s);
+    CHECK(f.finish == FinishReason::Cancelled);
+    CHECK(f.conversation.messages().last().text == u"Paused by the user."_s);
+}
+
+TEST_CASE("Cancelling an agent with a task stops only that task's tool") {
+    Fixture f;
+    f.agent.setTask(5);
+    std::optional<Result<ToolResult>> other;
+    ITool::Done otherSlow;
+    f.registry.add(std::make_unique<FunctionTool>(
+        ToolSpec{u"slow_other"_s, u"Slow"_s, {}}, [&otherSlow](const QJsonObject &, ITool::Done done) { otherSlow = std::move(done); },
+        [&otherSlow] {
+            if (otherSlow) std::exchange(otherSlow, nullptr)(Error{ErrorCode::Cancelled, u"Cancelled"_s});
+        }));
+    f.executor.execute(u"slow_other"_s, {}, ToolContext{u"gui"_s, 6}, [&other](Result<ToolResult> r) { other = std::move(r); });
+    f.provider.script = {{{}, {call(u"c1"_s, u"slow"_s, u"{}"_s)}, {}}};
+    f.agent.run(&f.provider, &f.conversation, u"m"_s, u"gui"_s);
+    REQUIRE(QTest::qWaitFor([&f] { return bool(f.pendingSlow); }, kWaitMs));
+    f.agent.cancel();
+    CHECK_FALSE(f.pendingSlow);     // its own tool was cancelled
+    CHECK_FALSE(other.has_value()); // the other task's was not
+    REQUIRE(otherSlow);
+    std::exchange(otherSlow, nullptr)(ToolResult{u"fine"_s, {}});
+    REQUIRE(other.has_value());
+    CHECK(other->isOk());
+}
+
+TEST_CASE("A provider that cannot see is told the screen can still be read as text, when that tool is offered") {
+    Fixture f;
+    f.provider.vision = false;
+    f.provider.script = {{u"I cannot look at it."_s, {}, {}}};
+    QStringList notices;
+    QObject::connect(&f.agent, &Agent::notice, [&notices](const QString &message) { notices.append(message); });
+    SECTION("without screen_snapshot the notice is as before") {
+        f.conversation.addUser(u"what is on this screenshot?"_s, {ImageAttachment{"JPEG", u"image/jpeg"_s}});
+        f.agent.run(&f.provider, &f.conversation, u"m"_s, u"gui"_s);
+        REQUIRE(f.waitDone());
+        REQUIRE(notices.size() == 1);
+        CHECK(notices.first().endsWith(u"needed to look at the screen."_s));
+    }
+    SECTION("with it, the way out is named") {
+        f.registry.add(FunctionTool::sync(ToolSpec{u"screen_snapshot"_s, u"The screen as text"_s, {}, false},
+                                          [](const QJsonObject &) -> Result<ToolResult> { return ToolResult{u"outline"_s, std::nullopt}; }));
+        f.conversation.addUser(u"what is on this screenshot?"_s, {ImageAttachment{"JPEG", u"image/jpeg"_s}});
+        f.agent.run(&f.provider, &f.conversation, u"m"_s, u"gui"_s);
+        REQUIRE(f.waitDone());
+        REQUIRE(notices.size() == 1);
+        CHECK(notices.first().endsWith(u"The screen can still be read as text with screen_snapshot."_s));
+    }
 }

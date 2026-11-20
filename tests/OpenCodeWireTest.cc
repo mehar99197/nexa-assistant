@@ -1,0 +1,212 @@
+// core/ai/OpenCodeWire: opencode's server API, with payloads as opencode 1.19.3 sent them on 2026-10-27;
+// and HttpClient::getStreaming, which reads its event stream.
+
+#include "core/ai/OpenCodeWire.h"
+#include "core/net/HttpClient.h"
+
+#include "FakeHttpServer.h"
+#include "QtStringMakers.h"
+
+#include <QJsonArray>
+#include <QJsonDocument>
+#include <QJsonObject>
+#include <QNetworkReply>
+#include <QTest>
+
+#include <catch2/catch_test_macros.hpp>
+
+using namespace nexa;
+using namespace nexa::test;
+using namespace Qt::StringLiterals;
+
+TEST_CASE("promptBody carries Nexa's system prompt with opencode's tools off") {
+    const QJsonObject body = OpenCodeWire::promptBody(u"google/antigravity-gemini-3-flash"_s, u"S"_s, u"hi"_s, {});
+    CHECK(body.value(u"model"_s).toObject() == QJsonObject{{u"providerID"_s, u"google"_s},
+                                                            {u"modelID"_s, u"antigravity-gemini-3-flash"_s}});
+    CHECK(body.value(u"system"_s).toString() == u"S"_s);
+    CHECK(body.value(u"tools"_s).toObject() == QJsonObject{{u"*"_s, false}});
+    const QJsonArray parts = body.value(u"parts"_s).toArray();
+    REQUIRE(parts.size() == 1);
+    CHECK(parts.at(0).toObject() == QJsonObject{{u"type"_s, u"text"_s}, {u"text"_s, u"hi"_s}});
+
+    // Only the first slash separates provider and model.
+    CHECK(OpenCodeWire::promptBody(u"openrouter/meta/llama"_s, {}, u"x"_s, {})
+              .value(u"model"_s).toObject().value(u"modelID"_s).toString()
+          == u"meta/llama"_s);
+    // No model: opencode's own default; no system prompt: none sent.
+    const QJsonObject bare = OpenCodeWire::promptBody({}, {}, u"x"_s, {});
+    CHECK_FALSE(bare.contains(u"model"_s));
+    CHECK_FALSE(bare.contains(u"system"_s));
+
+    const QJsonArray withImage =
+        OpenCodeWire::promptBody({}, {}, u"look"_s, {ImageAttachment{"PNGDATA", u"image/png"_s}})
+            .value(u"parts"_s).toArray();
+    REQUIRE(withImage.size() == 2);
+    const QJsonObject file = withImage.at(1).toObject();
+    CHECK(file.value(u"type"_s).toString() == u"file"_s);
+    CHECK(file.value(u"mime"_s).toString() == u"image/png"_s);
+    CHECK(file.value(u"url"_s).toString() == u"data:image/png;base64,"_s + QString::fromLatin1(QByteArray("PNGDATA").toBase64()));
+}
+
+TEST_CASE("opencode's free models get its read tool, which the server denies, and the rest get none") {
+    // Measured 2026-10-29: opencode's free tier refuses a request without opencode's own read tool
+    // ("Free usage exceeded, subscribe to Go") and answers one that has it; bash, glob or todowrite
+    // alone do not do. The server Nexa starts denies read (OpenCodeServer), so it never reads a file.
+    CHECK(OpenCodeWire::promptBody(u"opencode/deepseek-v4.1-flash-free"_s, {}, u"x"_s, {}).value(u"tools"_s).toObject()
+          == QJsonObject{{u"*"_s, false}, {u"read"_s, true}});
+    CHECK(OpenCodeWire::promptBody(u"google/antigravity-gemini-3-flash"_s, {}, u"x"_s, {}).value(u"tools"_s).toObject()
+          == QJsonObject{{u"*"_s, false}});
+    CHECK(OpenCodeWire::promptBody({}, {}, u"x"_s, {}).value(u"tools"_s).toObject() == QJsonObject{{u"*"_s, false}});
+}
+
+TEST_CASE("A free model is told that its one native tool is off and Nexa's tools are real") {
+    // DeepSeek through opencode's free tier, offered opencode's read tool, concluded it had no other tool
+    // ("the volume tool isn't available") and ignored the <tool_call> convention (2026-10-29).
+    const QString system = OpenCodeWire::promptBody(u"opencode/deepseek-v4.1-flash-free"_s, u"S"_s, u"x"_s, {})
+                               .value(u"system"_s).toString();
+    CHECK(system.startsWith(u"S"_s));
+    CHECK(system.contains(u"only `read`"_s));
+    CHECK(system.contains(u"<tool_call>"_s));
+    CHECK(OpenCodeWire::promptBody(u"google/antigravity-gemini-3-flash"_s, u"S"_s, u"x"_s, {}).value(u"system"_s).toString()
+          == u"S"_s);
+}
+
+TEST_CASE("decodeEvent reads deltas, status, idle and errors") {
+    const OpenCodeEvent delta = OpenCodeWire::decodeEvent(
+        R"({"id":"evt_1","type":"message.part.delta","properties":{"sessionID":"ses_1","messageID":"msg_1","partID":"prt_1","field":"text","delta":"Hello! Mars is one planet."}})");
+    CHECK(delta.kind == OpenCodeEvent::Kind::TextDelta);
+    CHECK(delta.sessionId == u"ses_1"_s);
+    CHECK(delta.text == u"Hello! Mars is one planet."_s);
+
+    CHECK(OpenCodeWire::decodeEvent(
+              R"({"type":"message.part.delta","properties":{"sessionID":"ses_1","messageID":"m","partID":"p","field":"reasoning","delta":"hmm"}})")
+              .kind
+          == OpenCodeEvent::Kind::Other);
+
+    const OpenCodeEvent busy = OpenCodeWire::decodeEvent(
+        R"({"type":"session.status","properties":{"sessionID":"ses_1","status":{"type":"busy"}}})");
+    CHECK(busy.kind == OpenCodeEvent::Kind::Busy);
+
+    const OpenCodeEvent retry = OpenCodeWire::decodeEvent(
+        R"({"type":"session.status","properties":{"sessionID":"ses_1","status":{"type":"retry","attempt":1,"message":"Free usage exceeded, subscribe to Go","action":{"reason":"free_tier_limit","provider":"opencode","title":"Free limit reached"}}}})");
+    CHECK(retry.kind == OpenCodeEvent::Kind::Retry);
+    CHECK(retry.message == u"Free usage exceeded, subscribe to Go"_s);
+    CHECK(retry.reason == u"free_tier_limit"_s);
+
+    const OpenCodeEvent idle = OpenCodeWire::decodeEvent(R"({"type":"session.idle","properties":{"sessionID":"ses_1"}})");
+    CHECK(idle.kind == OpenCodeEvent::Kind::Idle);
+    CHECK(idle.sessionId == u"ses_1"_s);
+
+    const OpenCodeEvent auth = OpenCodeWire::decodeEvent(
+        R"({"type":"session.error","properties":{"sessionID":"ses_1","error":{"name":"ProviderAuthError","data":{"providerID":"google","message":"x"}}}})");
+    CHECK(auth.kind == OpenCodeEvent::Kind::Error);
+    CHECK(auth.authError);
+    CHECK(auth.message == u"x"_s);
+
+    const OpenCodeEvent other = OpenCodeWire::decodeEvent(
+        R"({"type":"session.error","properties":{"sessionID":"ses_1","error":{"name":"APIError","data":{"message":"overloaded"}}}})");
+    CHECK_FALSE(other.authError);
+    CHECK(other.message == u"overloaded"_s);
+
+    CHECK(OpenCodeWire::decodeEvent(R"({"type":"server.heartbeat","properties":{}})").kind == OpenCodeEvent::Kind::Other);
+    CHECK(OpenCodeWire::decodeEvent("not json").kind == OpenCodeEvent::Kind::Other);
+}
+
+TEST_CASE("decodeEvent tells which part a delta belongs to, and what kind each part is") {
+    // As opencode 1.19.3 streamed a Gemini reply on 2026-10-28: the reasoning's deltas say field "text" too.
+    const OpenCodeEvent announced = OpenCodeWire::decodeEvent(
+        R"({"type":"message.part.updated","properties":{"sessionID":"ses_1","part":{"id":"prt_r","messageID":"msg_1","sessionID":"ses_1","type":"reasoning","text":""},"time":1}})");
+    CHECK(announced.kind == OpenCodeEvent::Kind::PartType);
+    CHECK(announced.sessionId == u"ses_1"_s);
+    CHECK(announced.partId == u"prt_r"_s);
+    CHECK(announced.partType == u"reasoning"_s);
+
+    const OpenCodeEvent delta = OpenCodeWire::decodeEvent(
+        R"({"type":"message.part.delta","properties":{"sessionID":"ses_1","messageID":"msg_1","partID":"prt_r","field":"text","delta":"The user wants"}})");
+    CHECK(delta.kind == OpenCodeEvent::Kind::TextDelta);
+    CHECK(delta.partId == u"prt_r"_s);
+}
+
+TEST_CASE("decodeEvent reads a tool the model called, with its arguments") {
+    // DeepSeek V4.1 Flash through opencode 1.19.3, 2026-10-29, calling a Nexa tool natively.
+    const OpenCodeEvent event = OpenCodeWire::decodeEvent(
+        R"({"type":"message.part.updated","properties":{"sessionID":"ses_1","part":{"id":"prt_t0","messageID":"msg_1","sessionID":"ses_1","type":"tool","tool":"set_volume","callID":"c0","state":{"status":"error","input":{"percent":50},"error":"Model tried to call unavailable tool 'invalid'."}}}})");
+    CHECK(event.kind == OpenCodeEvent::Kind::PartType);
+    CHECK(event.partType == u"tool"_s);
+    CHECK(event.toolName == u"set_volume"_s);
+    CHECK(event.toolStatus == u"error"_s);
+    CHECK(QJsonDocument::fromJson(event.toolInput.toUtf8()).object() == QJsonObject{{u"percent"_s, 50}});
+    CHECK(OpenCodeWire::isOwnTool(u"read"_s));
+    CHECK(OpenCodeWire::isOwnTool(u"list_mcp_resources"_s));
+    CHECK_FALSE(OpenCodeWire::isOwnTool(u"set_volume"_s));
+}
+
+TEST_CASE("parseModels lists every provider's models with the default first") {
+    const QByteArray providers =
+        R"({"providers":[{"id":"other","models":{"one":{}}},{"id":"fake","models":{"smart":{},"fast":{}}}],"default":{"fake":"smart"}})";
+    CHECK(OpenCodeWire::parseModels(providers, u"fake/smart"_s)
+          == QStringList{u"fake/smart"_s, u"fake/fast"_s, u"other/one"_s});
+    CHECK(OpenCodeWire::parseModels(providers, u"missing/model"_s)
+          == QStringList{u"fake/fast"_s, u"fake/smart"_s, u"other/one"_s});
+    CHECK(OpenCodeWire::parseDefaultModel(R"({"model":"google/antigravity-gemini-3-flash","lsp":true})")
+          == u"google/antigravity-gemini-3-flash"_s);
+    CHECK(OpenCodeWire::parseDefaultModel(R"({"lsp":true})").isEmpty());
+}
+
+TEST_CASE("decodeEvent keeps the HTTP status a provider answered with") {
+    // Charm Hyper through opencode 1.19.3, 2026-10-29.
+    const OpenCodeEvent event = OpenCodeWire::decodeEvent(
+        R"({"type":"session.error","properties":{"sessionID":"ses_1","error":{"name":"APIError","data":{"message":"You're out of credits. Add more at https://hyper.charm.land","statusCode":402,"isRetryable":false}}}})");
+    CHECK(event.kind == OpenCodeEvent::Kind::Error);
+    CHECK(event.status == 402);
+    CHECK(event.message == u"You're out of credits. Add more at https://hyper.charm.land"_s);
+}
+
+TEST_CASE("parseImageSupport says which models take images, as opencode reports them") {
+    // The shape of opencode 1.19.3's /config/providers, capabilities as measured on 2026-10-28.
+    const QByteArray providers = R"({"providers":[
+        {"id":"google","models":{
+            "antigravity-gemini-3-flash":{"capabilities":{"toolcall":true,"input":{"text":true,"image":true}}},
+            "gemini-2.5-flash-preview-tts":{"capabilities":{"toolcall":false,"input":{"text":true,"image":false}}}}},
+        {"id":"opencode","models":{"big-pickle":{"capabilities":{"input":{"text":true,"image":false}}},
+                                   "mystery":{}}}],"default":{}})";
+    const QHash<QString, bool> images = OpenCodeWire::parseImageSupport(providers);
+    CHECK(images.value(u"google/antigravity-gemini-3-flash"_s) == true);
+    CHECK(images.value(u"google/gemini-2.5-flash-preview-tts"_s, true) == false);
+    CHECK(images.value(u"opencode/big-pickle"_s, true) == false);
+    CHECK_FALSE(images.contains(u"opencode/mystery"_s));     // not reported: unknown, not "no"
+}
+
+TEST_CASE("parseListening finds the server's address") {
+    CHECK(OpenCodeWire::parseListening("opencode server listening on http://127.0.0.1:4096\n")
+          == QUrl(u"http://127.0.0.1:4096"_s));
+#ifdef Q_OS_WIN
+    CHECK(OpenCodeWire::parseListening("server listening on http://127.0.0.1:56529\n")
+          == QUrl(u"http://127.0.0.1:56529"_s));
+#endif
+    CHECK_FALSE(OpenCodeWire::parseListening("[auto-update-checker] Package not found\n").isValid());
+    CHECK(OpenCodeWire::parseSessionId(R"({"id":"ses_e82111ec8ffe","title":"Nexa"})") == u"ses_e82111ec8ffe"_s);
+}
+
+TEST_CASE("request authenticates as opencode") {
+    const QNetworkRequest request =
+        OpenCodeWire::request(QUrl(u"http://127.0.0.1:4096"_s), u"/session"_s, u"pw"_s);
+    CHECK(request.url() == QUrl(u"http://127.0.0.1:4096/session"_s));
+    CHECK(request.rawHeader("Authorization") == "Basic " + QByteArray("opencode:pw").toBase64());
+    CHECK(request.header(QNetworkRequest::ContentTypeHeader).toString() == u"application/json"_s);
+}
+
+TEST_CASE("getStreaming reads an event stream as it arrives") {
+    FakeHttpServer server;
+    server.respond({.chunks = {"data: {\"a\":1}\n\n", "data: {\"a\":2}\n\n"}, .holdOpen = true});
+    HttpClient http;
+    QNetworkReply *reply = http.getStreaming(QNetworkRequest(QUrl(server.baseUrl().toString() + u"/event"_s)), 60'000);
+    QByteArray received;
+    QObject::connect(reply, &QNetworkReply::readyRead, [&] { received += reply->readAll(); });
+    REQUIRE(QTest::qWaitFor([&] { return received.contains("{\"a\":2}"); }, 5'000));
+    CHECK_FALSE(reply->isFinished());       // read while the server still holds the stream open
+    CHECK(server.requestHead().startsWith("GET /v1/event "));
+    CHECK(server.requestHead().contains("Accept: text/event-stream"));
+    reply->abort();
+    reply->deleteLater();
+}

@@ -1,5 +1,7 @@
 #include "PhoneSettings.h"
 
+#include <QJsonArray>
+#include <QJsonDocument>
 #include <QSysInfo>
 #ifdef Q_OS_ANDROID
 #include <QJniObject>
@@ -17,6 +19,7 @@ const QString kTls = QStringLiteral("nexa/tls");
 const QString kToken = QStringLiteral("nexa/token");
 const QString kFingerprint = QStringLiteral("nexa/fingerprint");
 const QString kName = QStringLiteral("nexa/name");
+const QString kRoutes = QStringLiteral("nexa/routes");
 
 QString modelName() {
 #ifdef Q_OS_ANDROID
@@ -57,6 +60,20 @@ void PhoneSettings::save(const RemoteEndpoint &endpoint, const QString &token, c
     settings_.setValue(kPort, endpoint.port);
     settings_.setValue(kTls, endpoint.tls);
     settings_.setValue(kToken, token);
+    settings_.setValue(kFingerprint, fingerprint);
+    settings_.sync();
+}
+
+QList<RemoteRoute> PhoneSettings::routes() const {
+    return decodeRoutes(QJsonDocument::fromJson(settings_.value(kRoutes).toByteArray()).array());
+}
+
+void PhoneSettings::setRoutes(const QList<RemoteRoute> &routes) {
+    settings_.setValue(kRoutes, QJsonDocument(encodeRoutes(routes)).toJson(QJsonDocument::Compact));
+    settings_.sync();
+}
+
+void PhoneSettings::setFingerprint(const QString &fingerprint) {
     settings_.setValue(kFingerprint, fingerprint);
     settings_.sync();
 }

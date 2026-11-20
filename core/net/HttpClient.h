@@ -29,10 +29,13 @@ public:
     QNetworkReply *get(const QNetworkRequest &request, int timeoutMs, QObject *context, BodyCallback done);
     QNetworkReply *post(const QNetworkRequest &request, const QByteArray &body, int timeoutMs,
                         QObject *context, BodyCallback done);
+    QNetworkReply *deleteResource(const QNetworkRequest &request, int timeoutMs, QObject *context, BodyCallback done);
 
     // Streaming POST: the caller owns the reply and reads it on readyRead(). The transfer is
     // aborted only after `idleTimeoutMs` without receiving any bytes.
     QNetworkReply *postStreaming(const QNetworkRequest &request, const QByteArray &body, int idleTimeoutMs);
+    // Streaming GET, the same way: an event stream the caller reads (and aborts) itself.
+    QNetworkReply *getStreaming(const QNetworkRequest &request, int idleTimeoutMs);
 
     static int httpStatus(const QNetworkReply *reply);
     // Error for a failed reply: HTTP status plus the server's own message, or the transport error.
@@ -40,8 +43,12 @@ public:
     // Best-effort human message from an error body ({"error":{"message":…}}, {"error":"…"}, …).
     static QString serverMessage(const QByteArray &body);
 
+signals:
+    void nexaRemaining(int remaining);
+
 private:
     QNetworkReply *deliver(QNetworkReply *reply, QObject *context, BodyCallback done);
+    void watchNexaHeaders(QNetworkReply *reply);
 
     QNetworkAccessManager manager_;
 };

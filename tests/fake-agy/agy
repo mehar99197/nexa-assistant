@@ -1,0 +1,294 @@
+#!/usr/bin/env python3
+"""Stands in for agy (Google's Antigravity CLI) in Nexa's tests.
+
+`agy models` prints two models. Otherwise it plays print mode with --input-format stream-json:
+one JSON line per turn on stdin, NDJSON events on stdout, the way agy 1.4.8 does. What each
+turn answers comes from the JSON list in $FAKE_AGY_SCRIPT, shared by every process of a test
+(the position is kept beside it), so a restarted agy carries on with the next entry:
+  {"text": "..."}    the reply, streamed in two pieces, then a SUCCESS result
+  {"deny": "Name"}   agy refused one of its own tools: an empty reply naming it
+  {"error": "..."}   a result with status ERROR
+  {"die": "..."}     that on stderr, and exit 1 before answering
+  {"hang": true}     never answer
+Each start ({"argv", "pid", "home", "cwd", "settings" — agy's settings.json under $HOME}) and each
+turn ({"turn"}) is appended to $FAKE_AGY_LOG.
+
+`agy acp` plays the Agent Client Protocol server of agy 1.4.12 (JSON-RPC 2.0, one object per line, both
+ways) as far as signing in goes. The "keyring" is the file named by $FAKE_AGY_KEYRING: it holds the plan
+name while someone is signed in, and is absent (or empty) while nobody is, so a sign-in in one process
+shows in the next. $FAKE_AGY_ACP is a JSON object that scripts the rest:
+  {"canLogout": false}          no agentCapabilities.auth.logout (default true)
+  {"plan": "X"}                 the plan a successful `authenticate` signs in (default "Fake AI Pro")
+  {"authenticate": "ok"}        default: sign in, reply {}
+  {"authenticate": "error"}     reply -32000 with a message that carries an address
+  {"authenticate": "no-effect"} reply {} but sign nobody in
+  {"authenticate": "link"}      send an `auth/url` notification first, then as "ok"
+  {"delayMs": 400}              wait this long before answering `authenticate`
+  {"logout": "ok"|"error"|"no-effect"}   `logout` signs out / fails / replies {} and keeps the sign-in
+  {"hang": "<method>"}          never answer that method
+  {"die": "<method>"}           exit 3 without answering that method
+  {"garbage": "<method>"}       answer that method with a line that is not JSON
+  {"error": "<method>"}         answer that method with -32000 "Internal error" (not "Authentication required")
+  {"badInitialize": true}       `initialize` answers a result that is not an initialize reply
+  {"agentRequest": "<method>"}  send a request of its own (fs/read_text_file, id 99) before answering
+  {"noSessionId": true}         `session/new` signed in, but with no sessionId
+  {"interleave": true}          before every answer: a notification, and an answer to an id nobody asked
+  {"split": true}               write every answer in two pieces, with a pause inside the line
+  {"longLine": "<method>"}      answer that method with 5 MB and no end of line, then wait
+  {"truncate": "<method>"}      write half an answer to that method and exit 0 (the end of the stream mid-line)
+  {"child": true}               start a `sleep` child (its pid is logged as {"child"}) to show that the
+                                process group, not only agy, is killed
+Each request is logged as {"acp": method, "id", "params"}, and each answer Nexa gives to a request of the
+fake's as {"clientReply"}.
+"""
+import json
+import os
+import sys
+import time
+
+
+def parent_death_signal():
+    """The signal this process gets when its parent dies (prctl PR_GET_PDEATHSIG), or None."""
+    try:
+        import ctypes
+        libc = ctypes.CDLL(None, use_errno=True)
+        signal = ctypes.c_int(0)
+        if libc.prctl(2, ctypes.byref(signal), 0, 0, 0) == 0:
+            return signal.value
+    except Exception:
+        pass
+    return None
+
+
+def log(entry):
+    path = os.environ.get("FAKE_AGY_LOG")
+    if not path:
+        return
+    line = json.dumps(entry) + "\n"
+    for attempt in range(5):
+        try:
+            with open(path, "a") as f:
+                f.write(line)
+            return
+        except PermissionError:
+            if attempt == 4:
+                raise
+            time.sleep(0.005)
+
+
+def next_entry():
+    path = os.environ.get("FAKE_AGY_SCRIPT")
+    if not path:
+        return {"text": "fake reply"}
+    with open(path) as f:
+        script = json.load(f)
+    position_file = path + ".pos"
+    position = int(open(position_file).read()) if os.path.exists(position_file) else 0
+    with open(position_file, "w") as f:
+        f.write(str(position + 1))
+    return script[position] if position < len(script) else {"text": "fake reply"}
+
+
+def emit(event):
+    sys.stdout.write(json.dumps(event) + "\n")
+    sys.stdout.flush()
+
+
+def step(kind, state, **extra):
+    emit({"event": "step_update", "step_update": dict(conversation_id="fake", step_type=kind, state=state, **extra)})
+
+
+def log_start(args):
+    settings_path = os.path.join(os.environ.get("HOME", ""), ".gemini", "antigravity-cli", "settings.json")
+    settings = json.load(open(settings_path)) if os.path.exists(settings_path) else None
+    log({"argv": args, "pid": os.getpid(), "home": os.environ.get("HOME"), "cwd": os.getcwd(), "settings": settings,
+         "pdeathsig": parent_death_signal()})
+
+
+AUTH_METHODS = [
+    {"id": "oauth-personal", "name": "Log in with Google"},
+    {"id": "oauth-business", "name": "Log in with Gemini Enterprise"},
+    {"id": "gemini-api-key", "name": "Gemini API key"},
+    {"id": "agent-platform", "name": "Gemini Enterprise Agent Platform"},
+]
+
+
+def keyring_plan():
+    """The plan of whoever is signed in (the fake keyring file), or None."""
+    path = os.environ.get("FAKE_AGY_KEYRING")
+    if not path or not os.path.exists(path):
+        return None
+    plan = open(path).read().strip()
+    return plan or None
+
+
+ACP_CONFIG = {}
+
+
+def acp_reply(mid, result=None, error=None):
+    message = {"jsonrpc": "2.0", "id": mid}
+    if error is not None:
+        message["error"] = error
+    else:
+        message["result"] = {} if result is None else result
+    if ACP_CONFIG.get("interleave"):
+        emit({"jsonrpc": "2.0", "method": "session/update", "params": {"sessionId": "x", "update": {}}})
+        emit({"jsonrpc": "2.0", "id": 4242, "result": {"sessionId": "not-asked", "plan": "wrong"}})
+    if ACP_CONFIG.get("split"):
+        text = json.dumps(message) + "\n"
+        half = len(text) // 2
+        sys.stdout.write(text[:half])
+        sys.stdout.flush()
+        time.sleep(0.05)
+        sys.stdout.write(text[half:])
+        sys.stdout.flush()
+        return
+    emit(message)
+
+
+def acp_initialize(config):
+    capabilities = {"loadSession": True,
+                    "sessionCapabilities": {"resume": {}, "close": {}, "load": {}, "list": {}},
+                    "_meta": {"antigravity": {"tier": True, "systemPrompt": {"append": True}}}}
+    if config.get("canLogout", True):
+        capabilities["auth"] = {"logout": {}}
+    return {"protocolVersion": 1, "agentInfo": {"name": "Antigravity ACP Server", "version": "1.4.12"},
+            "agentCapabilities": capabilities, "authMethods": AUTH_METHODS}
+
+
+def acp_main(args, config):
+    ACP_CONFIG.update(config)
+    log_start(args)
+    if config.get("child"):
+        import subprocess
+        cmd = [sys.executable, "-c", "import time; time.sleep(120)"] if os.name == "nt" else ["sleep", "120"]
+        child = subprocess.Popen(cmd, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        log({"child": child.pid})
+    for line in sys.stdin:
+        if not line.strip():
+            continue
+        message = json.loads(line)
+        if "method" not in message:
+            log({"clientReply": message})
+            continue
+        method, mid, params = message["method"], message.get("id"), message.get("params", {})
+        log({"acp": method, "id": mid, "params": params})
+        if config.get("die") == method:
+            return 3
+        if config.get("hang") == method:
+            time.sleep(120)
+            continue
+        if config.get("longLine") == method:
+            sys.stdout.write("x" * (5 * 1024 * 1024))
+            sys.stdout.flush()
+            time.sleep(120)
+            continue
+        if config.get("truncate") == method:
+            sys.stdout.write('{"jsonrpc":"2.0","id":%s,"res' % mid)
+            sys.stdout.flush()
+            return 0
+        if config.get("garbage") == method:
+            sys.stdout.write("this is not json\n")
+            sys.stdout.flush()
+            continue
+        if config.get("error") == method:
+            acp_reply(mid, error={"code": -32000, "message": "Internal error"})
+            continue
+        if config.get("agentRequest") == method:
+            emit({"jsonrpc": "2.0", "id": 99, "method": "fs/read_text_file", "params": {"path": "/nope"}})
+        if method == "initialize":
+            acp_reply(mid, {"unrelated": True} if config.get("badInitialize") else acp_initialize(config))
+        elif method == "session/new":
+            plan = keyring_plan()
+            if plan is None:
+                acp_reply(mid, error={"code": -32000, "message": "Authentication required"})
+            else:
+                result = {"models": {"availableModels": [{"modelId": "fake-fast"}], "currentModelId": "fake-fast"},
+                          "_meta": {"antigravity": {"tier": {"name": plan, "id": "fake-tier",
+                                                              "upgradeUri": "https://example.invalid/upgrade"}}}}
+                if not config.get("noSessionId"):
+                    result["sessionId"] = "fake-session-%d" % os.getpid()
+                acp_reply(mid, result)
+        elif method == "session/close":
+            acp_reply(mid, {})
+        elif method == "authenticate":
+            method_id = params.get("methodId")
+            if method_id not in [m["id"] for m in AUTH_METHODS]:
+                acp_reply(mid, error={"code": -32602, "message": 'Unsupported auth method: "%s"' % method_id})
+                continue
+            mode = config.get("authenticate", "ok")
+            if mode == "link":
+                emit({"jsonrpc": "2.0", "method": "auth/url",
+                      "params": {"url": "https://accounts.example.invalid/signin?fake=1"}})
+            if config.get("delayMs"):
+                time.sleep(config["delayMs"] / 1000.0)
+            if mode == "error":
+                acp_reply(mid, error={"code": -32000,
+                                      "message": "Sign-in was cancelled for someone@example.com"})
+                continue
+            if mode != "no-effect":
+                path = os.environ.get("FAKE_AGY_KEYRING")
+                if path:
+                    with open(path, "w") as f:
+                        f.write(config.get("plan", "Fake AI Pro"))
+            acp_reply(mid, {})
+        elif method == "logout":
+            if not config.get("canLogout", True):
+                acp_reply(mid, error={"code": -32601, "message": "Method not found"})
+                continue
+            mode = config.get("logout", "ok")
+            if mode == "error":
+                acp_reply(mid, error={"code": -32603, "message": "Internal error"})
+                continue
+            path = os.environ.get("FAKE_AGY_KEYRING")
+            if mode != "no-effect" and path and os.path.exists(path):
+                os.remove(path)
+            acp_reply(mid, {})
+        else:
+            acp_reply(mid, error={"code": -32601, "message": "Method not found"})
+    return 0
+
+
+def main():
+    args = sys.argv[1:]
+    if args[:1] == ["models"]:
+        print("Fetching available models...")
+        print("fake-fast\tFake Fast")
+        print("fake-smart\tFake Smart")
+        return 0
+    if args[:1] == ["acp"]:
+        return acp_main(args, json.loads(os.environ.get("FAKE_AGY_ACP") or "{}"))
+    log_start(args)
+    emit({"event": "init", "conversation_id": "fake", "init": {"permission_mode": "request-review"}})
+    for line in sys.stdin:
+        if not line.strip():
+            continue
+        text = json.loads(line)["message"]["content"][0]["text"]
+        log({"turn": text})
+        entry = next_entry()
+        step("user_input", "DONE")
+        if "die" in entry:
+            sys.stderr.write(entry["die"] + "\n")
+            sys.stderr.flush()
+            return 1
+        if "hang" in entry:
+            time.sleep(120)
+            continue
+        if "error" in entry:
+            emit({"event": "result", "result": {"status": "ERROR", "response": "", "error": entry["error"]}})
+        elif "deny" in entry:
+            step("tool", "ERROR", tool_name="run_command")
+            emit({"event": "result", "result": {"status": "SUCCESS", "response": "",
+                                                 "denied_actions": [{"action": "command",
+                                                                     "display_name": entry["deny"]}]}})
+        else:
+            reply = entry["text"]
+            half = len(reply) // 2
+            step("agent_response", "ACTIVE", text_delta=reply[:half])
+            step("agent_response", "DONE", text_delta=reply[half:])
+            emit({"event": "result", "result": {"status": "SUCCESS", "response": reply}})
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

@@ -6,10 +6,13 @@
 #include <QDir>
 #include <QFile>
 #include <QFileInfo>
+#include <QJsonArray>
 #include <QJsonDocument>
+#include <QJsonObject>
 #include <QJsonParseError>
+#include <QJsonValue>
 #include <QSaveFile>
-#include <QStandardPaths>
+#include "core/config/Portable.h"
 
 using namespace Qt::StringLiterals;
 
@@ -23,12 +26,22 @@ constexpr QFileDevice::Permissions kPrivateDir =
 constexpr QFileDevice::Permissions kGroupOrOther = QFileDevice::ReadGroup | QFileDevice::WriteGroup
     | QFileDevice::ExeGroup | QFileDevice::ReadOther | QFileDevice::WriteOther | QFileDevice::ExeOther;
 
+// The ids of the providers in `before` that `after` no longer has.
+QStringList removedProviders(const QJsonObject &before, const Config &after) {
+    QStringList removed;
+    for (const QJsonValue &value : before.value(u"providers"_s).toArray()) {
+        const QString id = value.toObject().value(u"id"_s).toString();
+        if (!id.isEmpty() && !after.provider(id)) removed.append(id);
+    }
+    return removed;
+}
+
 } // namespace
 
 ConfigStore::ConfigStore(QString path) : path_(std::move(path)) {}
 
 QString ConfigStore::defaultPath() {
-    return QStandardPaths::writableLocation(QStandardPaths::GenericConfigLocation) + u"/nexa/config.json"_s;
+    return portable::configDir() + u"/config.json"_s;
 }
 
 Result<Config> ConfigStore::load() const {
@@ -57,6 +70,20 @@ Result<void> ConfigStore::save(const Config &config) const {
     const QString dirPath = QFileInfo(path_).absolutePath();
     if (!QDir().mkpath(dirPath)) return Error{ErrorCode::Io, u"Cannot create %1"_s.arg(dirPath)};
     QFile::setPermissions(dirPath, kPrivateDir);
+
+    if (QFile current(path_); current.open(QIODevice::ReadOnly)) {
+        const QByteArray before = current.readAll();
+        const QStringList removed = removedProviders(QJsonDocument::fromJson(before).object(), config);
+        if (!removed.isEmpty()) {
+            QSaveFile previous(previousPath());
+            if (previous.open(QIODevice::WriteOnly)) {
+                previous.write(before);
+                if (previous.commit()) QFile::setPermissions(previousPath(), kPrivateFile);
+            }
+            qCWarning(lcConfig).noquote() << "providers removed:" << removed.join(u", "_s) << "— the settings from before"
+                                          << "are kept in" << previousPath();
+        }
+    }
 
     QSaveFile file(path_);
     if (!file.open(QIODevice::WriteOnly)) {

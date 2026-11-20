@@ -13,7 +13,7 @@ namespace nexa {
 
 class HttpClient;
 
-// Speech recognition through the active provider, e.g. OmniRoute (Strategy). Transcription models
+// Speech recognition through the active provider, e.g. OpenAI (Strategy). Transcription models
 // (whisper, *transcribe*, nova, …) use the OpenAI /audio/transcriptions endpoint; any other model
 // is taken for an audio-capable chat model (Gemini, gpt-audio) and gets the recording as
 // input_audio with an instruction to write down what was said.
@@ -21,7 +21,7 @@ class CloudRecognizer : public ISpeechRecognizer {
     Q_OBJECT
 public:
     struct Settings {
-        QString providerName;   // "OmniRoute"
+        QString providerName;   // "OpenAI"
         QString baseUrl;        // …/v1
         QString apiKey;
         QString model;          // e.g. agy/gemini-3.1-flash-lite or whisper-1

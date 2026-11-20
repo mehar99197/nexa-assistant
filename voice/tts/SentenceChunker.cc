@@ -72,7 +72,7 @@ qsizetype sentenceEnd(QStringView text, bool final) {
 // Where to cut a long partial line: after its last clause separator, else its last space.
 qsizetype softBreak(QStringView text) {
     const QStringView window = text.first(kMaxPartial);
-    for (const QStringView separator : {u", "_sv, u"; "_sv, u": "_sv, u" – "_sv, u" — "_sv}) {
+    for (const QStringView separator : {QStringView(u", "), QStringView(u"; "), QStringView(u": "), QStringView(u" – "), QStringView(u" — ")}) {
         const qsizetype at = window.lastIndexOf(separator);
         if (at >= kMinSplit) return at + 1;
     }

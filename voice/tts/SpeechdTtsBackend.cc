@@ -6,8 +6,20 @@ using namespace Qt::StringLiterals;
 
 namespace nexa {
 
+namespace {
+
+QString ttsEngineName() {
+#ifdef Q_OS_WIN
+    return QTextToSpeech::availableEngines().contains(u"sapi"_s) ? u"sapi"_s : QString();
+#else
+    return u"speechd"_s;
+#endif
+}
+
+} // namespace
+
 SpeechdTtsBackend::SpeechdTtsBackend(const QString &voice, double rate, QObject *parent)
-    : ITextToSpeech(parent), tts_(u"speechd"_s) {
+    : ITextToSpeech(parent), tts_(ttsEngineName()) {
     tts_.setRate(rate);
     if (!voice.isEmpty()) {
         const QList<QVoice> voices = tts_.availableVoices();
@@ -42,14 +54,24 @@ SpeechdTtsBackend::SpeechdTtsBackend(const QString &voice, double rate, QObject 
             });
 }
 
+// The engine reports an error from its own destructor when Speech Dispatcher is not there (a container, a
+// server): its signals are cut first, or they would reach a half-destroyed backend.
+SpeechdTtsBackend::~SpeechdTtsBackend() {
+    tts_.disconnect(this);
+}
+
 QString SpeechdTtsBackend::name() const {
+#ifdef Q_OS_WIN
+    return u"Windows Speech"_s;
+#else
     return u"Speech Dispatcher"_s;
+#endif
 }
 
 void SpeechdTtsBackend::speak(const QString &text) {
     if (text.trimmed().isEmpty()) return;
     if (tts_.state() == QTextToSpeech::Error) {
-        emit failed(Error{ErrorCode::Io, u"Speech Dispatcher is not available: %1"_s.arg(tts_.errorString())});
+        emit failed(Error{ErrorCode::Io, u"%1 is not available: %2"_s.arg(name(), tts_.errorString())});
         return;
     }
     // A stop() whose Ready already arrived must not swallow this sentence's Ready.
@@ -67,7 +89,7 @@ void SpeechdTtsBackend::stop() {
 }
 
 QStringList SpeechdTtsBackend::voiceNames() {
-    QTextToSpeech engine(u"speechd"_s);
+    QTextToSpeech engine(ttsEngineName());
     QStringList names;
     for (const QVoice &voice : engine.availableVoices()) names.append(voice.name());
     names.removeDuplicates();

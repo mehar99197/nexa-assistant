@@ -1,5 +1,11 @@
 add_library(nexa_system STATIC
     SystemTools.h SystemTools.cc
+    a11y/AtspiNode.h a11y/AtspiNode.cc
+    a11y/ScreenOutline.h a11y/ScreenOutline.cc
+    a11y/IScreenReader.h
+    a11y/AtspiBus.h a11y/AtspiBus.cc
+    a11y/AtspiScreenReader.h a11y/AtspiScreenReader.cc
+    a11y/ScreenTools.h a11y/ScreenTools.cc
     android/AdbClient.h android/AdbClient.cc
     android/AdbDiscovery.h android/AdbDiscovery.cc
     android/AdbParsers.h android/AdbParsers.cc
@@ -10,6 +16,7 @@ add_library(nexa_system STATIC
     android/MdnsPacket.h android/MdnsPacket.cc
     android/PhoneLookup.h android/PhoneLookup.cc
     android/PhoneMirror.h android/PhoneMirror.cc
+    android/UiHierarchy.h android/UiHierarchy.cc
     apps/AppLauncher.h apps/AppLauncher.cc
     apps/DesktopEntry.h apps/DesktopEntry.cc
     apps/DesktopEntryIndex.h apps/DesktopEntryIndex.cc
@@ -19,33 +26,48 @@ add_library(nexa_system STATIC
     browser/PlaywrightInstaller.h browser/PlaywrightInstaller.cc
     commands/LocalCommandRunner.h commands/LocalCommandRunner.cc
     files/FileAccess.h files/FileAccess.cc
+    files/AttachmentLoader.h files/AttachmentLoader.cc
     helper/HelperClient.h helper/HelperClient.cc
     commands/RootCommandRunner.h commands/RootCommandRunner.cc
     input/IInputBackend.h
     input/CombinedInputBackend.h input/CombinedInputBackend.cc
     input/HelperInputBackend.h input/HelperInputBackend.cc
+    input/HelperInputLock.h input/HelperInputLock.cc
     input/InputBackendSelector.h input/InputBackendSelector.cc
     input/PortalInputBackend.h input/PortalInputBackend.cc
     input/RemoteDesktopSession.h input/RemoteDesktopSession.cc
-    input/XTestInputBackend.h input/XTestInputBackend.cc
+    input/WinInputBackend.h input/WinInputBackend.cc
+    input/WinInputLock.h input/WinInputLock.cc
+    info/ProcessStats.h info/ProcessStats.cc
     info/SystemInfo.h info/SystemInfo.cc
     media/MprisController.h media/MprisController.cc
     office/OdfWriter.h office/OdfWriter.cc
     office/OfficeTools.h office/OfficeTools.cc
+    net/TailscaleWatcher.h net/TailscaleWatcher.cc
+    net/TunnelLog.h net/TunnelLog.cc
+    net/TunnelProcess.h net/TunnelProcess.cc
+    screen/ScreenAwake.h screen/ScreenAwake.cc
     screen/ScreenCapture.h screen/ScreenCapture.cc
+    setup/AssetDownloader.h setup/AssetDownloader.cc
+    setup/EngineAssets.h setup/EngineAssets.cc
 )
-
-# X11/XTEST is the fallback input backend, used on X11 sessions and for XWayland windows.
-find_package(X11 REQUIRED COMPONENTS Xtst)
 
 target_link_libraries(nexa_system
     PUBLIC
         nexa_core
         nexa_proto
         Qt6::Gui
-        Qt6::DBus
     PRIVATE
         nexa_options
-        X11::X11
-        X11::Xtst
 )
+
+if(UNIX AND NOT ANDROID AND NOT APPLE)
+    # X11/XTEST is the fallback input backend, used on X11 sessions and for XWayland windows.
+    find_package(X11 REQUIRED COMPONENTS Xtst)
+    target_sources(nexa_system PRIVATE input/XTestInputBackend.h input/XTestInputBackend.cc)
+    target_link_libraries(nexa_system PUBLIC Qt6::DBus PRIVATE X11::X11 X11::Xtst)
+endif()
+
+if(WIN32)
+    target_link_libraries(nexa_system PRIVATE user32 psapi shell32 ole32 oleaut32 uuid advapi32)
+endif()

@@ -29,6 +29,9 @@ public:
     // Only the newest message with images keeps them (older screenshots become a text note),
     // so a long session does not resend every image.
     ChatRequest buildRequest(const QString &model, const QList<ToolSpec> &tools = {}) const;
+    // The text without the note buildRequest() leaves where it dropped an older message's images —
+    // the same message, as far as a backend that already saw them is concerned.
+    static QString withoutImageNotes(const QString &text);
 
 private:
     qsizetype firstMessageInBudget() const;

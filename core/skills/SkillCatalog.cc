@@ -7,7 +7,7 @@
 #include <QFile>
 #include <QFileInfo>
 #include <QSaveFile>
-#include <QStandardPaths>
+#include "core/config/Portable.h"
 
 #include <algorithm>
 
@@ -41,7 +41,7 @@ SkillCatalog::SkillCatalog(QString builtInDir, QString userDir, QObject *parent)
 }
 
 QString SkillCatalog::defaultUserDir() {
-    return QStandardPaths::writableLocation(QStandardPaths::GenericDataLocation) + u"/nexa/skills"_s;
+    return portable::dataDir() + u"/skills"_s;
 }
 
 void SkillCatalog::setDisabled(const QStringList &names) {

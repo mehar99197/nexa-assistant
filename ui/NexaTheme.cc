@@ -114,16 +114,24 @@ QString NexaTheme::styleSheet(const ThemeTokens &t, CoreStyle style) {
     return styleSheet(t, style, NexaDesigns::resolve(u"studio"_s));
 }
 
-QString NexaTheme::styleSheet(const ThemeTokens &t, CoreStyle style, const DesignSpec &design) {
+QString NexaTheme::styleSheet(const ThemeTokens &t, CoreStyle style, const DesignSpec &design,
+                              const ThemeChrome &chrome) {
     QFile file(u":/nexa/ui/theme.qss"_s);
-    if (!file.open(QIODevice::ReadOnly)) return {};
+    if (!file.open(QIODevice::ReadOnly | QIODevice::Text)) return {};
     QString sheet = QString::fromUtf8(file.readAll());
     const int basePoints = QFontDatabase::systemFont(QFontDatabase::GeneralFont).pointSize();
     const QString chatFont = design.font == FontFace::Mono ? monoFamily() : NexaDesigns::fontFamily(design.font);
+    // In the Flat chrome the sheet draws the panels; in any other the panel paints itself (ChromeFrame), so the
+    // sheet leaves it bare.
+    const bool flat = chrome.panels == PanelChrome::Flat;
     const std::pair<QString, QString> values[] = {
         {u"coreStyle"_s, QString::number(static_cast<int>(style))},
         {u"coreShape"_s, QString::number(static_cast<int>(design.shape))},
         {u"bubbleStyle"_s, QString::number(static_cast<int>(design.bubbles))},
+        {u"panelChrome"_s, QString::number(static_cast<int>(chrome.panels))},
+        {u"backdrop"_s, QString::number(static_cast<int>(chrome.backdrop))},
+        {u"panelFill"_s, flat ? css(t.panel) : u"transparent"_s},
+        {u"panelBorder"_s, flat ? u"1px solid %1"_s.arg(css(t.line)) : u"0"_s},
         {u"radius"_s, QString::number(design.radius)},
         {u"radiusSmall"_s, QString::number(std::max(0, int(std::lround(design.radius * 0.75))))},
         {u"font"_s, NexaDesigns::fontFamily(design.font)},
@@ -196,7 +204,8 @@ void NexaTheme::apply(QApplication *app, const ThemeTokens &tokens, CoreStyle st
     apply(app, tokens, style, NexaDesigns::resolve(u"studio"_s));
 }
 
-void NexaTheme::apply(QApplication *app, const ThemeTokens &tokens, CoreStyle style, const DesignSpec &design) {
+void NexaTheme::apply(QApplication *app, const ThemeTokens &tokens, CoreStyle style, const DesignSpec &design,
+                      const ThemeChrome &chrome) {
     // Fusion draws the same everywhere and leaves the look to the sheet and the palette; the
     // platform style would fight both.
     static bool styled = false;
@@ -205,7 +214,7 @@ void NexaTheme::apply(QApplication *app, const ThemeTokens &tokens, CoreStyle st
         styled = true;
     }
     app->setPalette(palette(tokens));
-    app->setStyleSheet(styleSheet(tokens, style, design));
+    app->setStyleSheet(styleSheet(tokens, style, design, chrome));
 }
 
 } // namespace nexa

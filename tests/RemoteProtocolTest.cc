@@ -2,6 +2,7 @@
 // right is refused, because the other end is a network.
 
 #include "remote/RemoteProtocol.h"
+#include "remote/RemoteRoutes.h"
 
 #include "QtStringMakers.h"
 
@@ -127,4 +128,106 @@ TEST_CASE("The phone app reads every server message back, and writes what the pa
     CHECK(remote::decode(remote::text(u"open firefox"_s))->text == u"open firefox"_s);
     CHECK(remote::decode(remote::cancel())->type == remote::ClientMessage::Type::Cancel);
     CHECK(remote::decode(remote::ping())->type == remote::ClientMessage::Type::Ping);
+}
+
+TEST_CASE("Hardcore mode on the phone: the lock, Unlock PC, and the questions a task waits on") {
+    using Type = remote::ServerMessage::Type;
+    const auto lock = remote::decodeServer(remote::lock(true, u"Keyboard and mouse locked until “sort photos” is done."_s));
+    REQUIRE(lock);
+    CHECK(lock->type == Type::Lock);
+    CHECK(lock->locked);
+    CHECK(lock->text.contains(u"sort photos"_s));
+    CHECK_FALSE(remote::decodeServer(remote::lock(false, {}))->locked);
+
+    const auto approval = remote::decodeServer(remote::approval(7, u"CODE-02"_s, u"run_command"_s, u"Run `make`?"_s));
+    REQUIRE(approval);
+    CHECK(approval->type == Type::Approval);
+    CHECK(approval->id == 7);
+    CHECK(approval->agent == u"CODE-02"_s);
+    CHECK(approval->tool == u"run_command"_s);
+    CHECK(approval->text == u"Run `make`?"_s);
+    const auto settled = remote::decodeServer(remote::settled(7, false));
+    REQUIRE(settled);
+    CHECK(settled->type == Type::Settled);
+    CHECK(settled->id == 7);
+    CHECK_FALSE(settled->allow);
+
+    // The phone's side: what it writes, the server reads.
+    CHECK(remote::decode(remote::unlock())->type == remote::ClientMessage::Type::Unlock);
+    const auto answer = remote::decode(remote::answer(7, true));
+    REQUIRE(answer);
+    CHECK(answer->type == remote::ClientMessage::Type::Answer);
+    CHECK(answer->id == 7);
+    CHECK(answer->allow);
+    // An answer must say to what and which way.
+    CHECK_FALSE(remote::decode(R"({"t":"answer","allow":true})"));
+    CHECK_FALSE(remote::decode(R"({"t":"answer","id":0,"allow":true})"));
+    CHECK_FALSE(remote::decode(R"({"t":"answer","id":-3,"allow":true})"));
+    CHECK_FALSE(remote::decode(R"({"t":"answer","id":7})"));
+    CHECK_FALSE(remote::decode(R"({"t":"answer","id":7,"allow":"yes"})"));
+    CHECK_FALSE(remote::decode(R"({"t":"answer","id":"7","allow":true})"));
+}
+
+TEST_CASE("The welcome tells a phone every way to this PC and the certificate to expect on the direct ones") {
+    using Type = remote::ServerMessage::Type;
+    const QList<RemoteRoute> routes{{RemoteRoute::Kind::Lan, u"https://192.168.0.109:7777"_s},
+                                    {RemoteRoute::Kind::Tailscale, u"https://100.101.102.103:7777"_s},
+                                    {RemoteRoute::Kind::Cloudflare, u"https://nexa.nexacodesolutions.online"_s}};
+    const auto welcome = remote::decodeServer(remote::welcome(u"Phone"_s, true, false, u"idle"_s, routes, u"AB:CD:EF"_s));
+    REQUIRE(welcome);
+    CHECK(welcome->type == Type::Welcome);
+    CHECK(welcome->routes == routes);
+    CHECK(welcome->fingerprint == u"AB:CD:EF"_s);
+    // An older PC's welcome has neither: nothing is assumed.
+    const auto old = remote::decodeServer(remote::welcome(u"Phone"_s, true, false));
+    REQUIRE(old);
+    CHECK(old->routes.isEmpty());
+    CHECK(old->fingerprint.isEmpty());
+
+    const auto changed = remote::decodeServer(remote::routes(routes.mid(0, 2)));
+    REQUIRE(changed);
+    CHECK(changed->type == Type::Routes);
+    CHECK(changed->routes == routes.mid(0, 2));
+}
+
+TEST_CASE("RemoteProtocol carries ThemeStyle and accepted attachments while staying backwards-compatible") {
+    using Type = remote::ServerMessage::Type;
+    remote::ThemeStyle style;
+    style.themeId = u"abyss"_s;
+    style.designId = u"console"_s;
+    style.ground = u"#0b0e14"_s;
+    style.panel = u"#141923"_s;
+    style.panelRaised = u"#1b2230"_s;
+    style.line = u"#273043"_s;
+    style.text = u"#e6edf3"_s;
+    style.muted = u"#8b949e"_s;
+    style.idle = u"#39c5bb"_s;
+    style.wake = u"#6fd38a"_s;
+    style.listen = u"#5be3d6"_s;
+    style.stt = u"#9db4ff"_s;
+    style.think = u"#b39dff"_s;
+    style.act = u"#f0b24b"_s;
+    style.speak = u"#7be8c0"_s;
+    style.fast = u"#e6fffb"_s;
+    style.error = u"#ff7a66"_s;
+    style.onAccent = u"#06201c"_s;
+    style.fontFace = u"mono"_s;
+    style.bubbleStyle = u"lines"_s;
+    style.radius = 4;
+
+    const auto welcomeMsg = remote::decodeServer(remote::welcome(u"Phone"_s, true, false, u"idle"_s, {}, {}, style));
+    REQUIRE(welcomeMsg);
+    REQUIRE(welcomeMsg->theme);
+    CHECK(*welcomeMsg->theme == style);
+
+    const auto liveTheme = remote::decodeServer(remote::theme(style));
+    REQUIRE(liveTheme);
+    CHECK(liveTheme->type == Type::Theme);
+    REQUIRE(liveTheme->theme);
+    CHECK(*liveTheme->theme == style);
+
+    const auto acc = remote::decodeServer(remote::accepted(u"check file"_s, u"phone"_s, u"notes.txt (12 B)"_s));
+    REQUIRE(acc);
+    CHECK(acc->type == Type::Accepted);
+    CHECK(acc->attachments == u"notes.txt (12 B)"_s);
 }

@@ -24,11 +24,15 @@ public:
     void add(std::unique_ptr<IIntentHandler> handler);
     std::optional<IntentMatch> route(const QString &text) const;
 
-    static IntentInput prepare(const QString &text);
+    // The wake name the user chose ("Jarvis"): taken off the start of a request like "hey nexa".
+    void setAssistantName(const QString &name) { assistantName_ = name; }
+
+    static IntentInput prepare(const QString &text, const QString &assistantName = QStringLiteral("Nexa"));
     static bool isCompound(const QString &normalized);
 
 private:
     ToolAvailable available_;
+    QString assistantName_{QStringLiteral("Nexa")};
     std::vector<std::unique_ptr<IIntentHandler>> handlers_;
 };
 

@@ -44,16 +44,26 @@ PhoneWindow::PhoneWindow(PhoneSettings *settings, RemoteClient *client, Recorder
 
     connect(pair_, &PairPage::pairRequested, this, &PhoneWindow::onPairRequested);
     connect(chat_, &ChatPage::askRequested, this, &PhoneWindow::onAsk);
+    connect(chat_, &ChatPage::askWithFilesRequested, this, &PhoneWindow::onAskWithFiles);
     connect(chat_, &ChatPage::cancelRequested, client_, &RemoteClient::cancel);
+    connect(chat_, &ChatPage::unlockRequested, client_, &RemoteClient::unlock);
+    connect(chat_, &ChatPage::approvalAnswered, client_, &RemoteClient::answer);
     connect(chat_, &ChatPage::talkPressed, this, &PhoneWindow::onTalkPressed);
     connect(chat_, &ChatPage::talkReleased, this, &PhoneWindow::onTalkReleased);
     connect(chat_, &ChatPage::forgetRequested, this, &PhoneWindow::forget);
 
     connect(client_, &RemoteClient::stateChanged, this, &PhoneWindow::onStateChanged);
     connect(client_, &RemoteClient::welcomed, this, &PhoneWindow::onWelcomed);
+    connect(client_, &RemoteClient::themeChanged, chat_, &ChatPage::applyRemoteTheme);
     connect(client_, &RemoteClient::received, this, &PhoneWindow::onReceived);
     connect(client_, &RemoteClient::unauthorized, this, &PhoneWindow::onUnauthorized);
     connect(client_, &RemoteClient::certificateRejected, this, &PhoneWindow::onCertificateRejected);
+    connect(client_, &RemoteClient::routesLearned, this, &PhoneWindow::onRoutesLearned);
+    connect(client_, &RemoteClient::connectedVia, this, [this](const QString &via) {
+        // At home (adb, the Wi-Fi) it is simply connected; away, it says how.
+        const bool away = !via.isEmpty() && via != u"adb"_s && via != u"Wi-Fi"_s;
+        chat_->setStatus(away ? tr("Your PC · connected · via %1").arg(via) : tr("Your PC · connected"), ChatPage::Status::Ok);
+    });
 
     connect(recorder_, &Recorder::recorded, this, &PhoneWindow::onRecorded);
     connect(recorder_, &Recorder::stopped, this, &PhoneWindow::onRecordingStopped);
@@ -91,8 +101,29 @@ void PhoneWindow::start() {
     client_->setEndpoint(endpoint);
     client_->setPinnedFingerprint(settings_->fingerprint());
     client_->setToken(settings_->token());
+    useLearnedRoutes();
     pages_->setCurrentWidget(chat_);
     client_->connectToNexa();
+}
+
+void PhoneWindow::useLearnedRoutes() {
+    QList<RemoteEndpoint> ways;
+    for (const RemoteRoute &route : settings_->routes()) {
+        if (const std::optional<RemoteEndpoint> way = RemoteEndpoint::fromRoute(route)) ways.append(*way);
+    }
+    client_->setAlternates(ways);
+}
+
+void PhoneWindow::onRoutesLearned(const QList<RemoteRoute> &routes, const QString &fingerprint) {
+    if (!routes.isEmpty()) settings_->setRoutes(routes);
+    // Nexa's own certificate, for the direct ways (Tailscale, the Wi-Fi): taken only while connected over adb — the
+    // phone's own loopback, which no one on a network or at a tunnel stands in — and only if none is trusted yet.
+    if (!fingerprint.isEmpty() && settings_->fingerprint().isEmpty() && !client_->endpointInUse().tls) {
+        settings_->setFingerprint(fingerprint);
+        client_->setPinnedFingerprint(fingerprint);
+        qWarning().noquote() << "nexa routes: took the PC's certificate over adb";
+    }
+    useLearnedRoutes();
 }
 
 void PhoneWindow::pairWith(const QString &address, const QString &code, const QString &name) {
@@ -193,8 +224,12 @@ void PhoneWindow::onStateChanged(RemoteClient::State state, const QString &detai
 
 void PhoneWindow::onWelcomed(const QString &device, bool voice, bool busy, const QString &mode) {
     device_ = device;
-    chat_->setStatus(tr("Your PC · connected · %1").arg(device), ChatPage::Status::Ok);
+    // The phone's own name (as it was paired) says nothing here; the pill keeps to what the phone is connected to.
+    chat_->setStatus(tr("Your PC · connected"), ChatPage::Status::Ok);
     chat_->setVoiceAvailable(voice);
+    // The PC sends its lock and what waits right after the welcome: whatever was shown before is out of date.
+    chat_->setLocked(false, {});
+    chat_->clearApprovals();
     chat_->setBusy(busy);
     pcMode_ = coreModeFromKey(mode).value_or(busy ? CoreMode::Thinking : CoreMode::Idle);
     pcNodes_ = NoNode;
@@ -206,7 +241,8 @@ void PhoneWindow::onReceived(const remote::ServerMessage &message) {
     switch (message.type) {
     case Type::Accepted:
         chat_->endReply();
-        chat_->addMessage(message.source == u"pc"_s ? ChatPage::Kind::FromPc : ChatPage::Kind::User, message.text);
+        chat_->addMessage(message.source == u"pc"_s ? ChatPage::Kind::FromPc : ChatPage::Kind::User,
+                          message.text, message.attachments);
         break;
     case Type::Delta:
         chat_->appendReply(message.text);
@@ -244,8 +280,19 @@ void PhoneWindow::onReceived(const remote::ServerMessage &message) {
         chat_->addMessage(ChatPage::Kind::Error, message.text);
         if (localMode_ == CoreMode::Transcribing) setLocalMode(std::nullopt);
         break;
+    case Type::Lock:
+        chat_->setLocked(message.locked, message.text);
+        break;
+    case Type::Approval:
+        chat_->addApproval(message.id, message.agent, message.tool, message.text);
+        break;
+    case Type::Settled:
+        chat_->settleApproval(message.id);
+        break;
     case Type::Welcome:
     case Type::Pong:
+    case Type::Routes:      // the client says them (routesLearned)
+    case Type::Theme:       // handled by RemoteClient::themeChanged
         break;
     }
 }
@@ -264,6 +311,12 @@ void PhoneWindow::onCertificateRejected(const QString &fingerprint) {
 
 void PhoneWindow::onAsk(const QString &text) {
     if (!client_->ask(text)) chat_->addMessage(ChatPage::Kind::Error, tr("Not connected to Nexa."));
+}
+
+void PhoneWindow::onAskWithFiles(const QString &text, const QStringList &filePaths) {
+    client_->uploadAsk(text, filePaths, [this](Result<void> res) {
+        if (!res) chat_->addMessage(ChatPage::Kind::Error, res.error().message);
+    });
 }
 
 void PhoneWindow::onTalkPressed() {
@@ -355,15 +408,19 @@ void PhoneWindow::showCore() {
     const bool online = client_->isOnline();
     const CoreMode mode = !online ? CoreMode::Offline : localMode_.value_or(pcMode_);
     const CoreNodes nodes = online && !localMode_ ? pcNodes_ : NoNode;
+    // The phone's own listening, recognising and reading aloud say what to do here; the PC's say it is the PC.
+    const bool mine = localMode_.has_value();
     QString hint;
     switch (mode) {
     case CoreMode::Idle: hint = tr("Say a request, or type one."); break;
-    case CoreMode::WakeWord: hint = tr("The PC is listening for “Hey Nexa”."); break;
-    case CoreMode::Listening: hint = tapRecording_ ? tr("Tap again, or pause, to send.") : tr("Let go to send."); break;
-    case CoreMode::Transcribing: hint = tr("Recognising what you said…"); break;
+    case CoreMode::WakeWord: hint = tr("The PC is listening for its name."); break;
+    case CoreMode::Listening:
+        hint = !mine ? tr("The PC is listening.") : tapRecording_ ? tr("Tap again, or pause, to send.") : tr("Let go to send.");
+        break;
+    case CoreMode::Transcribing: hint = mine ? tr("Recognising what you said…") : tr("The PC is recognising what it heard…"); break;
     case CoreMode::Thinking: hint = tr("Nexa is writing a reply…"); break;
     case CoreMode::Acting: hint = tr("Running tools on the PC…"); break;
-    case CoreMode::Speaking: hint = tr("Reading the reply aloud."); break;
+    case CoreMode::Speaking: hint = mine ? tr("Reading the reply aloud.") : tr("The PC is reading the reply aloud."); break;
     case CoreMode::FastPath: hint = tr("Done directly, without the model."); break;
     case CoreMode::Offline: hint = online ? tr("The PC cannot reach its AI provider.") : tr("Not connected to the PC."); break;
     }

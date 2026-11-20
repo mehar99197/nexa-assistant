@@ -24,6 +24,8 @@ inline constexpr QLatin1StringView kErrorDenied{"org.nexa.Helper.Error.Denied"};
 inline constexpr QLatin1StringView kErrorInvalidArgument{"org.nexa.Helper.Error.InvalidArgument"};
 inline constexpr QLatin1StringView kErrorNoInputDevice{"org.nexa.Helper.Error.NoInputDevice"};
 inline constexpr QLatin1StringView kErrorNoSuchJob{"org.nexa.Helper.Error.NoSuchJob"};
+// LockInput while another caller holds the lock.
+inline constexpr QLatin1StringView kErrorLocked{"org.nexa.Helper.Error.Locked"};
 inline constexpr QLatin1StringView kErrorFailed{"org.nexa.Helper.Error.Failed"};
 
 // OutputChunk streams.

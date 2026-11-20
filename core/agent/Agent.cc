@@ -36,17 +36,42 @@ void Agent::run(IAiProvider *provider, Conversation *conversation, const QString
     requestStep();
 }
 
-void Agent::cancel() {
+void Agent::cancel(const QString &note) {
     if (!running_) return;
     const bool toolRunning = currentCall_.has_value();
     if (stream_) {
         stream_->disconnect(this);
         stream_->cancel();
     }
+    cancelNote_ = note;
     stop(std::nullopt, FinishReason::Cancelled);
+    cancelNote_.clear();
     // After stop(): the generation has moved on, so a tool that reports synchronously from
-    // cancel() is ignored instead of starting another round.
-    if (toolRunning) executor_->cancelAll();
+    // cancel() is ignored instead of starting another round. An agent working for a task stops
+    // that task's tools only; the others' go on.
+    if (toolRunning) {
+        if (task_ != 0) {
+            executor_->cancelTask(task_);
+        } else {
+            executor_->cancelAll();
+        }
+    }
+}
+
+// When the screen can be read as text, a blind model is not stuck: the notice says so.
+QString Agent::textScreenHint() const {
+    for (const ToolSpec &spec : offeredTools()) {
+        if (spec.name == u"screen_snapshot"_s) return u" The screen can still be read as text with screen_snapshot."_s;
+    }
+    return {};
+}
+
+QList<ToolSpec> Agent::offeredTools() const {
+    QList<ToolSpec> tools = registry_->specs();
+    if (!hidden_.isEmpty()) {
+        tools.removeIf([this](const ToolSpec &spec) { return hidden_.contains(spec.name); });
+    }
+    return tools;
 }
 
 void Agent::requestStep() {
@@ -62,30 +87,44 @@ void Agent::requestStep() {
 }
 
 void Agent::sendStep() {
-    const QList<ToolSpec> tools = registry_->specs();
+    emit stepStarted(step_);
+    const QList<ToolSpec> tools = offeredTools();
     textTools_ = !provider_->capabilities().nativeTools;
-    ChatRequest request;
-    if (textTools_) {
-        request = conversation_->buildRequest(model_);
-        request.messages = TextToolParser::asText(request.messages);
-        const QString convention = TextToolParser::instructions(tools);
-        if (!request.messages.isEmpty() && request.messages.first().role == Role::System) {
-            request.messages.first().text += u"\n\n"_s + convention;
-        } else {
-            request.messages.prepend(ChatMessage{.role = Role::System, .text = convention});
-        }
-    } else {
-        request = conversation_->buildRequest(model_, tools);
-    }
-    // A model known to refuse images gets the words alone, and a note where each image was.
+    ChatRequest request = conversation_->buildRequest(model_, tools);
+    if (textTools_) request = TextToolParser::asTextRequest(request);
+    // A model known to refuse images, or a provider that takes none (agy), gets the words alone and a
+    // note where each image was; the user hears about a provider once.
     stepHadImages_ = hasImages(request);
-    if (stepHadImages_ && (blindModels_.contains(model_) || pendingBlind_ == model_)) {
+    // What the provider knows about this model wins (a chain can take the picture to one that sees);
+    // otherwise its capabilities say.
+    const std::optional<bool> seesImages = provider_->takesImages(model_);
+    const bool sightless = seesImages ? !*seesImages : !provider_->capabilities().vision;
+    if (stepHadImages_ && (sightless || blindModels_.contains(model_) || pendingBlind_ == model_)) {
+        if (sightless && !sightlessNoticed_.contains(provider_->displayName())) {
+            sightlessNoticed_.insert(provider_->displayName());
+            emit notice(u"%1 cannot see images, so the picture was left out of the request. A vision-capable "
+                        "provider is needed to look at the screen.%2"_s.arg(provider_->displayName(), textScreenHint()));
+        }
         stripImages(request);
         stepHadImages_ = false;
     }
     stream_ = provider_->chat(request);
     ChatStream *stream = stream_.get();
-    if (!textTools_) connect(stream, &ChatStream::textDelta, this, &Agent::textDelta);
+    filter_ = {};
+    filtering_ = textTools_;
+    connect(stream, &ChatStream::textDelta, this, [this](const QString &delta) {
+        if (!filtering_) {
+            emit textDelta(delta);
+        } else if (const QString shown = filter_.feed(delta); !shown.isEmpty()) {
+            emit textDelta(shown);
+        }
+    });
+    // A fallback answers before it has said anything, and may write its calls as text whatever the
+    // first choice could do: from then on the step's words go through the filter too.
+    connect(stream, &ChatStream::rerouted, this, [this](const QString &route, const QString &reason) {
+        filtering_ = true;
+        emit rerouted(route, reason);
+    });
     connect(stream, &ChatStream::finished, this, [this, stream](FinishReason reason) { onStepFinished(stream, reason); });
     connect(stream, &ChatStream::failed, this, [this, stream](const Error &error) {
         if (stream != stream_.get()) return;
@@ -97,7 +136,7 @@ void Agent::sendStep() {
             pendingBlind_ = model_;
             qCInfo(lcAi) << model_ << "cannot see images:" << error.message;
             emit notice(u"%1 cannot see images, so the screenshot was left out of the request. A vision-capable "
-                        "model is needed to look at the screen."_s.arg(model_));
+                        "model is needed to look at the screen.%2"_s.arg(model_, textScreenHint()));
             stream_.reset();
             stepHadImages_ = false;
             sendStep();
@@ -111,7 +150,7 @@ void Agent::sendStep() {
 
 bool Agent::refusesImages(const Error &error) const {
     if (error.code != ErrorCode::Http) return false;
-    // A rejected request body is a 400-class answer ("HTTP 400: …", or OmniRoute's "[400]: …"
+    // A rejected request body is a 400-class answer ("HTTP 400: …", or a gateway's "[400]: …"
     // inside the stream); a rate limit or an outage that happens to mention images is not.
     static const QRegularExpression status(u"^\\[?(?:HTTP )?(\\d{3})\\]?"_s);
     if (const QRegularExpressionMatch m = status.match(error.message); m.hasMatch()) {
@@ -166,7 +205,7 @@ void Agent::onStepFinished(ChatStream *stream, FinishReason reason) {
     // models even with them.
     if (calls.isEmpty()) {
         QStringList known;
-        for (const ToolSpec &spec : registry_->specs()) known.append(spec.name);
+        for (const ToolSpec &spec : offeredTools()) known.append(spec.name);
         TextToolParser::Parsed parsed = TextToolParser::parse(text, known);
         if (!parsed.calls.isEmpty()) {
             for (qsizetype i = 0; i < parsed.calls.size(); ++i) parsed.calls[i].id = u"text_%1_%2"_s.arg(step_).arg(i + 1);
@@ -174,7 +213,17 @@ void Agent::onStepFinished(ChatStream *stream, FinishReason reason) {
             calls = parsed.calls;
         }
     }
-    if (textTools_ && !text.isEmpty()) emit textDelta(text);
+    // What the filter held back while the reply streamed: everything after the words already shown.
+    if (filtering_) {
+        const QString shown = filter_.shown();
+        qsizetype start = 0;    // the filter never shows leading whitespace
+        while (start < text.size() && text.at(start).isSpace()) ++start;
+        qsizetype common = 0;
+        while (common < shown.size() && start + common < text.size() && shown.at(common) == text.at(start + common)) {
+            ++common;
+        }
+        if (const QString rest = text.mid(start + common); !rest.trimmed().isEmpty()) emit textDelta(rest);
+    }
 
     if (calls.isEmpty()) {
         if (!text.isEmpty()) conversation_->addAssistant(text);
@@ -210,8 +259,11 @@ void Agent::runNextTool() {
         return;
     }
 
-    // Withheld for now (the screen while it is not shared): the model learns why, nothing runs.
-    if (const QString reason = registry_->withheldReason(call.name); !reason.isEmpty()) {
+    // Withheld for now (the screen while it is not shared), or hidden from this agent: the model learns why,
+    // nothing runs.
+    QString reason = hidden_.contains(call.name) ? hiddenReason_ : registry_->withheldReason(call.name);
+    if (hidden_.contains(call.name) && reason.isEmpty()) reason = u"it is not available here"_s;
+    if (!reason.isEmpty()) {
         const QString message = u"Error: %1 cannot be used now — %2"_s.arg(call.name, reason);
         conversation_->addToolResult(call.id, call.name, message);
         currentCall_.reset();
@@ -224,7 +276,7 @@ void Agent::runNextTool() {
     QElapsedTimer timer;
     timer.start();
     const quint64 generation = generation_;
-    executor_->execute(call.name, arguments.object(), source_,
+    executor_->execute(call.name, arguments.object(), ToolContext{source_, task_},
                        [this, generation, call, timer](Result<ToolResult> result) {
         if (generation != generation_) return;  // cancelled meanwhile
         currentCall_.reset();
@@ -246,7 +298,8 @@ void Agent::closeOpenCalls(const QString &text) {
 
 void Agent::stop(std::optional<Error> error, FinishReason reason) {
     if (!running_) return;
-    closeOpenCalls(reason == FinishReason::Cancelled ? u"Cancelled by the user."_s : u"Not run."_s);
+    const QString cancelled = cancelNote_.isEmpty() ? u"Cancelled by the user."_s : cancelNote_;
+    closeOpenCalls(reason == FinishReason::Cancelled ? cancelled : u"Not run."_s);
     ++generation_;
     running_ = false;
     stream_.reset();

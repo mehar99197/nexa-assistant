@@ -2,13 +2,18 @@
 # stylesheet, and painted icons. Shared by the desktop (app/) and the phone app (android/), so it
 # depends on Qt Widgets alone: nothing of core/ or system/.
 qt_add_library(nexa_ui STATIC
+    BackdropWidget.h BackdropWidget.cc
+    ChromeFrame.h ChromeFrame.cc
+    ElidedLabel.h ElidedLabel.cc
     NexaCorePainter.h NexaCorePainter.cc
     NexaCoreSpec.h NexaCoreSpec.cc
+    NexaChrome.h NexaChrome.cc
     NexaCoreWidget.h NexaCoreWidget.cc
     NexaDesigns.h NexaDesigns.cc
     NexaIcons.h NexaIcons.cc
     NexaTheme.h NexaTheme.cc
     NexaThemes.h NexaThemes.cc
+    Sparkline.h Sparkline.cc
 )
 
 # The stylesheet and its two pictures, built in; NexaTheme fills the tokens in at run time.

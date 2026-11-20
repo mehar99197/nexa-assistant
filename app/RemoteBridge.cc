@@ -2,6 +2,7 @@
 
 #include "app/AppController.h"
 #include "core/Logging.h"
+#include "core/agent/Attachments.h"
 #include "voice/VoiceBackends.h"
 #include "voice/stt/ISpeechRecognizer.h"
 #include "voice/stt/Transcript.h"
@@ -10,12 +11,14 @@
 
 #include <QPointer>
 
+#include <algorithm>
+
 using namespace Qt::StringLiterals;
 
 namespace nexa {
 
-RemoteBridge::RemoteBridge(AppController *controller, HttpClient *http, QObject *parent)
-    : QObject(parent), controller_(controller), http_(http), config_(controller->config()) {}
+RemoteBridge::RemoteBridge(AppController *controller, HttpClient *http, SherpaRuntime *sherpa, QObject *parent)
+    : QObject(parent), controller_(controller), http_(http), sherpa_(sherpa), config_(controller->config()) {}
 
 RemoteBridge::~RemoteBridge() = default;
 
@@ -30,23 +33,47 @@ void RemoteBridge::applyConfig(const Config &config) {
 void RemoteBridge::build() const {
     if (built_) return;
     built_ = true;
-    Result<std::unique_ptr<ISpeechRecognizer>> recognizer =
-        VoiceBackends::createRecognizer(config_.voice, config_.active(), http_);
+    Result<std::unique_ptr<ISpeechRecognizer>> recognizer = VoiceBackends::createRecognizer(config_, http_);
     if (recognizer) {
         recognizer_ = std::move(recognizer).value();
     } else {
         qCInfo(lcVoice).noquote() << "remote: no speech recognition for the phone:" << recognizer.error().message;
     }
-    renderer_ = std::make_unique<TtsFileRenderer>(
-        VoiceBackends::createSynthesizers(config_.voice, config_.active(), http_));
+    renderer_ = std::make_unique<TtsFileRenderer>(VoiceBackends::createSynthesizers(config_, http_, nullptr, sherpa_));
 }
 
 bool RemoteBridge::isBusy() const {
-    return controller_->isBusy();
+    // Requests are never refused for another one running: each is a task, and waits for a slot on the board.
+    return false;
 }
 
 void RemoteBridge::submit(const QString &text, const QString &source) {
     controller_->submit(text, source);
+}
+
+QString RemoteBridge::attachmentDir() const {
+    return AttachmentLoader::defaultKeepDir();
+}
+
+void RemoteBridge::submitWithAttachments(const QString &text, const QString &source, const QStringList &savedPaths) {
+    QList<Attachment> files;
+    for (const QString &path : savedPaths) {
+        if (files.size() >= attachments::kMaxFiles) break;
+        const Result<Attachment> described = attachments::describe(path);
+        if (described) {
+            files.append(described.value());
+        } else {
+            qCInfo(lcApp).noquote() << "remote upload skipped" << path << ":" << described.error().message;
+        }
+    }
+    if (files.isEmpty()) {
+        controller_->submit(text, source);
+        return;
+    }
+    const QPointer<RemoteBridge> self(this);
+    loader_.prepare(files, [self, text, source](QList<PreparedAttachment> prepared) {
+        if (self) self->controller_->submit(text, source, prepared);
+    });
 }
 
 void RemoteBridge::cancel() {
@@ -88,6 +115,42 @@ void RemoteBridge::renderSpeech(const QString &text, std::function<void(Result<Q
         return;
     }
     renderer_->render(text, std::move(done));
+}
+
+bool RemoteBridge::isLocked() const {
+    const HardcoreMode *hardcore = controller_->hardcore();
+    if (!hardcore) return false;
+    using State = HardcoreMode::State;
+    return hardcore->state() == State::Counting || hardcore->holdsInput();
+}
+
+QString RemoteBridge::lockText() const {
+    const HardcoreMode *hardcore = controller_->hardcore();
+    return hardcore && isLocked() ? hardcore->banner() : QString();
+}
+
+void RemoteBridge::unlock() {
+    controller_->unlockHardcore(u"phone"_s);
+}
+
+QList<RemoteApproval> RemoteBridge::approvals() const {
+    QList<RemoteApproval> waiting;
+    for (const Approval &approval : controller_->mission()->approvals()) {
+        waiting.append(RemoteApproval{approval.actionId, approval.agentId, approval.tool, approval.question});
+    }
+    return waiting;
+}
+
+void RemoteBridge::answer(quint64 id, bool allow) {
+    MissionControl *mission = controller_->mission();
+    const QList<Approval> waiting = mission->approvals();
+    const bool known = std::any_of(waiting.cbegin(), waiting.cend(), [id](const Approval &a) { return a.actionId == id; });
+    if (!known) return;         // answered already, from the PC or another phone
+    if (allow) {
+        mission->approve(id);
+    } else {
+        mission->deny(id);
+    }
 }
 
 } // namespace nexa

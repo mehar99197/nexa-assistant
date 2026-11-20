@@ -1,6 +1,7 @@
 #include "core/config/Config.h"
 
 #include <QJsonArray>
+#include <QJsonValue>
 #include <QRegularExpression>
 #include <QStringList>
 
@@ -32,6 +33,18 @@ const QStringList &legacyDefaultPrompts() {
         "it is sent when Send is tapped. "
         "Before deleting or overwriting the user's data, make sure that is what they asked for. "
         "Keep replies short; use Markdown for code and commands."_s,
+#ifdef Q_OS_WIN
+        u"You are Nexa, a fast assistant that operates the user's Linux desktop through tools. "
+        "When the user asks for something a tool can do, do it with the tool instead of explaining how. "
+        "Use open_app for graphical applications and run_command for shell commands (never run_command "
+        "for GUI apps — it waits for them to exit). Do what was asked through commands and tools; "
+        "look at the screen only when a request cannot be done without seeing it. "
+        "The user's Android phone, when connected, is reached through the android_* tools: take "
+        "android_screenshot before tapping, and remember that android_sms_send only fills a message in — "
+        "it is sent when Send is tapped. "
+        "Before deleting or overwriting the user's data, make sure that is what they asked for. "
+        "Keep replies short; use Markdown for code and commands."_s,
+#endif
     };
     return prompts;
 }
@@ -41,6 +54,20 @@ const QStringList &legacyDefaultPrompts() {
 // Whether the model may look at the screen is not part of this: AppController adds a sentence
 // for the state of the Share screen switch to every request.
 QString defaultSystemPrompt() {
+#ifdef Q_OS_WIN
+    return u"You are Nexa, a fast assistant that operates the user's Windows PC through tools. "
+           "When the user asks for something a tool can do, do it with the tool instead of explaining how. "
+           "Use open_app for graphical applications and run_command for Windows commands (cmd.exe or PowerShell; "
+           "never use run_command without background=true for GUI apps — it waits for them to exit). "
+           "Use run_root_command for administrator actions via Windows UAC. "
+           "Do what was asked through commands and tools; "
+           "look at the screen only when a request cannot be done without seeing it. "
+           "The user's Android phone, when connected, is reached through the android_* tools: take "
+           "android_screenshot before tapping, and remember that android_sms_send only fills a message in — "
+           "it is sent when Send is tapped. "
+           "Before deleting or overwriting the user's data, make sure that is what they asked for. "
+           "Keep replies short; use Markdown for code and commands."_s;
+#else
     return u"You are Nexa, a fast assistant that operates the user's Linux desktop through tools. "
            "When the user asks for something a tool can do, do it with the tool instead of explaining how. "
            "Use open_app for graphical applications and run_command for shell commands (never run_command "
@@ -51,6 +78,7 @@ QString defaultSystemPrompt() {
            "it is sent when Send is tapped. "
            "Before deleting or overwriting the user's data, make sure that is what they asked for. "
            "Keep replies short; use Markdown for code and commands."_s;
+#endif
 }
 
 QJsonObject ProviderConfig::toJson() const {
@@ -66,6 +94,8 @@ QJsonObject ProviderConfig::toJson() const {
         {u"ttsModel"_s, ttsModel},
         {u"ttsVoice"_s, ttsVoice},
         {u"textTools"_s, textTools},
+        {u"fallback"_s, fallback},
+        {u"modelsUrl"_s, modelsUrl},
     };
 }
 
@@ -82,6 +112,8 @@ ProviderConfig ProviderConfig::fromJson(const QJsonObject &json) {
     config.ttsModel = json.value(u"ttsModel"_s).toString();
     config.ttsVoice = json.value(u"ttsVoice"_s).toString();
     config.textTools = json.value(u"textTools"_s).toBool(false);
+    config.fallback = json.value(u"fallback"_s).toBool(true);
+    config.modelsUrl = json.value(u"modelsUrl"_s).toString();
     return config;
 }
 
@@ -97,6 +129,18 @@ QJsonObject VoiceConfig::toJson() const {
         {u"speakReplies"_s, speakReplies},
         {u"wakeWord"_s, wakeWord},
         {u"bargeIn"_s, bargeIn},
+        {u"listenTo"_s, listenTo},
+        {u"ownerStrictness"_s, ownerStrictness},
+        {u"conversation"_s, conversation},
+        {u"announceTasks"_s, announceTasks},
+        {u"wakeName"_s, wakeName},
+        {u"wakeSensitivity"_s, wakeSensitivity},
+        {u"endPause"_s, endPause},
+        {u"followUps"_s, followUps},
+        {u"noiseReduction"_s, noiseReduction},
+        {u"sttProvider"_s, sttProvider},
+        {u"ttsProvider"_s, ttsProvider},
+        {u"ownVoice"_s, ownVoice},
     };
 }
 
@@ -112,7 +156,30 @@ VoiceConfig VoiceConfig::fromJson(const QJsonObject &json) {
     config.ttsRate = std::clamp(json.value(u"ttsRate"_s).toDouble(0.0), -1.0, 1.0);
     config.speakReplies = json.value(u"speakReplies"_s).toString(defaults.speakReplies);
     config.wakeWord = json.value(u"wakeWord"_s).toBool(false);
-    config.bargeIn = json.value(u"bargeIn"_s).toBool(false);
+    // A switch before v5: off still let the name stop the speech, on let any voice — Nexa's own included.
+    const QJsonValue bargeIn = json.value(u"bargeIn"_s);
+    if (bargeIn.isString() && QStringList{u"name"_s, u"speech"_s, u"off"_s}.contains(bargeIn.toString())) {
+        config.bargeIn = bargeIn.toString();
+    }
+    const QString listenTo = json.value(u"listenTo"_s).toString(config.listenTo);
+    if (listenTo == u"owner"_s || listenTo == u"anyone"_s) config.listenTo = listenTo;
+    const QString strictness = json.value(u"ownerStrictness"_s).toString(config.ownerStrictness);
+    if (QStringList{u"low"_s, u"normal"_s, u"high"_s}.contains(strictness)) config.ownerStrictness = strictness;
+    config.conversation = json.value(u"conversation"_s).toBool(false);
+    const QString announce = json.value(u"announceTasks"_s).toString(config.announceTasks);
+    if (QStringList{u"off"_s, u"voice"_s, u"all"_s}.contains(announce)) config.announceTasks = announce;
+    const QString name = json.value(u"wakeName"_s).toString().trimmed();
+    config.wakeName = name.isEmpty() ? defaults.wakeName : name;
+    const QString sensitivity = json.value(u"wakeSensitivity"_s).toString();
+    config.wakeSensitivity = QStringList{u"low"_s, u"normal"_s, u"high"_s}.contains(sensitivity) ? sensitivity
+                                                                                               : defaults.wakeSensitivity;
+    const QString pause = json.value(u"endPause"_s).toString();
+    config.endPause = QStringList{u"short"_s, u"normal"_s, u"long"_s}.contains(pause) ? pause : defaults.endPause;
+    config.followUps = json.value(u"followUps"_s).toBool(defaults.followUps);
+    config.noiseReduction = json.value(u"noiseReduction"_s).toBool(defaults.noiseReduction);
+    config.sttProvider = json.value(u"sttProvider"_s).toString();
+    config.ttsProvider = json.value(u"ttsProvider"_s).toString();
+    config.ownVoice = json.value(u"ownVoice"_s).toBool(false);
     return config;
 }
 
@@ -128,7 +195,14 @@ AndroidConfig AndroidConfig::fromJson(const QJsonObject &json) {
 }
 
 QJsonObject RemoteConfig::toJson() const {
-    return QJsonObject{{u"enabled"_s, enabled}, {u"port"_s, port}};
+    return QJsonObject{
+        {u"enabled"_s, enabled},
+        {u"port"_s, port},
+        {u"announceMessages"_s, announceMessages},
+        {u"tailscale"_s, tailscale},
+        {u"cloudflare"_s, QJsonObject{{u"mode"_s, cloudflare}, {u"tunnel"_s, cloudflareTunnel}, {u"hostname"_s, cloudflareHostname}}},
+        {u"ngrok"_s, QJsonObject{{u"enabled"_s, ngrok}, {u"domain"_s, ngrokDomain}}},
+    };
 }
 
 RemoteConfig RemoteConfig::fromJson(const QJsonObject &json) {
@@ -136,6 +210,17 @@ RemoteConfig RemoteConfig::fromJson(const QJsonObject &json) {
     config.enabled = json.value(u"enabled"_s).toBool(false);
     // Two ports are used (port and port + 1), both above the privileged range.
     config.port = std::clamp(json.value(u"port"_s).toInt(7777), 1024, 65534);
+    config.announceMessages = json.value(u"announceMessages"_s).toBool(true);
+    config.tailscale = json.value(u"tailscale"_s).toBool(true);
+    const QJsonObject cloudflare = json.value(u"cloudflare"_s).toObject();
+    const QString mode = cloudflare.value(u"mode"_s).toString(u"off"_s);
+    config.cloudflare = (mode == u"quick"_s || mode == u"named"_s) ? mode : u"off"_s;
+    config.cloudflareTunnel = cloudflare.value(u"tunnel"_s).toString(u"nexa"_s).trimmed();
+    if (config.cloudflareTunnel.isEmpty()) config.cloudflareTunnel = u"nexa"_s;
+    config.cloudflareHostname = cloudflare.value(u"hostname"_s).toString().trimmed().toLower();
+    const QJsonObject ngrok = json.value(u"ngrok"_s).toObject();
+    config.ngrok = ngrok.value(u"enabled"_s).toBool(false);
+    config.ngrokDomain = ngrok.value(u"domain"_s).toString().trimmed().toLower();
     return config;
 }
 
@@ -145,7 +230,7 @@ QJsonObject AgentConfig::toJson() const {
 
 AgentConfig AgentConfig::fromJson(const QJsonObject &json) {
     AgentConfig config;
-    config.maxToolRounds = std::clamp(json.value(u"maxToolRounds"_s).toInt(config.maxToolRounds), 1, 200);
+    config.maxToolRounds = std::clamp(json.value(u"maxToolRounds"_s).toInt(config.maxToolRounds), 1, kMaxToolRounds);
     return config;
 }
 
@@ -206,8 +291,8 @@ QJsonObject UiConfig::toJson() const {
 
 UiConfig UiConfig::fromJson(const QJsonObject &json) {
     UiConfig config;
-    // system, dark, light — or a palette's id ("ocean-dark"), and a design's id ("console"); the
-    // catalogues decide what they mean.
+    // A theme pack's id ("neon-cyan"; system, dark, light and the old "ocean-dark" too), and a design's id
+    // ("console"); the catalogues decide what they mean.
     static const QRegularExpression id(u"^[a-z0-9-]{1,40}$"_s);
     const QString theme = json.value(u"theme"_s).toString(config.theme);
     if (id.match(theme).hasMatch()) config.theme = theme;
@@ -266,6 +351,51 @@ SkillsConfig SkillsConfig::fromJson(const QJsonObject &json) {
     return config;
 }
 
+QJsonObject LocalApiConfig::toJson() const {
+    QJsonObject json{{u"enabled"_s, enabled}, {u"port"_s, int(port)}};
+    if (!bearerToken.isEmpty()) json.insert(u"bearerToken"_s, bearerToken);
+    return json;
+}
+
+LocalApiConfig LocalApiConfig::fromJson(const QJsonObject &json) {
+    LocalApiConfig config;
+    config.enabled = json.value(u"enabled"_s).toBool(config.enabled);
+    const int parsedPort = json.value(u"port"_s).toInt(int(kDefaultPort));
+    config.port = quint16(std::clamp(parsedPort, 1024, 65535));
+    config.bearerToken = json.value(u"bearerToken"_s).toString().trimmed();
+    return config;
+}
+
+QJsonObject ModelChoice::toJson() const {
+    QJsonObject json{{u"provider"_s, provider}};
+    if (!model.isEmpty()) json.insert(u"model"_s, model);
+    return json;
+}
+
+ModelChoice ModelChoice::fromJson(const QJsonObject &json) {
+    return ModelChoice{json.value(u"provider"_s).toString().trimmed(), json.value(u"model"_s).toString().trimmed()};
+}
+
+QJsonObject MissionConfig::toJson() const {
+    QJsonObject roles;
+    for (auto it = roleModels.cbegin(); it != roleModels.cend(); ++it) {
+        if (!it.value().isAuto()) roles.insert(it.key(), it.value().toJson());
+    }
+    return QJsonObject{{u"maxConcurrent"_s, maxConcurrent}, {u"roleModels"_s, roles}};
+}
+
+MissionConfig MissionConfig::fromJson(const QJsonObject &json) {
+    MissionConfig config;
+    config.maxConcurrent = std::clamp(json.value(u"maxConcurrent"_s).toInt(config.maxConcurrent), 1, kMaxSlots);
+    static const QRegularExpression key(u"^[a-z]{1,20}$"_s);
+    const QJsonObject roles = json.value(u"roleModels"_s).toObject();
+    for (auto it = roles.begin(); it != roles.end(); ++it) {
+        const ModelChoice choice = ModelChoice::fromJson(it.value().toObject());
+        if (key.match(it.key()).hasMatch() && !choice.isAuto()) config.roleModels.insert(it.key(), choice);
+    }
+    return config;
+}
+
 QJsonObject Config::toJson() const {
     QJsonObject json = extra;
     QJsonArray list;
@@ -284,6 +414,8 @@ QJsonObject Config::toJson() const {
     json.insert(u"browser"_s, browser.toJson());
     json.insert(u"memory"_s, memory.toJson());
     json.insert(u"skills"_s, skills.toJson());
+    json.insert(u"mission"_s, mission.toJson());
+    json.insert(u"localApi"_s, localApi.toJson());
     return json;
 }
 
@@ -309,11 +441,13 @@ Config Config::fromJson(const QJsonObject &json) {
     config.browser = BrowserConfig::fromJson(json.value(u"browser"_s).toObject());
     config.memory = MemoryConfig::fromJson(json.value(u"memory"_s).toObject());
     config.skills = SkillsConfig::fromJson(json.value(u"skills"_s).toObject());
+    config.mission = MissionConfig::fromJson(json.value(u"mission"_s).toObject());
+    config.localApi = LocalApiConfig::fromJson(json.value(u"localApi"_s).toObject());
 
     config.extra = json;
     for (const QString &key :
          {u"version"_s, u"providers"_s, u"activeProvider"_s, u"systemPrompt"_s, u"policy"_s, u"voice"_s, u"android"_s,
-          u"remote"_s, u"agent"_s, u"ui"_s, u"mcp"_s, u"browser"_s, u"memory"_s, u"skills"_s}) {
+          u"remote"_s, u"agent"_s, u"ui"_s, u"mcp"_s, u"browser"_s, u"memory"_s, u"skills"_s, u"mission"_s, u"localApi"_s}) {
         config.extra.remove(key);
     }
     return config;

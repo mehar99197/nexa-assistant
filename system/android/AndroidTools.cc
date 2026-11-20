@@ -12,11 +12,14 @@
 
 #include <QDateTime>
 #include <QDir>
+#include <QElapsedTimer>
 #include <QFileInfo>
 #include <QJsonObject>
+#include <QTimer>
 
 #include <algorithm>
 #include <cmath>
+#include <memory>
 
 using namespace Qt::StringLiterals;
 
@@ -129,6 +132,54 @@ const QJsonObject kSpaceArgument = schema::choice(
     u"Which pixels the numbers are measured in: \"image\" (the last phone screenshot, the default) or \"screen\""_s,
     {u"image"_s, u"screen"_s});
 
+constexpr int kPollMs = 500;
+constexpr int kDefaultWaitMs = 10'000;
+constexpr int kMaxWaitMs = 30'000;
+
+// The tap point of an element from the last android_snapshot.
+Result<QPoint> refCentre(const AndroidDevice *device, const QString &ref) {
+    const std::optional<QRect> bounds = device->uiBounds(ref);
+    if (!bounds || bounds->isEmpty()) {
+        return Error{ErrorCode::InvalidArgument,
+                     u"There is no element %1 in the last android_snapshot; take one again and use a ref from it."_s.arg(ref)};
+    }
+    return uihierarchy::centre(*bounds);
+}
+
+QString refName(const AndroidDevice *device, const QString &ref) {
+    const QString name = device->uiName(ref);
+    return name.isEmpty() ? u"the element"_s : u"\"%1\""_s.arg(name);
+}
+
+// android_wait_for: the screen read again every half second until the words are on it.
+void waitForWords(AndroidDevice *device, const QStringList &words, const QString &phrase, QElapsedTimer started, int timeoutMs,
+                  quint64 generation, const std::shared_ptr<quint64> &current, ITool::Done done) {
+    device->uiHierarchy({}, [device, words, phrase, started, timeoutMs, generation, current, done](Result<uihierarchy::PhoneOutline> outline) {
+        if (generation != *current) {
+            done(Error{ErrorCode::Cancelled, u"Cancelled."_s});
+            return;
+        }
+        if (!outline) {
+            done(outline.error());
+            return;
+        }
+        const QString lower = outline.value().text.toLower();
+        if (std::all_of(words.cbegin(), words.cend(), [&lower](const QString &word) { return lower.contains(word); })) {
+            done(text(u"\"%1\" appeared after %2 s.\n%3"_s.arg(phrase).arg(started.elapsed() / 1000.0, 0, 'f', 1).arg(outline.value().text)));
+            return;
+        }
+        if (started.elapsed() >= timeoutMs) {
+            done(Error{ErrorCode::Timeout, u"\"%1\" did not appear within %2 s. The phone shows:\n%3"_s.arg(phrase)
+                                               .arg(timeoutMs / 1000.0, 0, 'f', 1)
+                                               .arg(outline.value().text)});
+            return;
+        }
+        QTimer::singleShot(kPollMs, device, [device, words, phrase, started, timeoutMs, generation, current, done] {
+            waitForWords(device, words, phrase, started, timeoutMs, generation, current, done);
+        });
+    });
+}
+
 void addControlTools(ToolRegistry &registry, AndroidDevice *device, const std::function<void()> &cancel) {
     registry.add(std::make_unique<FunctionTool>(
         ToolSpec{u"android_status"_s,
@@ -184,17 +235,28 @@ void addControlTools(ToolRegistry &registry, AndroidDevice *device, const std::f
 
     registry.add(std::make_unique<FunctionTool>(
         ToolSpec{u"android_tap"_s,
-                 u"Tap the phone's screen. By default x and y are pixel coordinates in the phone screenshot you last "
-                 "took, so you can tap something you can see in it."_s,
-                 schema::object({{u"x"_s, schema::integer(u"Horizontal position"_s, 0, 20000)},
+                 u"Tap the phone's screen: an element by its ref from android_snapshot (the centre of it), or x and y "
+                 "— by default pixel coordinates in the phone screenshot you last took."_s,
+                 schema::object({{u"ref"_s, schema::string(u"An element's ref from android_snapshot, e.g. p7"_s)},
+                                 {u"x"_s, schema::integer(u"Horizontal position"_s, 0, 20000)},
                                  {u"y"_s, schema::integer(u"Vertical position"_s, 0, 20000)},
-                                 {u"space"_s, kSpaceArgument}},
-                                {u"x"_s, u"y"_s})},
+                                 {u"space"_s, kSpaceArgument}})},
         [device](const QJsonObject &arguments, ITool::Done done) {
+            if (const QString ref = arguments.value(u"ref"_s).toString().trimmed(); !ref.isEmpty()) {
+                const Result<QPoint> centre = refCentre(device, ref);
+                if (!centre) {
+                    done(centre.error());
+                    return;
+                }
+                device->act(u"input tap %1 %2"_s.arg(centre.value().x()).arg(centre.value().y()),
+                            u"Tapped %1 (%2) at %3, %4 on the phone."_s.arg(refName(device, ref), ref).arg(centre.value().x()).arg(centre.value().y()),
+                            say(done));
+                return;
+            }
             const std::optional<int> x = intArg(arguments, u"x"_s);
             const std::optional<int> y = intArg(arguments, u"y"_s);
             if (!x || !y) {
-                done(Error{ErrorCode::InvalidArgument, u"Both \"x\" and \"y\" are needed."_s});
+                done(Error{ErrorCode::InvalidArgument, u"Give an element's ref from android_snapshot, or both \"x\" and \"y\"."_s});
                 return;
             }
             const PhonePoint at = phonePoint(*x, *y, arguments, device);
@@ -261,11 +323,24 @@ void addControlTools(ToolRegistry &registry, AndroidDevice *device, const std::f
 
     registry.add(std::make_unique<FunctionTool>(
         ToolSpec{u"android_type"_s,
-                 u"Type text into whatever field has focus on the phone (tap the field first). adb types plain ASCII "
-                 "only; anything else is left out and reported. For Enter use android_key."_s,
-                 schema::object({{u"text"_s, schema::string(u"The text to type"_s)}}, {u"text"_s})},
+                 u"Type text on the phone: into the field named by ref (from android_snapshot; it is tapped first), or "
+                 "into whatever field has focus. adb types plain ASCII only; anything else is left out and reported. "
+                 "For Enter use android_key."_s,
+                 schema::object({{u"text"_s, schema::string(u"The text to type"_s)},
+                                 {u"ref"_s, schema::string(u"The field's ref from android_snapshot, tapped before typing"_s)}},
+                                {u"text"_s})},
         [device](const QJsonObject &arguments, ITool::Done done) {
             const QString value = arguments.value(u"text"_s).toString();
+            const QString ref = arguments.value(u"ref"_s).toString().trimmed();
+            std::optional<QPoint> tapFirst;
+            if (!ref.isEmpty()) {
+                const Result<QPoint> centre = refCentre(device, ref);
+                if (!centre) {
+                    done(centre.error());
+                    return;
+                }
+                tapFirst = centre.value();
+            }
             if (value.isEmpty()) {
                 done(Error{ErrorCode::InvalidArgument, u"Missing \"text\""_s});
                 return;
@@ -284,6 +359,12 @@ void addControlTools(ToolRegistry &registry, AndroidDevice *device, const std::f
             const QString note = command.skipped.isEmpty()
                                      ? QString()
                                      : u" Left out, because adb types plain ASCII only: %1"_s.arg(command.skipped);
+            if (tapFirst) {
+                device->act(u"input tap %1 %2 && sleep 0.3 && %3"_s.arg(tapFirst->x()).arg(tapFirst->y()).arg(command.command),
+                            u"Tapped %1 (%2), then typed %3 characters on the phone.%4"_s.arg(refName(device, ref), ref).arg(value.size()).arg(note),
+                            say(done));
+                return;
+            }
             device->act(command.command, u"Typed %1 characters on the phone.%2"_s.arg(value.size()).arg(note), say(done));
         },
         cancel));
@@ -311,7 +392,8 @@ void addControlTools(ToolRegistry &registry, AndroidDevice *device, const std::f
 
     registry.add(std::make_unique<FunctionTool>(
         ToolSpec{u"android_screenshot"_s,
-                 u"Take a screenshot of the phone and look at it. Use it to see what is on the phone before tapping."_s,
+                 u"Take a screenshot of the phone and look at it. Use it to see what is on the phone before tapping; "
+                 "when you cannot see images, android_snapshot reads the screen as text instead."_s,
                  schema::object(), false},
         [device](const QJsonObject &, ITool::Done done) {
             device->screenshot([done](Result<AndroidDevice::Shot> shot) {
@@ -331,6 +413,54 @@ void addControlTools(ToolRegistry &registry, AndroidDevice *device, const std::f
             });
         },
         cancel));
+
+    ToolSpec snapshotSpec{
+        u"android_snapshot"_s,
+        u"Read the phone's screen as text: every element that says or does something, one per line, with a ref like "
+        "p7 for android_tap and android_type — works whether or not you can see images. filter keeps only the lines "
+        "containing the given words."_s,
+        schema::object({{u"filter"_s, schema::string(u"Keep only the lines containing these words"_s)}})};
+    snapshotSpec.mutating = false;
+    registry.add(std::make_unique<FunctionTool>(
+        snapshotSpec,
+        [device](const QJsonObject &arguments, ITool::Done done) {
+            device->uiHierarchy(arguments.value(u"filter"_s).toString(), [done](Result<uihierarchy::PhoneOutline> outline) {
+                if (!outline) {
+                    done(outline.error());
+                    return;
+                }
+                done(text(outline.value().text));
+            });
+        },
+        cancel));
+
+    ToolSpec waitSpec{
+        u"android_wait_for"_s,
+        u"Wait until the given words appear on the phone's screen (android_snapshot is taken every half second), at "
+        "most timeout_ms (default 10000, up to 30000). Answers with the outline that showed them."_s,
+        schema::object({{u"text"_s, schema::string(u"The words to wait for"_s)},
+                        {u"timeout_ms"_s, schema::integer(u"How long to wait at most"_s, 100, kMaxWaitMs)}},
+                       {u"text"_s})};
+    waitSpec.mutating = false;
+    auto generation = std::make_shared<quint64>(0);
+    registry.add(std::make_unique<FunctionTool>(
+        waitSpec,
+        [device, generation](const QJsonObject &arguments, ITool::Done done) {
+            const Result<QString> phrase = requiredString(arguments, u"text"_s);
+            if (!phrase) {
+                done(phrase.error());
+                return;
+            }
+            const QStringList words = phrase.value().simplified().toLower().split(u' ', Qt::SkipEmptyParts);
+            const int timeout = qBound(100, intArg(arguments, u"timeout_ms"_s).value_or(kDefaultWaitMs), kMaxWaitMs);
+            QElapsedTimer started;
+            started.start();
+            waitForWords(device, words, phrase.value().simplified(), started, timeout, ++*generation, generation, std::move(done));
+        },
+        [device, generation] {
+            ++*generation;
+            device->cancelAll();
+        }));
 
     registry.add(std::make_unique<FunctionTool>(
         ToolSpec{u"android_media"_s, u"Control music or video playing on the phone."_s,

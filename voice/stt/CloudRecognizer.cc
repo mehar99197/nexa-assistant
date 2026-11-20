@@ -6,6 +6,7 @@
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
+#include <QJsonValue>
 #include <QNetworkReply>
 #include <QRegularExpression>
 #include <QUrl>
@@ -35,7 +36,7 @@ QString unwrap(QString text) {
                                           QRegularExpression::CaseInsensitiveOption);
     text = text.trimmed();
     text.remove(label);
-    for (const QStringView pair : {u"\"\""_sv, u"“”"_sv, u"``"_sv, u"''"_sv}) {
+    for (const QStringView pair : {QStringView(u"\"\""), QStringView(u"“”"), QStringView(u"``"), QStringView(u"''")}) {
         if (text.size() >= 2 && text.front() == pair[0] && text.back() == pair[1]) text = text.mid(1, text.size() - 2);
     }
     return text.trimmed();

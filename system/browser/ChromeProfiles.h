@@ -58,6 +58,7 @@ public:
     // Where the user adds the extension, in the browser's own store page.
     static QString webStoreUrl();
     static bool firefoxInstalled(const FindExecutable &findExecutable);
+    static bool firefoxInstalled();
 };
 
 } // namespace nexa

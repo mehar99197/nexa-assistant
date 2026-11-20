@@ -9,8 +9,10 @@
 #include <QHash>
 #include <QImage>
 #include <QJsonArray>
+#include <QJsonObject>
+#include <QJsonValue>
 #include <QPointer>
-#include <QStandardPaths>
+#include "core/config/Portable.h"
 
 using namespace Qt::StringLiterals;
 
@@ -152,10 +154,14 @@ void BrowserService::start() {
     const QString node = PlaywrightInstaller::nodeProgram();
     if (node.isEmpty()) {
         connectors_.apply({});
+#ifdef Q_OS_WIN
+        setState(State::NeedsSetup, tr("Node.js is not installed. Install it with: winget install OpenJS.NodeJS.LTS"));
+#else
         setState(State::NeedsSetup, tr("Node.js is not installed. Install it with: sudo apt install nodejs npm"));
+#endif
         return;
     }
-    const QString data = QStandardPaths::writableLocation(QStandardPaths::GenericDataLocation) + u"/nexa"_s;
+    const QString data = portable::dataDir();
     const BrowserPaths paths{node, installer_->cliPath(), installer_->prefix() + u"/output"_s,
                              data + u"/browser-profile"_s, installer_->browsersPath()};
     connectors_.apply({serverConfigFor(plan_, paths, config_.extensionToken)});

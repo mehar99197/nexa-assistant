@@ -15,8 +15,8 @@ namespace nexa {
 
 class HttpClient;
 
-// Provider for every OpenAI-compatible API: OmniRoute (the default), OpenAI, Ollama, LM Studio,
-// Groq, OpenRouter, DeepSeek, Mistral, xAI, Together, … — POST {baseUrl}/chat/completions, stream=true.
+// Provider for every OpenAI-compatible API: OpenAI, OpenCode's hosted API, Ollama, LM Studio, Groq,
+// OpenRouter, DeepSeek, Mistral, xAI, Together, gateways, … — POST {baseUrl}/chat/completions, stream=true.
 class OpenAiProvider : public IAiProvider {
     Q_OBJECT
 public:

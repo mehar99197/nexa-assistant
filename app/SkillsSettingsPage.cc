@@ -50,6 +50,7 @@ SkillsSettingsPage::SkillsSettingsPage(const SkillsConfig &config, SkillCatalog 
     saveButton_ = new QPushButton(tr("&Save"), this);
     copyButton_ = new QPushButton(tr("&Copy to my skills"), this);
     deleteButton_ = new QPushButton(tr("&Delete"), this);
+    deleteButton_->setAutoDefault(false);    // Enter is the dialog's OK, never a delete
     auto *newButton = new QPushButton(tr("&New…"), this);
     auto *importButton = new QPushButton(tr("&Import…"), this);
     importButton->setToolTip(tr("Copy a skill folder in — a Claude skill, for instance (a folder with a SKILL.md)."));

@@ -1,0 +1,15 @@
+Package: nexa-assistant
+Version: @VERSION@
+Architecture: amd64
+Maintainer: Nexa Maintainers <tauseeqtufail649@gmail.com>
+Installed-Size: @INSTALLED_SIZE@
+Depends: libc6 (>= @GLIBC@), libstdc++6, libgcc-s1, libgl1, libglx0, libopengl0, libglvnd0, libegl1, libgbm1, libdrm2, dbus, polkitd | policykit-1, systemd
+Recommends: adb, wireplumber, libreoffice-writer, poppler-utils
+Section: utils
+Priority: optional
+Homepage: https://assistant.nexadownloadmanager.com
+Description: Nexa Assistant - a Linux AI assistant for the desktop and the phone
+ Ask it to run commands, open apps, work in the browser, read the screen as
+ text, drive an Android phone, and talk to it by voice. It works with your own
+ AI providers and programs; Qt, whisper.cpp, sherpa-onnx and Piper are bundled,
+ and the speech models download from inside Settings.

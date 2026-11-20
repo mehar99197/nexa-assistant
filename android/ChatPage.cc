@@ -1,17 +1,26 @@
 #include "ChatPage.h"
 
 #include "MessageDelegate.h"
+#include "remote/RemoteProtocol.h"
+#include "ui/ElidedLabel.h"
 #include "ui/NexaCoreWidget.h"
+#include "ui/NexaDesigns.h"
 #include "ui/NexaIcons.h"
 
+#include <QDir>
+#include <QFileDialog>
+#include <QFileInfo>
+#include <QFrame>
 #include <QHBoxLayout>
 #include <QLabel>
 #include <QLineEdit>
 #include <QListWidget>
 #include <QMenu>
+#include <QPushButton>
 #include <QScroller>
 #include <QStyle>
 #include <QToolButton>
+#include <QUrl>
 #include <QVBoxLayout>
 
 using namespace Qt::StringLiterals;
@@ -22,6 +31,8 @@ namespace {
 
 constexpr int kPresenceLarge = 200;
 constexpr int kPresenceSmall = 56;
+// Below this height the large presence does not fit with the line to type in and the Talk button.
+constexpr int kRoomForLargePresence = 640;
 
 void repolish(QWidget *widget) {
     widget->style()->unpolish(widget);
@@ -49,9 +60,8 @@ ChatPage::ChatPage(QWidget *parent) : QWidget(parent), tokens_(NexaTheme::tokens
     brand->setObjectName(u"brandTitle"_s);
     header->addWidget(brand);
     header->addStretch();
-    status_ = new QLabel(this);
+    status_ = new ElidedLabel(this);
     status_->setObjectName(u"statusPill"_s);
-    status_->setTextFormat(Qt::RichText);
     header->addWidget(status_);
     more_ = new QToolButton(this);
     more_->setObjectName(u"moreButton"_s);
@@ -88,6 +98,38 @@ ChatPage::ChatPage(QWidget *parent) : QWidget(parent), tokens_(NexaTheme::tokens
     presenceLayout_->addWidget(presenceText_);
     layout->addWidget(presence_);
 
+    // Hardcore mode on the PC: its keyboard and mouse are locked, and this phone is a way to end it.
+    lockBar_ = new QFrame(this);
+    lockBar_->setObjectName(u"lockBar"_s);
+    auto *lockRow = new QHBoxLayout(lockBar_);
+    lockRow->setContentsMargins(12, 10, 12, 10);
+    lockRow->setSpacing(10);
+    lockText_ = new QLabel(lockBar_);
+    lockText_->setObjectName(u"lockText"_s);
+    lockText_->setWordWrap(true);
+    lockText_->setTextFormat(Qt::PlainText);
+    lockRow->addWidget(lockText_, 1);
+    unlock_ = new QPushButton(tr("Unlock PC"), lockBar_);
+    unlock_->setObjectName(u"unlockButton"_s);
+    lockRow->addWidget(unlock_);
+    lockBar_->hide();
+    auto *lockMargin = new QHBoxLayout;
+    lockMargin->setContentsMargins(16, 8, 16, 0);
+    lockMargin->addWidget(lockBar_);
+    layout->addLayout(lockMargin);
+    connect(unlock_, &QPushButton::clicked, this, [this] {
+        unlock_->setEnabled(false);
+        emit unlockRequested();
+    });
+
+    approvals_ = new QWidget(this);
+    approvals_->setObjectName(u"approvals"_s);
+    approvalsLayout_ = new QVBoxLayout(approvals_);
+    approvalsLayout_->setContentsMargins(16, 8, 16, 0);
+    approvalsLayout_->setSpacing(8);
+    approvals_->hide();
+    layout->addWidget(approvals_);
+
     messages_ = new QListWidget(this);
     messages_->setObjectName(u"messages"_s);
     delegate_ = new MessageDelegate(messages_);
@@ -101,9 +143,24 @@ ChatPage::ChatPage(QWidget *parent) : QWidget(parent), tokens_(NexaTheme::tokens
     QScroller::grabGesture(messages_->viewport(), QScroller::TouchGesture);
     layout->addWidget(messages_, 1);
 
+    fileStrip_ = new QWidget(this);
+    fileStrip_->setObjectName(u"fileStrip"_s);
+    fileChips_ = new QHBoxLayout(fileStrip_);
+    fileChips_->setContentsMargins(16, 4, 16, 0);
+    fileChips_->setSpacing(6);
+    fileChips_->addStretch(1);
+    fileStrip_->hide();
+    layout->addWidget(fileStrip_);
+
     auto *bottom = new QHBoxLayout;
     bottom->setContentsMargins(16, 8, 16, 8);
     bottom->setSpacing(10);
+    attach_ = new QToolButton(this);
+    attach_->setObjectName(u"attach"_s);
+    attach_->setToolTip(tr("Attach files"));
+    attach_->setAccessibleName(tr("Attach files"));
+    attach_->setIconSize(QSize(22, 22));
+    bottom->addWidget(attach_);
     input_ = new QLineEdit(this);
     input_->setObjectName(u"phoneInput"_s);
     input_->setPlaceholderText(tr("Type a request"));
@@ -133,6 +190,7 @@ ChatPage::ChatPage(QWidget *parent) : QWidget(parent), tokens_(NexaTheme::tokens
     talkRow_->hide();      // until Nexa says it can hear
     layout->addWidget(talkRow_);
 
+    connect(attach_, &QToolButton::clicked, this, &ChatPage::chooseFiles);
     connect(send_, &QToolButton::clicked, this, &ChatPage::submit);
     connect(input_, &QLineEdit::returnPressed, this, &ChatPage::submit);
     connect(talk_, &NexaCoreButton::pressed, this, &ChatPage::talkPressed);
@@ -150,8 +208,74 @@ void ChatPage::setScheme(ThemeScheme scheme) {
     setCore(mode_, NoNode, hint_->text());
 }
 
+void ChatPage::applyRemoteTheme(const remote::ThemeStyle &style) {
+    const auto parseColor = [](const QString &hex, QColor &target) {
+        if (const QColor c = QColor::fromString(hex); c.isValid()) target = c;
+    };
+    parseColor(style.ground, tokens_.ground);
+    parseColor(style.panel, tokens_.panel);
+    parseColor(style.panelRaised, tokens_.panelRaised);
+    parseColor(style.line, tokens_.line);
+    parseColor(style.text, tokens_.text);
+    parseColor(style.muted, tokens_.muted);
+    parseColor(style.idle, tokens_.idle);
+    parseColor(style.wake, tokens_.wake);
+    parseColor(style.listen, tokens_.listen);
+    parseColor(style.stt, tokens_.stt);
+    parseColor(style.think, tokens_.think);
+    parseColor(style.act, tokens_.act);
+    parseColor(style.speak, tokens_.speak);
+    parseColor(style.fast, tokens_.fast);
+    parseColor(style.error, tokens_.error);
+    parseColor(style.onAccent, tokens_.onAccent);
+
+    const BubbleStyle bubbles = style.bubbleStyle == u"lines"_s ? BubbleStyle::Lines
+                              : style.bubbleStyle == u"cards"_s ? BubbleStyle::Cards
+                                                                : BubbleStyle::Bubbles;
+    const FontFace face = style.fontFace == u"mono"_s  ? FontFace::Mono
+                        : style.fontFace == u"serif"_s ? FontFace::Serif
+                                                       : FontFace::Sans;
+    delegate_->setTokens(tokens_);
+    delegate_->setDesign(bubbles, style.radius, face);
+
+    const int radius = std::clamp(style.radius, 0, 22);
+    setStyleSheet(
+        u"QWidget { background-color: %1; color: %2; font-family: \"%3\"; }"
+        "QListWidget#messages { background-color: %1; border: none; }"
+        "QLineEdit#phoneInput { background-color: %4; color: %2; border: 1px solid %5; border-radius: %6px; padding: 6px 10px; }"
+        "QToolButton#send { background-color: %7; color: %8; border-radius: %6px; border: none; }"
+        "QToolButton#attach, QToolButton#attachmentChip { background-color: %4; color: %2; border: 1px solid %5; border-radius: %6px; padding: 4px 8px; }"
+        "QLabel#stateHint, QLabel#talkHint { color: %9; }"_s
+            .arg(tokens_.ground.name(), tokens_.text.name(), NexaDesigns::fontFamily(face), tokens_.panel.name(),
+                 tokens_.line.name())
+            .arg(radius)
+            .arg(tokens_.idle.name(), tokens_.onAccent.name(), tokens_.muted.name()));
+
+    for (NexaCoreWidget *c : {brandCore_, core_, static_cast<NexaCoreWidget *>(talk_)}) {
+        if (!c) continue;
+        c->setGroundColor(tokens_.ground);
+        c->setPanelColor(tokens_.panel);
+        c->setLineColor(tokens_.line);
+        c->setTextColor(tokens_.text);
+        c->setMutedColor(tokens_.muted);
+        c->setIdleColor(tokens_.idle);
+        c->setWakeColor(tokens_.wake);
+        c->setListenColor(tokens_.listen);
+        c->setSttColor(tokens_.stt);
+        c->setThinkColor(tokens_.think);
+        c->setActColor(tokens_.act);
+        c->setSpeakColor(tokens_.speak);
+        c->setFastColor(tokens_.fast);
+        c->setErrorColor(tokens_.error);
+    }
+    refreshIcons();
+    setCore(mode_, NoNode, hint_->text());
+}
+
 void ChatPage::refreshIcons() {
-    send_->setIcon(NexaIcons::icon(NexaIcons::Kind::Send, tokens_.onAccent, 24));
+    if (attach_) attach_->setIcon(NexaIcons::icon(NexaIcons::Kind::Attach, tokens_.muted, 22));
+    send_->setIcon(NexaIcons::icon(busy_ ? NexaIcons::Kind::Stop : NexaIcons::Kind::Send,
+                                   busy_ ? tokens_.ground : tokens_.onAccent, 24));
     more_->setIcon(NexaIcons::icon(NexaIcons::Kind::More, tokens_.muted, 20));
 }
 
@@ -163,7 +287,7 @@ void ChatPage::setStatus(const QString &text, Status status) {
     case Status::Recording: dot = tokens_.listen; break;
     case Status::Plain: dot = tokens_.muted; break;
     }
-    status_->setText(u"<span style=\"color:%1\">●</span>&nbsp; %2"_s.arg(dot.name(), text.toHtmlEscaped()));
+    status_->setElidedText(text, u"<span style=\"color:%1\">●</span>&nbsp; "_s.arg(dot.name()));
 }
 
 void ChatPage::setCore(CoreMode mode, CoreNodes nodes, const QString &hint) {
@@ -182,9 +306,15 @@ void ChatPage::setLevel(double level) {
     talk_->setLevel(level);
 }
 
+void ChatPage::resizeEvent(QResizeEvent *event) {
+    QWidget::resizeEvent(event);
+    layoutPresence();
+}
+
 void ChatPage::layoutPresence() {
-    const bool compact = messages_->count() > 0;
-    if (compact == compact_ && title_->alignment() != Qt::AlignLeft) return;
+    const bool compact = messages_->count() > 0 || (height() > 0 && height() < kRoomForLargePresence);
+    if (presenceLaidOut_ && compact == compact_) return;
+    presenceLaidOut_ = true;
     compact_ = compact;
     presenceLayout_->setDirection(compact ? QBoxLayout::LeftToRight : QBoxLayout::TopToBottom);
     presenceLayout_->setContentsMargins(16, compact ? 4 : 8, 16, compact ? 8 : 12);
@@ -200,13 +330,59 @@ void ChatPage::layoutPresence() {
     repolish(presence_);
 }
 
-void ChatPage::addMessage(Kind kind, const QString &text) {
-    auto *item = new QListWidgetItem(text);
+void ChatPage::addMessage(Kind kind, const QString &text, const QString &attachments) {
+    const QString shown = attachments.isEmpty() ? text : (text + u"\n📎 "_s + attachments);
+    auto *item = new QListWidgetItem(shown);
     item->setData(MessageDelegate::KindRole, static_cast<int>(kind));
     messages_->addItem(item);
     messages_->scrollToBottom();
     if (kind == Kind::Nexa) reply_ = item;
     layoutPresence();
+}
+
+void ChatPage::chooseFiles() {
+    const QStringList picked = QFileDialog::getOpenFileNames(this, tr("Attach files"), QDir::homePath());
+    if (!picked.isEmpty()) addPendingFiles(picked);
+}
+
+void ChatPage::addPendingFiles(const QStringList &paths) {
+    for (const QString &path : paths) {
+        if (pendingFiles_.size() >= 8) break;
+        if (path.isEmpty() || pendingFiles_.contains(path)) continue;
+        pendingFiles_.append(path);
+    }
+    refreshFileStrip();
+}
+
+void ChatPage::clearPendingFiles() {
+    pendingFiles_.clear();
+    refreshFileStrip();
+}
+
+void ChatPage::refreshFileStrip() {
+    while (fileChips_->count() > 1) {
+        QLayoutItem *item = fileChips_->takeAt(0);
+        delete item->widget();
+        delete item;
+    }
+    for (int i = 0; i < pendingFiles_.size(); ++i) {
+        const QString &path = pendingFiles_.at(i);
+        QString name = QFileInfo(path).fileName();
+        if (name.isEmpty()) name = QUrl(path).fileName();
+        if (name.isEmpty()) name = path;
+        auto *chip = new QToolButton(fileStrip_);
+        chip->setObjectName(u"attachmentChip"_s);
+        chip->setText(u"📎 %1 ×"_s.arg(name));
+        chip->setToolTip(tr("Remove %1").arg(name));
+        connect(chip, &QToolButton::clicked, this, [this, i] {
+            if (i >= 0 && i < pendingFiles_.size()) {
+                pendingFiles_.removeAt(i);
+                refreshFileStrip();
+            }
+        });
+        fileChips_->insertWidget(fileChips_->count() - 1, chip);
+    }
+    fileStrip_->setVisible(!pendingFiles_.isEmpty());
 }
 
 void ChatPage::appendReply(const QString &text) {
@@ -252,9 +428,81 @@ void ChatPage::submit() {
         return;
     }
     const QString text = input_->text().trimmed();
-    if (text.isEmpty()) return;
+    if (text.isEmpty() && pendingFiles_.isEmpty()) return;
+    if (!pendingFiles_.isEmpty()) {
+        const QStringList files = std::exchange(pendingFiles_, {});
+        refreshFileStrip();
+        input_->clear();
+        emit askWithFilesRequested(text.isEmpty() ? tr("Look at what I attached.") : text, files);
+        return;
+    }
     input_->clear();
     emit askRequested(text);
+}
+
+void ChatPage::setLocked(bool locked, const QString &text) {
+    lockText_->setText(text.isEmpty() ? tr("Your PC's keyboard and mouse are locked.") : text);
+    unlock_->setEnabled(true);
+    lockBar_->setVisible(locked);
+}
+
+void ChatPage::addApproval(quint64 id, const QString &agent, const QString &tool, const QString &question) {
+    if (id == 0) return;
+    for (const QFrame *card : approvals_->findChildren<QFrame *>(u"approvalCard"_s, Qt::FindDirectChildrenOnly)) {
+        if (card->property("approvalId").toULongLong() == id) return;       // shown already
+    }
+    auto *card = new QFrame(approvals_);
+    card->setObjectName(u"approvalCard"_s);
+    card->setProperty("approvalId", QVariant::fromValue(id));
+    auto *column = new QVBoxLayout(card);
+    column->setContentsMargins(12, 10, 12, 10);
+    column->setSpacing(6);
+    auto *title = new QLabel(tr("%1 needs you · %2").arg(agent.isEmpty() ? tr("A task") : agent, tool), card);
+    title->setObjectName(u"approvalTitle"_s);
+    title->setTextFormat(Qt::PlainText);
+    auto *text = new QLabel(question, card);
+    text->setWordWrap(true);
+    text->setTextFormat(Qt::PlainText);
+    column->addWidget(title);
+    column->addWidget(text);
+    auto *row = new QHBoxLayout;
+    row->setSpacing(8);
+    auto *approve = new QPushButton(tr("Approve"), card);
+    approve->setObjectName(u"approve"_s);
+    auto *deny = new QPushButton(tr("Deny"), card);
+    deny->setObjectName(u"deny"_s);
+    row->addWidget(approve, 1);
+    row->addWidget(deny, 1);
+    column->addLayout(row);
+    for (auto [button, allow] : {std::pair{approve, true}, std::pair{deny, false}}) {
+        connect(button, &QPushButton::clicked, this, [this, approve, deny, id, allow = allow] {
+            approve->setEnabled(false);
+            deny->setEnabled(false);
+            emit approvalAnswered(id, allow);
+        });
+    }
+    approvalsLayout_->addWidget(card);
+    approvals_->show();
+}
+
+void ChatPage::settleApproval(quint64 id) {
+    bool waiting = false;
+    for (QFrame *card : approvals_->findChildren<QFrame *>(u"approvalCard"_s, Qt::FindDirectChildrenOnly)) {
+        if (card->property("approvalId").toULongLong() != id) {
+            waiting = true;
+            continue;
+        }
+        // Later: this may be the card whose button was just pressed.
+        card->setObjectName(QString());
+        card->hide();
+        card->deleteLater();
+    }
+    approvals_->setVisible(waiting);
+}
+
+void ChatPage::clearApprovals() {
+    for (QFrame *card : approvals_->findChildren<QFrame *>(u"approvalCard"_s, Qt::FindDirectChildrenOnly)) delete card;
+    approvals_->hide();
 }
 
 } // namespace nexa

@@ -13,6 +13,7 @@ class SpeechdTtsBackend : public ITextToSpeech {
     Q_OBJECT
 public:
     SpeechdTtsBackend(const QString &voice, double rate, QObject *parent = nullptr);
+    ~SpeechdTtsBackend() override;
 
     QString name() const override;
     void speak(const QString &text) override;
