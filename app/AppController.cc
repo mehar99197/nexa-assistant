@@ -1139,7 +1139,11 @@ QString AppController::browserParagraph() const {
     const QString target = services_.browserTarget ? services_.browserTarget() : QString();
     if (target.isEmpty()) return {};
     QString text = u"For anything on the web — opening a site, searching, reading or filling in a page — use the "
+#ifdef Q_OS_WIN
+                   "browser_* tools first; they work in %1 and open it themselves, so never open_app a "
+#else
                    "browser_* tools first; they work in %1 and open it themselves, so never open_app or xdg-open a "
+#endif
                    "browser for web work. Open a page with browser_navigate and read it with "
                    "browser_snapshot, a text outline in which every element has a ref; act on an element by giving its "
                    "ref as the target of browser_click, browser_type, browser_fill_form or browser_select_option. They "

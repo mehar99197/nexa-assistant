@@ -180,6 +180,10 @@ TEST_CASE("parseImageSupport says which models take images, as opencode reports 
 TEST_CASE("parseListening finds the server's address") {
     CHECK(OpenCodeWire::parseListening("opencode server listening on http://127.0.0.1:4096\n")
           == QUrl(u"http://127.0.0.1:4096"_s));
+#ifdef Q_OS_WIN
+    CHECK(OpenCodeWire::parseListening("server listening on http://127.0.0.1:56529\n")
+          == QUrl(u"http://127.0.0.1:56529"_s));
+#endif
     CHECK_FALSE(OpenCodeWire::parseListening("[auto-update-checker] Package not found\n").isValid());
     CHECK(OpenCodeWire::parseSessionId(R"({"id":"ses_e82111ec8ffe","title":"Nexa"})") == u"ses_e82111ec8ffe"_s);
 }

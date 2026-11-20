@@ -127,7 +127,11 @@ QString OpenCodeWire::parseDefaultModel(const QByteArray &config) {
 }
 
 QUrl OpenCodeWire::parseListening(const QByteArray &output) {
+#ifdef Q_OS_WIN
+    static const QRegularExpression line(u"(?:opencode\\s+)?server listening on (https?://\\S+)"_s);
+#else
     static const QRegularExpression line(u"opencode server listening on (https?://\\S+)"_s);
+#endif
     const QRegularExpressionMatch match = line.match(QString::fromUtf8(output));
     return match.hasMatch() ? QUrl(match.captured(1)) : QUrl();
 }

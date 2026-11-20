@@ -69,5 +69,5 @@ if(UNIX AND NOT ANDROID AND NOT APPLE)
 endif()
 
 if(WIN32)
-    target_link_libraries(nexa_system PRIVATE user32 psapi shell32 ole32 oleaut32 uuid)
+    target_link_libraries(nexa_system PRIVATE user32 psapi shell32 ole32 oleaut32 uuid advapi32)
 endif()

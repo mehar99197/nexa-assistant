@@ -198,7 +198,9 @@ Result<qint64> LocalCommandRunner::startDetached(const QString &command, const Q
     process.setStandardInputFile(QProcess::nullDevice());
     process.setStandardOutputFile(QProcess::nullDevice());
     process.setStandardErrorFile(QProcess::nullDevice());
+#ifndef Q_OS_WIN
     process::configureChild(process);
+#endif
     qint64 pid = 0;
     if (!process.startDetached(&pid)) {
         return Error{ErrorCode::NotFound, u"Cannot start \"%1\": %2"_s.arg(argv.first(), process.errorString())};

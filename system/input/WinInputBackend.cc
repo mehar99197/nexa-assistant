@@ -7,6 +7,8 @@
 #include <QHash>
 #include <QMetaObject>
 
+#include <algorithm>
+#include <cmath>
 #include <vector>
 
 using namespace Qt::StringLiterals;
@@ -128,6 +130,48 @@ bool isExtendedKey(WORD vk) {
         return false;
     }
 }
+bool isProcessElevated(HANDLE proc) {
+    HANDLE token = nullptr;
+    if (!::OpenProcessToken(proc, TOKEN_QUERY, &token) || !token) return false;
+    TOKEN_ELEVATION elev{};
+    DWORD size = 0;
+    const BOOL ok = ::GetTokenInformation(token, TokenElevation, &elev, sizeof(elev), &size);
+    ::CloseHandle(token);
+    return ok != FALSE && elev.TokenIsElevated != 0;
+}
+
+bool isForegroundWindowElevated() {
+    const HWND fg = ::GetForegroundWindow();
+    if (!fg) return false;
+    DWORD pid = 0;
+    ::GetWindowThreadProcessId(fg, &pid);
+    if (pid == 0 || pid == ::GetCurrentProcessId()) return false;
+    if (isProcessElevated(::GetCurrentProcess())) return false;
+    HANDLE proc = ::OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, FALSE, pid);
+    if (!proc) return ::GetLastError() == ERROR_ACCESS_DENIED;
+    const bool elevated = isProcessElevated(proc);
+    ::CloseHandle(proc);
+    return elevated;
+}
+
+Result<QString> sendInputsChecked(std::vector<INPUT> &inputs) {
+    if (inputs.empty()) return QString();
+    ::SetLastError(0);
+    const UINT expected = static_cast<UINT>(inputs.size());
+    const UINT sent = ::SendInput(expected, inputs.data(), sizeof(INPUT));
+    if (sent == expected) return QString();
+    const DWORD err = ::GetLastError();
+    if (isForegroundWindowElevated()) {
+        return Error{ErrorCode::PermissionDenied,
+                     u"Windows blocked input (UIPI): the active window is running as Administrator while Nexa is not. "
+                     "Run Nexa as Administrator to control elevated windows."_s};
+    }
+    return Error{ErrorCode::Io,
+                 u"Windows blocked input (SendInput sent %1 of %2 events, Win32 error %3)."_s
+                     .arg(sent)
+                     .arg(expected)
+                     .arg(err)};
+}
 #endif
 
 } // namespace
@@ -151,12 +195,14 @@ void WinInputBackend::typeText(const QString &text, Done done) {
     const std::u16string utf16 = text.toStdU16String();
     std::vector<INPUT> inputs;
     inputs.reserve(utf16.size() * 2);
+    const WORD enterScan = static_cast<WORD>(::MapVirtualKeyW(VK_RETURN, MAPVK_VK_TO_VSC));
     for (const char16_t ch : utf16) {
         if (ch == u'\r') continue;
         if (ch == u'\n') {
             INPUT down{};
             down.type = INPUT_KEYBOARD;
             down.ki.wVk = VK_RETURN;
+            down.ki.wScan = enterScan;
             INPUT up = down;
             up.ki.dwFlags = KEYEVENTF_KEYUP;
             inputs.push_back(down);
@@ -172,8 +218,7 @@ void WinInputBackend::typeText(const QString &text, Done done) {
         inputs.push_back(down);
         inputs.push_back(up);
     }
-    if (!inputs.empty()) SendInput(UINT(inputs.size()), inputs.data(), sizeof(INPUT));
-    done(QString());
+    done(sendInputsChecked(inputs));
 #else
     Q_UNUSED(text);
     done(Error{ErrorCode::NotSupported, u"WinInputBackend is only available on Windows."_s});
@@ -198,6 +243,7 @@ void WinInputBackend::pressKeys(const QList<int> &keyCodes, Done done) {
         INPUT in{};
         in.type = INPUT_KEYBOARD;
         in.ki.wVk = vk;
+        in.ki.wScan = static_cast<WORD>(::MapVirtualKeyW(vk, MAPVK_VK_TO_VSC));
         in.ki.dwFlags = isExtendedKey(vk) ? KEYEVENTF_EXTENDEDKEY : 0;
         inputs.push_back(in);
     }
@@ -205,11 +251,11 @@ void WinInputBackend::pressKeys(const QList<int> &keyCodes, Done done) {
         INPUT in{};
         in.type = INPUT_KEYBOARD;
         in.ki.wVk = *it;
+        in.ki.wScan = static_cast<WORD>(::MapVirtualKeyW(*it, MAPVK_VK_TO_VSC));
         in.ki.dwFlags = KEYEVENTF_KEYUP | (isExtendedKey(*it) ? KEYEVENTF_EXTENDEDKEY : 0);
         inputs.push_back(in);
     }
-    SendInput(UINT(inputs.size()), inputs.data(), sizeof(INPUT));
-    done(QString());
+    done(sendInputsChecked(inputs));
 #else
     Q_UNUSED(keyCodes);
     done(Error{ErrorCode::NotSupported, u"WinInputBackend is only available on Windows."_s});
@@ -223,8 +269,8 @@ void WinInputBackend::mouseMove(int dx, int dy, Done done) {
     in.mi.dx = dx;
     in.mi.dy = dy;
     in.mi.dwFlags = MOUSEEVENTF_MOVE;
-    SendInput(1, &in, sizeof(INPUT));
-    done(QString());
+    std::vector<INPUT> inputs{in};
+    done(sendInputsChecked(inputs));
 #else
     Q_UNUSED(dx);
     Q_UNUSED(dy);
@@ -234,15 +280,17 @@ void WinInputBackend::mouseMove(int dx, int dy, Done done) {
 
 void WinInputBackend::mouseMoveAbs(int x, int y, int screenWidth, int screenHeight, Done done) {
 #ifdef Q_OS_WIN
-    const int w = std::max(1, screenWidth > 0 ? screenWidth : GetSystemMetrics(SM_CXVIRTUALSCREEN));
-    const int h = std::max(1, screenHeight > 0 ? screenHeight : GetSystemMetrics(SM_CYVIRTUALSCREEN));
+    const int w = std::max(1, screenWidth > 0 ? screenWidth : GetSystemMetrics(SM_CXSCREEN));
+    const int h = std::max(1, screenHeight > 0 ? screenHeight : GetSystemMetrics(SM_CYSCREEN));
+    const int cx = std::clamp(x, 0, w - 1);
+    const int cy = std::clamp(y, 0, h - 1);
     INPUT in{};
     in.type = INPUT_MOUSE;
-    in.mi.dx = LONG((double(x) * 65535.0) / double(std::max(1, w - 1)));
-    in.mi.dy = LONG((double(y) * 65535.0) / double(std::max(1, h - 1)));
+    in.mi.dx = static_cast<LONG>(std::lround((double(cx) * 65535.0) / double(std::max(1, w - 1))));
+    in.mi.dy = static_cast<LONG>(std::lround((double(cy) * 65535.0) / double(std::max(1, h - 1))));
     in.mi.dwFlags = MOUSEEVENTF_MOVE | MOUSEEVENTF_ABSOLUTE;
-    SendInput(1, &in, sizeof(INPUT));
-    done(QString());
+    std::vector<INPUT> inputs{in};
+    done(sendInputsChecked(inputs));
 #else
     Q_UNUSED(x);
     Q_UNUSED(y);
@@ -276,8 +324,7 @@ void WinInputBackend::mouseClick(int button, int count, Done done) {
         inputs.push_back(down);
         inputs.push_back(up);
     }
-    SendInput(UINT(inputs.size()), inputs.data(), sizeof(INPUT));
-    done(QString());
+    done(sendInputsChecked(inputs));
 #else
     Q_UNUSED(button);
     Q_UNUSED(count);
@@ -302,8 +349,7 @@ void WinInputBackend::mouseScroll(int dx, int dy, Done done) {
         in.mi.mouseData = DWORD(dx * WHEEL_DELTA);
         inputs.push_back(in);
     }
-    if (!inputs.empty()) SendInput(UINT(inputs.size()), inputs.data(), sizeof(INPUT));
-    done(QString());
+    done(sendInputsChecked(inputs));
 #else
     Q_UNUSED(dx);
     Q_UNUSED(dy);

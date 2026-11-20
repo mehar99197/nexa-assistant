@@ -24,7 +24,13 @@ constexpr QLatin1StringView kRootPath{"/org/a11y/atspi/accessible/root"};
 const QSet<QString> &shellApps() {
     static const QSet<QString> apps{u"gnome-shell"_s,       u"gjs"_s,          u"ibus-extension-gtk3"_s, u"ibus-x11"_s,
                                     u"xdg-desktop-portal-gtk"_s, u"xdg-desktop-portal-gnome"_s, u"at-spi2-registryd"_s,
-                                    u"mutter-x11-frames"_s, u"easyeffects"_s};
+                                    u"mutter-x11-frames"_s, u"easyeffects"_s
+#ifdef Q_OS_WIN
+                                    , u"SearchHost"_s, u"StartMenuExperienceHost"_s, u"ShellExperienceHost"_s,
+                                    u"TextInputHost"_s, u"LockApp"_s, u"Widgets"_s, u"ScreenClippingHost"_s,
+                                    u"ShellHost"_s
+#endif
+    };
     return apps;
 }
 

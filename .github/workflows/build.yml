@@ -173,14 +173,18 @@ jobs:
           set -euo pipefail
           export QT_QPA_PLATFORM=offscreen
           ctest --test-dir build-win --output-on-failure --timeout 300
-          ./build-win/tests/nexa_guard_obf_test.exe
+          GUARD_BIN="$(find build-win -maxdepth 3 -name 'nexa_guard_obf_test.exe' | head -1)"
+          test -n "$GUARD_BIN"
+          "$GUARD_BIN"
 
       - name: Stage Windows bundle, Qt plugins, OpenSSL, and speech engines
         run: |
           set -euo pipefail
           rm -rf dist-win release-win portable-stage
           mkdir -p dist-win/engines/sherpa/lib dist-win/engines/piper release-win
-          cp build-win/app/nexa-assistant.exe dist-win/
+          APP_BIN="$(find build-win -maxdepth 3 -name 'nexa-assistant.exe' | head -1)"
+          test -n "$APP_BIN"
+          cp "$APP_BIN" dist-win/
           cp README.md THIRD_PARTY_NOTICES.md LICENSE dist-win/
           find build-win -name '*.dll' ! -path 'build-win/tests/*' -exec cp -n {} dist-win/ \;
 

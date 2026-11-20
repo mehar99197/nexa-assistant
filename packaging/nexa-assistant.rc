@@ -28,10 +28,11 @@ BEGIN
     BEGIN
         BLOCK "040904b0"
         BEGIN
-            VALUE "CompanyName", "Nexa"
+            VALUE "CompanyName", "nexacode tech solutions"
             VALUE "FileDescription", "Nexa Assistant"
             VALUE "FileVersion", VER_FILEVERSION_STR
             VALUE "InternalName", "nexa-assistant"
+            VALUE "LegalCopyright", "nexacode tech solutions"
             VALUE "OriginalFilename", "nexa-assistant.exe"
             VALUE "ProductName", "Nexa Assistant"
             VALUE "ProductVersion", VER_FILEVERSION_STR

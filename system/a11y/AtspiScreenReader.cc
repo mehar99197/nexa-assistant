@@ -729,6 +729,57 @@ void walkUiaSubtree(IUIAutomationTreeWalker *walker, IUIAutomationElement *paren
     }
 }
 
+bool isWinShellClass(HWND hwnd) {
+    if (!hwnd) return false;
+    wchar_t cls[64]{};
+    if (::GetClassNameW(hwnd, cls, 64) <= 0) return false;
+    const QString name = QString::fromWCharArray(cls);
+    return name == u"Progman"_s || name == u"WorkerW"_s || name == u"Shell_TrayWnd"_s
+           || name == u"Shell_SecondaryTrayWnd"_s;
+}
+
+bool isWinShellProcess(const QString &procName) {
+    static const QSet<QString> hosts{u"SearchHost"_s, u"StartMenuExperienceHost"_s, u"ShellExperienceHost"_s,
+                                     u"TextInputHost"_s, u"LockApp"_s, u"Widgets"_s, u"ScreenClippingHost"_s,
+                                     u"ShellHost"_s};
+    return hosts.contains(procName);
+}
+
+HWND topNonNexaWindow(DWORD selfPid) {
+    for (HWND hwnd = ::GetTopWindow(nullptr); hwnd != nullptr; hwnd = ::GetWindow(hwnd, GW_HWNDNEXT)) {
+        if (!::IsWindowVisible(hwnd) || ::IsIconic(hwnd)) continue;
+        if (isWinShellClass(hwnd)) continue;
+        const LONG_PTR exStyle = ::GetWindowLongPtrW(hwnd, GWL_EXSTYLE);
+        if ((exStyle & WS_EX_TOOLWINDOW) != 0) continue;
+        DWORD pid = 0;
+        ::GetWindowThreadProcessId(hwnd, &pid);
+        if (pid == 0 || pid == selfPid) continue;
+        if (isWinShellProcess(processDisplayName(pid))) continue;
+        if (::GetWindowTextLengthW(hwnd) <= 0) continue;
+        RECT rc{};
+        if (::GetWindowRect(hwnd, &rc) && (rc.right - rc.left) > 10 && (rc.bottom - rc.top) > 10) {
+            return hwnd;
+        }
+    }
+    return nullptr;
+}
+
+void activateWindow(HWND hwnd) {
+    if (!hwnd || !::IsWindow(hwnd)) return;
+    if (::IsIconic(hwnd)) ::ShowWindow(hwnd, SW_RESTORE);
+    const HWND fg = ::GetForegroundWindow();
+    const DWORD curTid = ::GetCurrentThreadId();
+    const DWORD fgTid = fg ? ::GetWindowThreadProcessId(fg, nullptr) : 0;
+    const DWORD targetTid = ::GetWindowThreadProcessId(hwnd, nullptr);
+    const bool attachFg = fgTid != 0 && fgTid != curTid && ::AttachThreadInput(curTid, fgTid, TRUE) != FALSE;
+    const bool attachTarget =
+        targetTid != 0 && targetTid != curTid && targetTid != fgTid && ::AttachThreadInput(curTid, targetTid, TRUE) != FALSE;
+    ::BringWindowToTop(hwnd);
+    ::SetForegroundWindow(hwnd);
+    if (attachTarget) ::AttachThreadInput(curTid, targetTid, FALSE);
+    if (attachFg) ::AttachThreadInput(curTid, fgTid, FALSE);
+}
+
 } // namespace
 
 AtspiScreenReader::AtspiScreenReader(AtspiBus *bus, QObject *parent) : QObject(parent), bus_(bus) {
@@ -777,12 +828,22 @@ void AtspiScreenReader::apps(std::function<void(Result<QList<AtspiApp>>)> done) 
 
         const DWORD selfPid = ::GetCurrentProcessId();
         const HWND fgHwnd = ::GetForegroundWindow();
+        DWORD fgPid = 0;
+        if (fgHwnd) ::GetWindowThreadProcessId(fgHwnd, &fgPid);
+        // When the user submits a request from Nexa's own window, Nexa itself is the foreground window.
+        // Fall back to the top non-Nexa app window in Z-order so screen_snapshot still inspects it fully.
+        HWND effectiveActive = fgHwnd;
+        if (!effectiveActive || fgPid == selfPid || isWinShellClass(effectiveActive)
+            || isWinShellProcess(processDisplayName(fgPid))) {
+            effectiveActive = topNonNexaWindow(selfPid);
+        }
         QHash<DWORD, int> appIndexByPid;
         QList<AtspiApp> apps;
 
         ComPtr<IUIAutomationElement> win;
         if (FAILED(walker->GetFirstChildElement(root.ptr, win.put()))) return apps;
         int winIndex = 0;
+        int backgroundWalked = 0;
         while (win) {
             UIA_HWND uiaHwnd = nullptr;
             win->get_CurrentNativeWindowHandle(&uiaHwnd);
@@ -793,7 +854,7 @@ void AtspiScreenReader::apps(std::function<void(Result<QList<AtspiApp>>)> done) 
 
             bool skip = (pid != 0 && pid == selfPid);
             if (!skip && hwnd) {
-                if (!::IsWindowVisible(hwnd) || ::IsIconic(hwnd)) skip = true;
+                if (!::IsWindowVisible(hwnd) || ::IsIconic(hwnd) || isWinShellClass(hwnd)) skip = true;
             }
             if (!skip) {
                 const QString busId = u"win:%1"_s.arg(pid);
@@ -806,7 +867,7 @@ void AtspiScreenReader::apps(std::function<void(Result<QList<AtspiApp>>)> done) 
                     apps.append(std::move(app));
                 }
                 AtspiApp &app = apps[appIndexByPid.value(pid)];
-                const bool isActive = (hwnd != nullptr && hwnd == fgHwnd);
+                const bool isActive = (hwnd != nullptr && hwnd == effectiveActive);
                 atspi::Node winNode =
                     buildNode(win.ptr, hwnd, busId, QString(kRootPath), winIndex++, true, isActive);
                 const QString winPath = winNode.ref.path;
@@ -814,8 +875,10 @@ void AtspiScreenReader::apps(std::function<void(Result<QList<AtspiApp>>)> done) 
                 nodes.append(std::move(winNode));
                 if (isActive) {
                     walkUiaSubtree(walker.ptr, win.ptr, hwnd, busId, winPath, nodes, 1, kWalkCap);
+                } else if (backgroundWalked < 6 && !isWinShellProcess(app.name)) {
+                    ++backgroundWalked;
+                    walkUiaSubtree(walker.ptr, win.ptr, hwnd, busId, winPath, nodes, 1, 120);
                 } else {
-                    // Add shallow immediate children so background frames with content are kept cleanly.
                     walkUiaSubtree(walker.ptr, win.ptr, hwnd, busId, winPath, nodes, kWalkDepth - 1, 16);
                 }
                 app.nodes.append(std::move(nodes));
@@ -943,6 +1006,11 @@ void AtspiScreenReader::grabFocus(const atspi::NodeRef &ref, std::function<void(
         if (!automation) return automation.error();
         const Result<ComPtr<IUIAutomationElement>> elem = resolveElement(automation.value().ptr, ref);
         if (!elem) return elem.error();
+        HWND topHwnd = nullptr;
+        QList<int> unusedRt;
+        if (decodeWinPath(ref.path, &topHwnd, &unusedRt) && topHwnd) {
+            activateWindow(topHwnd);
+        }
         if (SUCCEEDED(elem.value()->SetFocus())) return {};
         return Error{ErrorCode::Io, u"The application did not give that element the focus."_s};
     }, std::move(done));
