@@ -215,6 +215,22 @@ def run_turn(entry, thread_id, turn_id):
         if wait(1.5):
             return turn_completed(thread_id, turn_id, "interrupted")
         notify("item/completed", dict(base, item={"type": entry["tool"], "id": "tool-1", "command": "ls"}))
+    if entry.get("dynamicTool"):
+        dt = entry["dynamicTool"]
+        cid = dt.get("callId", "call-1")
+        notify("item/started", dict(base, item={"type": "dynamicToolCall", "id": cid, "tool": dt["tool"],
+                                                "arguments": dt.get("arguments", {})}))
+        STATE["dt_answer"] = None
+        emit({"id": "dt-1", "method": "item/tool/call",
+              "params": dict(base, callId=cid, tool=dt["tool"], arguments=dt.get("arguments", {}))})
+        end = time.time() + 5.0
+        while time.time() < end and STATE.get("dt_answer") is None:
+            if STATE["interrupted"]:
+                return turn_completed(thread_id, turn_id, "interrupted")
+            if not pump(0.05):
+                os._exit(0)
+        notify("item/completed", dict(base, item={"type": "dynamicToolCall", "id": cid, "tool": dt["tool"],
+                                                  "status": "completed"}))
     if entry.get("hang"):
         wait(120)
         return turn_completed(thread_id, turn_id, "interrupted")
@@ -249,6 +265,8 @@ def handle(msg):
     params = msg.get("params") or {}
     if method is None:
         log({"response": msg})
+        if msg.get("id") == "dt-1":
+            STATE["dt_answer"] = msg
         return
     if msg_id is None:
         log({"notification": method})

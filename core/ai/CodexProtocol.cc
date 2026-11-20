@@ -84,7 +84,11 @@ QStringList CodexProtocol::serverArguments() {
 QJsonObject CodexProtocol::initializeParams(const QString &version) {
     return QJsonObject{
         {u"clientInfo"_s, QJsonObject{{u"name"_s, u"nexa"_s}, {u"title"_s, u"Nexa"_s}, {u"version"_s, version}}},
+#ifdef Q_OS_WIN
+        {u"capabilities"_s, QJsonObject{{u"experimentalApi"_s, true}, {u"requestAttestation"_s, false}}}};
+#else
         {u"capabilities"_s, QJsonObject{{u"experimentalApi"_s, false}, {u"requestAttestation"_s, false}}}};
+#endif
 }
 
 QJsonObject CodexProtocol::loginStartParams() {
@@ -95,14 +99,36 @@ QJsonObject CodexProtocol::loginCancelParams(const QString &loginId) {
     return QJsonObject{{u"loginId"_s, loginId}};
 }
 
+#ifdef Q_OS_WIN
+QJsonObject CodexProtocol::threadStartParams(const QString &model, const QString &cwd,
+                                             const QString &developerInstructions, const QStringList &mcpServers,
+                                             const QList<ToolSpec> &dynamicTools) {
+#else
 QJsonObject CodexProtocol::threadStartParams(const QString &model, const QString &cwd,
                                              const QString &developerInstructions, const QStringList &mcpServers) {
+#endif
     QJsonObject params{{u"cwd"_s, cwd},
                        {u"approvalPolicy"_s, u"never"_s},
                        {u"sandbox"_s, u"read-only"_s},
                        {u"ephemeral"_s, true}};
     if (!model.isEmpty()) params.insert(u"model"_s, model);
     if (!developerInstructions.isEmpty()) params.insert(u"developerInstructions"_s, developerInstructions);
+#ifdef Q_OS_WIN
+    if (!dynamicTools.isEmpty()) {
+        QJsonArray tools;
+        for (const ToolSpec &spec : dynamicTools) {
+            QJsonObject schema = spec.parameters;
+            if (schema.isEmpty()) {
+                schema = QJsonObject{{u"type"_s, u"object"_s}, {u"properties"_s, QJsonObject{}}};
+            }
+            tools.append(QJsonObject{{u"type"_s, u"function"_s},
+                                     {u"name"_s, spec.name},
+                                     {u"description"_s, spec.description},
+                                     {u"inputSchema"_s, schema}});
+        }
+        params.insert(u"dynamicTools"_s, tools);
+    }
+#endif
     QJsonObject config;
     if (!mcpServers.isEmpty()) {
         // Merged over the user's own entries, so a server is switched off without its definition.
@@ -113,6 +139,14 @@ QJsonObject CodexProtocol::threadStartParams(const QString &model, const QString
     params.insert(u"config"_s, config);
     return params;
 }
+
+#ifdef Q_OS_WIN
+QJsonObject CodexProtocol::dynamicToolResult(bool success, const QString &text) {
+    QJsonArray items;
+    items.append(QJsonObject{{u"type"_s, u"inputText"_s}, {u"text"_s, text}});
+    return QJsonObject{{u"success"_s, success}, {u"contentItems"_s, items}};
+}
+#endif
 
 QJsonObject CodexProtocol::turnStartParams(const QString &threadId, const QString &text, const QString &model) {
     const QJsonObject input{{u"type"_s, u"text"_s}, {u"text"_s, text}, {u"text_elements"_s, QJsonArray()}};

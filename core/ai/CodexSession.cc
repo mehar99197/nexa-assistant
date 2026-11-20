@@ -9,6 +9,10 @@
 #include <QFile>
 #include <QJsonValue>
 #include <QPointer>
+#ifdef Q_OS_WIN
+#include <QJsonDocument>
+#include <QMetaMethod>
+#endif
 
 #include "core/ProcessUtils.h"
 
@@ -127,6 +131,18 @@ void CodexConnection::send(const QString &method, const QJsonObject &params, Rep
     process_.write(CodexProtocol::request(id, method, params));
 }
 
+#ifdef Q_OS_WIN
+void CodexConnection::respondToServer(const QJsonValue &id, const QJsonObject &result) {
+    if (broken_ || process_.state() == QProcess::NotRunning) return;
+    process_.write(CodexProtocol::response(id, result));
+}
+
+void CodexConnection::failServerRequest(const QJsonValue &id, int code, const QString &message) {
+    if (broken_ || process_.state() == QProcess::NotRunning) return;
+    process_.write(CodexProtocol::errorResponse(id, code, message));
+}
+#endif
+
 void CodexConnection::kill() {
     killed_ = true;
     if (process_.state() == QProcess::NotRunning) return;
@@ -171,6 +187,13 @@ void CodexConnection::handle(const CodexMessage &message) {
         emit notification(message);
         break;
     case CodexMessage::Kind::ServerRequest:
+#ifdef Q_OS_WIN
+        if (message.method == u"item/tool/call"_s
+            && isSignalConnected(QMetaMethod::fromSignal(&CodexConnection::serverRequest))) {
+            emit serverRequest(message);
+            break;
+        }
+#endif
         // An approval, an elicitation, a tool call: Nexa answers none of them, but never leaves one hanging.
         qCInfo(lcAi) << "codex asked for" << message.method << "- refused";
         process_.write(CodexProtocol::errorResponse(message.id, -32601, u"Nexa does not handle "_s + message.method));
@@ -234,6 +257,11 @@ CodexSession::CodexSession(QString program, QString workingDir, QObject *parent)
         killedForInterrupt_ = true;
         connection_->kill();
     });
+#ifdef Q_OS_WIN
+    toolBatchTimer_.setSingleShot(true);
+    toolBatchTimer_.setInterval(25);
+    connect(&toolBatchTimer_, &QTimer::timeout, this, &CodexSession::flushToolCalls);
+#endif
 }
 
 CodexSession::~CodexSession() = default;
@@ -242,6 +270,9 @@ void CodexSession::start() {
     if (connection_) return;
     connection_ = std::make_unique<CodexConnection>(program_, workingDir_);
     connect(connection_.get(), &CodexConnection::notification, this, &CodexSession::onNotification);
+#ifdef Q_OS_WIN
+    connect(connection_.get(), &CodexConnection::serverRequest, this, &CodexSession::onServerRequest);
+#endif
     connect(connection_.get(), &CodexConnection::closed, this, &CodexSession::onClosed);
     connection_->start();
 }
@@ -268,6 +299,9 @@ void CodexSession::send(const QString &text, const QString &model, bool newThrea
     if (newThread || !extraDeveloperInstructions.isEmpty()) {
         extraDeveloperInstructions_ = extraDeveloperInstructions;
     }
+    toolBatchTimer_.stop();
+    queuedToolCalls_.clear();
+    awaitingResults_.clear();
 #endif
     turnId_.clear();
     lastItem_.clear();
@@ -345,12 +379,17 @@ void CodexSession::advance() {
     const QString model = requestedModel_.isEmpty() ? defaultModel_ : requestedModel_;
     if (threadId_.isEmpty()) {
 #ifdef Q_OS_WIN
-        QString devInstructions = developerInstructions();
+        QString devInstructions =
+            dynamicTools_.isEmpty()
+                ? developerInstructions()
+                : u"You are the model behind Nexa, a Windows desktop assistant that directly controls the user's PC. "
+                  "Use the provided Nexa tools directly via tool calls to fulfill the user's requests on their PC, "
+                  "browser, and connected phone, and answer concisely once done."_s;
         if (!extraDeveloperInstructions_.isEmpty()) {
             devInstructions += u"\n\n"_s + extraDeveloperInstructions_;
         }
         ask(u"thread/start"_s,
-            CodexProtocol::threadStartParams(model, workspace(workingDir_), devInstructions, mcpServers_),
+            CodexProtocol::threadStartParams(model, workspace(workingDir_), devInstructions, mcpServers_, dynamicTools_),
 #else
         ask(u"thread/start"_s,
             CodexProtocol::threadStartParams(model, workspace(workingDir_), developerInstructions(), mcpServers_),
@@ -380,6 +419,11 @@ void CodexSession::failTurn(const Error &error) {
     interrupting_ = false;
     ownToolInterrupt_ = false;
     killTimer_.stop();
+#ifdef Q_OS_WIN
+    toolBatchTimer_.stop();
+    queuedToolCalls_.clear();
+    awaitingResults_.clear();
+#endif
     idle_.start();
     if (wasInterrupting) {
         emit settled();
@@ -414,6 +458,12 @@ void CodexSession::onNotification(const CodexMessage &message) {
         emit activity();
         break;
     case CodexEvent::Kind::OwnTool:
+#ifdef Q_OS_WIN
+        if (event.itemType == u"dynamicToolCall"_s && !dynamicTools_.isEmpty()) {
+            emit activity();
+            break;
+        }
+#endif
         emit activity();
         if (!ownTools_.contains(event.itemType)) {
             ownTools_.append(event.itemType);
@@ -462,6 +512,11 @@ void CodexSession::finishTurn(const CodexEvent &event) {
     interrupting_ = false;
     ownToolInterrupt_ = false;
     killTimer_.stop();
+#ifdef Q_OS_WIN
+    toolBatchTimer_.stop();
+    queuedToolCalls_.clear();
+    awaitingResults_.clear();
+#endif
     idle_.start();
     if (wasInterrupting && !forTool) {
         emit settled();
@@ -496,6 +551,9 @@ void CodexSession::interrupt() {
         return;
     }
     interrupting_ = true;
+#ifdef Q_OS_WIN
+    rejectPendingToolCalls(u"Cancelled by user"_s);
+#endif
     killTimer_.start();
     if (!turnId_.isEmpty()) sendInterrupt();
     // else: the turn id is not known yet; it is sent when it arrives, or the turn is dropped before it starts.
@@ -513,6 +571,11 @@ void CodexSession::settleInterrupt() {
     interrupting_ = false;
     ownToolInterrupt_ = false;
     killTimer_.stop();
+#ifdef Q_OS_WIN
+    toolBatchTimer_.stop();
+    queuedToolCalls_.clear();
+    awaitingResults_.clear();
+#endif
     idle_.start();
     emit settled();
 }
@@ -521,6 +584,11 @@ void CodexSession::onClosed(const Error &error) {
     broken_ = true;
     idle_.stop();
     killTimer_.stop();
+#ifdef Q_OS_WIN
+    toolBatchTimer_.stop();
+    queuedToolCalls_.clear();
+    awaitingResults_.clear();
+#endif
     const bool wasBusy = std::exchange(busy_, false);
     const bool userInterrupt = interrupting_ && !ownToolInterrupt_;
     interrupting_ = false;
@@ -534,5 +602,71 @@ void CodexSession::onClosed(const Error &error) {
                         ? Error{ErrorCode::Timeout, u"Codex did not stop when asked, so it was ended"_s}
                         : error);
 }
+
+#ifdef Q_OS_WIN
+void CodexSession::onServerRequest(const CodexMessage &message) {
+    if (message.method != u"item/tool/call"_s || dynamicTools_.isEmpty() || !busy_ || interrupting_
+        || message.params.value(u"threadId"_s).toString() != threadId_) {
+        if (connection_) {
+            connection_->failServerRequest(message.id, -32601, u"Nexa does not handle "_s + message.method);
+        }
+        return;
+    }
+    emit activity();
+    const QString toolName = message.params.value(u"tool"_s).toString();
+    QString callId = message.params.value(u"callId"_s).toString();
+    if (callId.isEmpty()) {
+        const QString rpcKey = message.id.isString() ? message.id.toString() : QString::number(qint64(message.id.toDouble()));
+        callId = u"codex_call_%1"_s.arg(rpcKey);
+    }
+    const QJsonValue argsVal = message.params.value(u"arguments"_s);
+    QString argsJson = u"{}"_s;
+    if (argsVal.isObject()) {
+        argsJson = QString::fromUtf8(QJsonDocument(argsVal.toObject()).toJson(QJsonDocument::Compact));
+    } else if (argsVal.isString() && !argsVal.toString().trimmed().isEmpty()) {
+        argsJson = argsVal.toString();
+    }
+    queuedToolCalls_.append(PendingToolCall{message.id, ToolCall{callId, toolName, argsJson, {}}});
+    toolBatchTimer_.start();
+}
+
+void CodexSession::flushToolCalls() {
+    if (!busy_ || interrupting_ || queuedToolCalls_.isEmpty()) return;
+    QList<ToolCall> calls;
+    calls.reserve(queuedToolCalls_.size());
+    const QList<PendingToolCall> batch = std::exchange(queuedToolCalls_, {});
+    for (const PendingToolCall &pending : batch) {
+        awaitingResults_.insert(pending.call.id, pending.rpcId);
+        calls.append(pending.call);
+    }
+    reply_.clear();
+    lastItem_.clear();
+    emit toolCallsReady(calls);
+}
+
+void CodexSession::submitToolResults(const QList<ChatMessage> &results) {
+    if (!connection_ || !busy_ || interrupting_) return;
+    QHash<QString, QString> byId;
+    for (const ChatMessage &msg : results) {
+        if (msg.role == Role::Tool && !msg.toolCallId.isEmpty()) byId.insert(msg.toolCallId, msg.text);
+    }
+    const QHash<QString, QJsonValue> waiting = std::exchange(awaitingResults_, {});
+    for (auto it = waiting.cbegin(); it != waiting.cend(); ++it) {
+        const QString text = byId.contains(it.key()) ? byId.value(it.key()) : u"No result returned."_s;
+        connection_->respondToServer(it.value(), CodexProtocol::dynamicToolResult(true, text));
+    }
+}
+
+void CodexSession::rejectPendingToolCalls(const QString &reason) {
+    toolBatchTimer_.stop();
+    const QList<PendingToolCall> queued = std::exchange(queuedToolCalls_, {});
+    const QHash<QString, QJsonValue> waiting = std::exchange(awaitingResults_, {});
+    if (!connection_) return;
+    for (const PendingToolCall &p : queued) connection_->failServerRequest(p.rpcId, -32000, reason);
+    for (auto it = waiting.cbegin(); it != waiting.cend(); ++it) {
+        connection_->failServerRequest(it.value(), -32000, reason);
+    }
+}
+#endif
 
 } // namespace nexa

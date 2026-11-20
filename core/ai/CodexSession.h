@@ -3,6 +3,9 @@
 #include "core/Result.h"
 #include "core/ai/CodexEvents.h"
 #include "core/ai/CodexProtocol.h"
+#ifdef Q_OS_WIN
+#include "core/ai/ChatRequest.h"
+#endif
 
 #include <QByteArray>
 #include <QHash>
@@ -38,6 +41,10 @@ public:
 
     void start();                                   // idempotent
     void call(const QString &method, const QJsonObject &params, Reply reply);
+#ifdef Q_OS_WIN
+    void respondToServer(const QJsonValue &id, const QJsonObject &result);
+    void failServerRequest(const QJsonValue &id, int code, const QString &message);
+#endif
     void kill();                                    // the process group, now
     bool isBroken() const { return broken_; }
     bool isReady() const { return ready_; }
@@ -49,6 +56,9 @@ public:
 
 signals:
     void notification(const nexa::CodexMessage &message);
+#ifdef Q_OS_WIN
+    void serverRequest(const nexa::CodexMessage &message);
+#endif
     void closed(const nexa::Error &error);
 
 private:
@@ -105,6 +115,10 @@ public:
     // One turn. `newThread`: begin a new thread first (the first turn, or after one that cannot be trusted);
     // `model` empty: the first model Codex lists as visible.
 #ifdef Q_OS_WIN
+    void setDynamicTools(const QList<ToolSpec> &tools) { dynamicTools_ = tools; }
+    bool hasPendingToolCalls() const { return !awaitingResults_.isEmpty(); }
+    QStringList pendingToolCallIds() const { return awaitingResults_.keys(); }
+    void submitToolResults(const QList<ChatMessage> &results);
     void send(const QString &text, const QString &model, bool newThread,
               const QString &extraDeveloperInstructions = {});
 #else
@@ -124,6 +138,9 @@ signals:
     void activity();                                // Codex did something during a turn (thinking counts)
     void text(const QString &delta);
     void ownTool(const QString &type);
+#ifdef Q_OS_WIN
+    void toolCallsReady(const QList<nexa::ToolCall> &calls);
+#endif
     void turnFinished(const nexa::CodexTurnResult &result);
     void turnFailed(const nexa::Error &error);
     void settled();                                 // an interrupt took effect (or the process ended doing it)
@@ -132,6 +149,11 @@ private:
     void advance();
     void failTurn(const Error &error);
     void onNotification(const CodexMessage &message);
+#ifdef Q_OS_WIN
+    void onServerRequest(const CodexMessage &message);
+    void flushToolCalls();
+    void rejectPendingToolCalls(const QString &reason);
+#endif
     void onClosed(const Error &error);
     void emitText(const QString &itemId, const QString &delta);
     void finishTurn(const CodexEvent &event);
@@ -148,7 +170,15 @@ private:
     QString text_;                      // the turn on its way
     QString requestedModel_;
 #ifdef Q_OS_WIN
+    struct PendingToolCall {
+        QJsonValue rpcId;
+        ToolCall call;
+    };
     QString extraDeveloperInstructions_;
+    QList<ToolSpec> dynamicTools_;
+    QList<PendingToolCall> queuedToolCalls_;
+    QHash<QString, QJsonValue> awaitingResults_;
+    QTimer toolBatchTimer_;
 #endif
     QString defaultModel_;              // the first visible model, once listed
     QString threadId_;

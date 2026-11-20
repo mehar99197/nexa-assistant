@@ -2,6 +2,9 @@
 
 #include "core/Result.h"
 #include "core/ai/SignIn.h"
+#ifdef Q_OS_WIN
+#include "core/tools/ToolSpec.h"
+#endif
 
 #include <QByteArray>
 #include <QJsonObject>
@@ -61,8 +64,14 @@ public:
     static QJsonObject loginCancelParams(const QString &loginId);
     // A thread of its own that cannot touch anything: ephemeral, read-only sandbox, never asks. `mcpServers`
     // are the names in the user's config that Codex would start at thread start; each is switched off here.
+#ifdef Q_OS_WIN
+    static QJsonObject threadStartParams(const QString &model, const QString &cwd, const QString &developerInstructions,
+                                         const QStringList &mcpServers, const QList<ToolSpec> &dynamicTools = {});
+    static QJsonObject dynamicToolResult(bool success, const QString &text);
+#else
     static QJsonObject threadStartParams(const QString &model, const QString &cwd, const QString &developerInstructions,
                                          const QStringList &mcpServers);
+#endif
     static QJsonObject turnStartParams(const QString &threadId, const QString &text, const QString &model);
     static QJsonObject interruptParams(const QString &threadId, const QString &turnId);
     static QJsonObject modelListParams(const QString &cursor = {});

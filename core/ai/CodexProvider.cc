@@ -10,6 +10,9 @@
 #include <QJsonObject>
 #include "core/config/Portable.h"
 #include <QTimer>
+#ifdef Q_OS_WIN
+#include <QSet>
+#endif
 
 using namespace Qt::StringLiterals;
 
@@ -28,6 +31,16 @@ QString notInstalled() {
     return u"Codex is not installed (%1)"_s.arg(programSearchHint());
 }
 
+#ifdef Q_OS_WIN
+QStringList toolNamesOf(const QList<ToolSpec> &tools) {
+    QStringList names;
+    names.reserve(tools.size());
+    for (const ToolSpec &spec : tools) names.append(spec.name);
+    names.sort();
+    return names;
+}
+#endif
+
 } // namespace
 
 // The stream of one Codex turn. The provider drives it, since it holds the session.
@@ -36,6 +49,9 @@ public:
     std::function<void()> onAbort;
 
     void text(const QString &delta) { emitText(delta); }
+#ifdef Q_OS_WIN
+    void finishWithToolCalls(QList<ToolCall> calls) { complete(FinishReason::ToolCalls, std::move(calls)); }
+#endif
     void done() { complete(FinishReason::Stop, {}); }
     void error(const Error &error) { fail(error); }
 
@@ -65,7 +81,11 @@ CodexProvider::CodexProvider(ProviderConfig config, QString workingDir, QObject 
 CodexProvider::~CodexProvider() = default;
 
 IAiProvider::Capabilities CodexProvider::capabilities() const {
+#ifdef Q_OS_WIN
+    return Capabilities{.streaming = true, .nativeTools = true, .vision = false};
+#else
     return Capabilities{.streaming = true, .nativeTools = false, .vision = false};
+#endif
 }
 
 QString CodexProvider::locate(const QString &configured) {
@@ -136,6 +156,50 @@ std::shared_ptr<ChatStream> CodexProvider::chat(const ChatRequest &request) {
         failSoon(Error{ErrorCode::NotFound, notInstalled()});
         return handle;
     }
+#ifdef Q_OS_WIN
+    // Continuation of an open Codex turn paused on native dynamic item/tool/call request(s).
+    if (session_ && session_->isUsable() && session_->hasPendingToolCalls() && !stream_) {
+        const QStringList wanted = session_->pendingToolCallIds();
+        QList<ChatMessage> toolResults;
+        QSet<QString> foundIds;
+        for (qsizetype i = request.messages.size() - 1; i >= 0; --i) {
+            const ChatMessage &msg = request.messages.at(i);
+            if (msg.role == Role::Assistant) break;
+            if (msg.role == Role::Tool && wanted.contains(msg.toolCallId)) {
+                toolResults.append(msg);
+                foundIds.insert(msg.toolCallId);
+            }
+        }
+        if (foundIds.size() == wanted.size()) {
+            pending_ = request;
+            if (pending_.model.isEmpty()) pending_.model = config_.defaultModel;
+            stream_ = stream;
+            activeStream_ = stream;
+            turnTimer_.start(turnTimeoutMs_);
+            stream->onAbort = [self = QPointer<CodexProvider>(this)] {
+                if (!self) return;
+                self->turnTimer_.stop();
+                self->stream_ = nullptr;
+                self->ledger_.reset();
+                if (self->session_) self->session_->interrupt();
+            };
+            connect(stream, &QObject::destroyed, this, [this](QObject *gone) {
+                if (gone != activeStream_ || !session_ || !session_->isBusy() || session_->isInterrupting()) return;
+                turnTimer_.stop();
+                ledger_.reset();
+                session_->interrupt();
+            });
+            QTimer::singleShot(0, stream, [stream, session = QPointer<CodexSession>(session_.get()),
+                                           results = std::move(toolResults)] {
+                if (session && !stream->isDone()) session->submitToolResults(results);
+            });
+            return handle;
+        }
+        session_->interrupt();
+        retireSession();
+        ledger_.reset();
+    }
+#endif
     if (session_ && session_->isBusy()) {
         // Only a turn nobody waits for any more (cancelled, dropped) is left to wind down; one that is being
         // stopped for using Codex's own tool still has a stream waiting, which must not be orphaned.
@@ -149,6 +213,10 @@ std::shared_ptr<ChatStream> CodexProvider::chat(const ChatRequest &request) {
     pending_ = request;
     if (pending_.model.isEmpty()) pending_.model = config_.defaultModel;
     if (!session_ || !session_->isUsable()) ledger_.reset();
+#ifdef Q_OS_WIN
+    const QStringList offeredTools = toolNamesOf(pending_.tools);
+    if (session_ && offeredTools != threadToolNames_) ledger_.reset();
+#endif
     const TurnPlan plan = ledger_.plan(pending_);
     QStringList parts;
     bool newThread = false;
@@ -156,7 +224,15 @@ std::shared_ptr<ChatStream> CodexProvider::chat(const ChatRequest &request) {
         ledger_.reset();
         if (!session_ || !session_->isUsable()) replaceSession(path);
         newThread = true;
+#ifdef Q_OS_WIN
+        threadToolNames_ = offeredTools;
+        session_->setDynamicTools(pending_.tools);
+        if (pending_.tools.isEmpty() && !plan.system.isEmpty()) {
+            parts.append(TranscriptWriter::instructions(plan.system));
+        }
+#else
         if (!plan.system.isEmpty()) parts.append(TranscriptWriter::instructions(plan.system));
+#endif
         if (const QString earlier = TranscriptWriter::history(plan.history); !earlier.isEmpty()) parts.append(earlier);
     } else if (plan.instructionsChanged) {
         parts.append(TranscriptWriter::instructionsUpdate(plan.system));
@@ -214,6 +290,15 @@ void CodexProvider::replaceSession(const QString &program) {
     connect(session, &CodexSession::text, this, [this](const QString &delta) {
         if (stream_) stream_->text(delta);
     });
+#ifdef Q_OS_WIN
+    connect(session, &CodexSession::toolCallsReady, this, [this](const QList<ToolCall> &calls) {
+        CodexStream *stream = stream_;
+        if (!stream) return;
+        turnTimer_.stop();
+        stream_ = nullptr;
+        stream->finishWithToolCalls(calls);
+    });
+#endif
     connect(session, &CodexSession::turnFinished, this, &CodexProvider::onTurnFinished);
     connect(session, &CodexSession::turnFailed, this, [this](const Error &error) {
         turnTimer_.stop();

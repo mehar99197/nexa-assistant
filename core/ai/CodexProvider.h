@@ -61,6 +61,9 @@ private:
     QTimer turnTimer_;
     int turnTimeoutMs_{300'000};
     QStringList models_;
+#ifdef Q_OS_WIN
+    QStringList threadToolNames_;
+#endif
 };
 
 } // namespace nexa

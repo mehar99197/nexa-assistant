@@ -99,7 +99,11 @@ TEST_CASE("initialize names the client nexa and asks for nothing experimental", 
     const QJsonObject params = CodexProtocol::initializeParams(u"1.2.3"_s);
     CHECK(params.value(u"clientInfo"_s).toObject().value(u"name"_s).toString() == u"nexa"_s);
     CHECK(params.value(u"clientInfo"_s).toObject().value(u"version"_s).toString() == u"1.2.3"_s);
+#ifdef Q_OS_WIN
+    CHECK(params.value(u"capabilities"_s).toObject().value(u"experimentalApi"_s).toBool(false));
+#else
     CHECK_FALSE(params.value(u"capabilities"_s).toObject().value(u"experimentalApi"_s).toBool(true));
+#endif
     CHECK_FALSE(params.value(u"capabilities"_s).toObject().value(u"requestAttestation"_s).toBool(true));
 }
 

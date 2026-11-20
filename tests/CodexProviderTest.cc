@@ -180,7 +180,11 @@ TEST_CASE("CodexProvider says what it can do", "[codex]") {
     CodexRig rig({});
     CodexProvider provider(rig.config(), rig.workingDir());
     CHECK(provider.capabilities().streaming);
+#ifdef Q_OS_WIN
+    CHECK(provider.capabilities().nativeTools);
+#else
     CHECK_FALSE(provider.capabilities().nativeTools);
+#endif
     CHECK_FALSE(provider.capabilities().vision);
     CHECK(provider.takesImages(u"fake-fast"_s) == std::optional<bool>(false));
     CHECK(provider.imageModels().isEmpty());
@@ -714,3 +718,52 @@ TEST_CASE("A turn against an invalid settings file names it, and the chain may m
     CHECK(ProviderChain::meansUnavailable(*outcome.error));
     CHECK(rig.turns().isEmpty());
 }
+
+#ifdef Q_OS_WIN
+TEST_CASE("Windows Codex uses native dynamicTools and resumes the turn with item/tool/call results", "[codex]") {
+    CodexRig rig({entry(R"({"dynamicTool":{"callId":"call-1","tool":"open_app","arguments":{"name":"Chrome"}},"text":"Opened Chrome."})")});
+    CodexProvider provider(rig.config(), rig.workingDir());
+
+    ToolSpec openApp{u"open_app"_s, u"Open an app"_s,
+                     QJsonObject{{u"type"_s, u"object"_s},
+                                 {u"properties"_s, QJsonObject{{u"name"_s, QJsonObject{{u"type"_s, u"string"_s}}}}},
+                                 {u"required"_s, QJsonArray{u"name"_s}}}};
+
+    ChatRequest req1 = ask({user(u"open chrome"_s)});
+    req1.tools = {openApp};
+    QList<ToolCall> gotCalls;
+    Outcome step1;
+    std::shared_ptr<ChatStream> stream1 = provider.chat(req1);
+    QObject::connect(stream1.get(), &ChatStream::textDelta, [&](const QString &d) { step1.text += d; });
+    QObject::connect(stream1.get(), &ChatStream::finished, [&](FinishReason r) {
+        step1.finish = r;
+        gotCalls = stream1->toolCalls();
+    });
+    QObject::connect(stream1.get(), &ChatStream::failed, [&](const Error &e) { step1.error = e; });
+    REQUIRE(QTest::qWaitFor([&] { return step1.finish || step1.error; }, kWaitMs));
+    REQUIRE_FALSE(step1.error);
+    CHECK(step1.finish == FinishReason::ToolCalls);
+    REQUIRE(gotCalls.size() == 1);
+    CHECK(gotCalls.first().id == u"call-1"_s);
+    CHECK(gotCalls.first().name == u"open_app"_s);
+    CHECK(gotCalls.first().argumentsJson.contains(u"Chrome"_s));
+
+    // Verify dynamicTools was registered on thread/start.
+    const QList<QJsonObject> threads = rig.requests(u"thread/start"_s);
+    REQUIRE(threads.size() == 1);
+    const QJsonArray dyn = threads.first().value(u"dynamicTools"_s).toArray();
+    REQUIRE(dyn.size() == 1);
+    CHECK(dyn.first().toObject().value(u"name"_s).toString() == u"open_app"_s);
+    CHECK(dyn.first().toObject().value(u"type"_s).toString() == u"function"_s);
+
+    // Send the tool result back to resume the paused turn.
+    ChatRequest req2 = req1;
+    req2.messages.append(ChatMessage{.role = Role::Assistant, .text = step1.text, .toolCalls = gotCalls});
+    req2.messages.append(ChatMessage{.role = Role::Tool, .text = u"Launched Google Chrome"_s, .toolCallId = u"call-1"_s, .toolName = u"open_app"_s});
+    const Outcome step2 = run(provider, req2);
+    REQUIRE_FALSE(step2.error);
+    CHECK(step2.finish == FinishReason::Stop);
+    CHECK(step2.text == u"Opened Chrome."_s);
+    CHECK(rig.requests(u"turn/start"_s).size() == 1);          // same paused turn resumed, not a new turn!
+}
+#endif
