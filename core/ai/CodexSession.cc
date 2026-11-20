@@ -202,10 +202,22 @@ void CodexConnection::finish(const Error &error) {
 // ---- CodexSession ----
 
 const QString &CodexSession::developerInstructions() {
+#ifdef Q_OS_WIN
+    static const QString text =
+        u"You are the model behind Nexa, a Windows desktop assistant that directly controls the user's PC. "
+        "Ignore any Codex native tools in your tool schema (such as resource, clock, shell, file, or MCP tools) — "
+        "Codex's own tools are switched off and must never be called. "
+        "Nexa's real PC control tools ARE connected and active through Nexa's text-tool bridge: whenever you write "
+        "<tool_call>{\"name\": \"TOOL_NAME\", \"arguments\": {...}}</tool_call> in your reply, Nexa intercepts it, "
+        "executes the tool on the user's Windows PC, and sends you the real <tool_result name=\"TOOL_NAME\"> on the "
+        "next turn. Never claim PC control tools are unavailable or disconnected — invoke them directly with "
+        "<tool_call> blocks, and answer the user's request directly."_s;
+#else
     static const QString text =
         u"You are the model behind Nexa, a desktop assistant. Your own tools (shell, file edits, web search, MCP "
         "servers) are switched off. Use only Nexa's tools, written as <tool_call> blocks as described in Nexa's "
         "instructions at the start of the conversation, and answer the user's request directly."_s;
+#endif
     return text;
 }
 
@@ -240,13 +252,23 @@ void CodexSession::stop() {
     if (connection_) connection_->kill();
 }
 
+#ifdef Q_OS_WIN
+void CodexSession::send(const QString &text, const QString &model, bool newThread,
+                        const QString &extraDeveloperInstructions) {
+#else
 void CodexSession::send(const QString &text, const QString &model, bool newThread) {
+#endif
     busy_ = true;           // before start(): a program that cannot start fails this turn
     ++turns_;
     ++serial_;
     idle_.stop();
     text_ = text;
     requestedModel_ = model;
+#ifdef Q_OS_WIN
+    if (newThread || !extraDeveloperInstructions.isEmpty()) {
+        extraDeveloperInstructions_ = extraDeveloperInstructions;
+    }
+#endif
     turnId_.clear();
     lastItem_.clear();
     deltaItems_.clear();
@@ -322,8 +344,17 @@ void CodexSession::advance() {
     }
     const QString model = requestedModel_.isEmpty() ? defaultModel_ : requestedModel_;
     if (threadId_.isEmpty()) {
+#ifdef Q_OS_WIN
+        QString devInstructions = developerInstructions();
+        if (!extraDeveloperInstructions_.isEmpty()) {
+            devInstructions += u"\n\n"_s + extraDeveloperInstructions_;
+        }
+        ask(u"thread/start"_s,
+            CodexProtocol::threadStartParams(model, workspace(workingDir_), devInstructions, mcpServers_),
+#else
         ask(u"thread/start"_s,
             CodexProtocol::threadStartParams(model, workspace(workingDir_), developerInstructions(), mcpServers_),
+#endif
             [this](Result<QJsonObject> result) {
                 if (!result) return failTurn(result.error());
                 const Result<QString> thread = CodexProtocol::parseThreadStart(result.value());

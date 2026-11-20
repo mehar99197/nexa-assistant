@@ -82,7 +82,11 @@ TEST_CASE("A named tunnel's address is known before it connects; one not install
     TunnelProcess missing(u"ngrok"_s);
     missing.start(TunnelProcess::Spec{{}, {}, &tunnellog::ngrokLine, {}});
     CHECK(missing.state() == State::Missing);
+#ifdef Q_OS_WIN
+    CHECK(missing.problem().contains(u"LOCALAPPDATA"_s));
+#else
     CHECK(missing.problem().contains(u"download-tunnels.sh"_s));
+#endif
 }
 
 TEST_CASE("A tunnel that stops by itself is started again") {

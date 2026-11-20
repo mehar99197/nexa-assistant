@@ -51,8 +51,27 @@ QString SherpaRuntime::zipVoiceDir() const {
 }
 
 bool SherpaRuntime::load() {
+#ifdef Q_OS_WIN
+    if (loaded_) {
+        speakers_ = createSpeakerExtractor != nullptr && destroySpeakerExtractor != nullptr
+                    && speakerDim != nullptr && speakerCreateStream != nullptr && speakerIsReady != nullptr
+                    && speakerCompute != nullptr && speakerDestroyEmbedding != nullptr && inputFinished != nullptr
+                    && QFileInfo::exists(speakerModel());
+        bool ttsReady = createOfflineTts != nullptr && destroyOfflineTts != nullptr
+                        && offlineTtsSampleRate != nullptr && offlineTtsGenerateWithConfig != nullptr
+                        && destroyGeneratedAudio != nullptr;
+        for (const QString &file : {u"encoder.int8.onnx"_s, u"decoder.int8.onnx"_s, u"vocos_24khz.onnx"_s,
+                                    u"tokens.txt"_s, u"lexicon.txt"_s}) {
+            if (!QFileInfo::exists(zipVoiceDir() + u'/' + file)) ttsReady = false;
+        }
+        tts_ = ttsReady;
+        return true;
+    }
+    attempted_ = true;
+#else
     if (attempted_) return loaded_;
     attempted_ = true;
+#endif
 
     const QString path = [] (const QString &base) -> QString {
 #ifdef Q_OS_WIN

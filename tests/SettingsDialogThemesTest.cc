@@ -149,5 +149,9 @@ TEST_CASE("Settings → General has the screen-as-text group, its switch disable
     REQUIRE(box != nullptr);
     CHECK_FALSE(box->isEnabled());          // the test's SystemStatus names no bus
     CHECK_FALSE(box->isChecked());
+#ifdef Q_OS_WIN
+    CHECK(box->text().contains(u"Windows UI Automation"_s));
+#else
     CHECK(box->text().contains(u"GNOME's accessibility switch"_s));
+#endif
 }

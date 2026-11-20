@@ -318,6 +318,10 @@ QString TextToolParser::instructions(const QList<ToolSpec> &tools) {
         u"You may write several such lines. Write nothing after them: the result of each comes back in a "
         "message that starts with <tool_result name=\"TOOL_NAME\">. Then carry on, or answer normally once "
         "you are done. Never invent a result."_s,
+#ifdef Q_OS_WIN
+        u"All tools listed below are live and connected through Nexa — ignore any unrelated built-in tool "
+        "schema (such as resource or clock tools) and invoke Nexa's tools using <tool_call> blocks."_s,
+#endif
         QString(),
         u"Tools:"_s,
     };

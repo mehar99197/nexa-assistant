@@ -1,6 +1,9 @@
 #include "system/android/AdbClient.h"
 
 #include "core/Logging.h"
+#ifdef Q_OS_WIN
+#include "core/ProcessUtils.h"
+#endif
 
 #include <QDir>
 #include <QProcess>
@@ -20,8 +23,18 @@ QString adbProgram() {
         QStringList dirs;
         if (const QString local = qEnvironmentVariable("LOCALAPPDATA"); !local.isEmpty()) {
             dirs.append(local + u"/Android/Sdk/platform-tools"_s);
+            dirs.append(local + u"/Microsoft/WinGet/Links"_s);
+            const QDir wingetPkgs(local + u"/Microsoft/WinGet/Packages"_s);
+            for (const QString &pkg : wingetPkgs.entryList({u"Google.PlatformTools*"_s}, QDir::Dirs | QDir::NoDotAndDotDot)) {
+                dirs.append(wingetPkgs.filePath(pkg) + u"/platform-tools"_s);
+            }
         }
         dirs.append(QDir::homePath() + u"/AppData/Local/Android/Sdk/platform-tools"_s);
+        dirs.append(QDir::homePath() + u"/scoop/shims"_s);
+        if (const QString pf = qEnvironmentVariable("ProgramFiles"); !pf.isEmpty()) {
+            dirs.append(pf + u"/Android/platform-tools"_s);
+        }
+        dirs.append(u"C:/platform-tools"_s);
         dirs.append(u"C:/Android/platform-tools"_s);
         return QStandardPaths::findExecutable(u"adb"_s, dirs);
 #else
@@ -115,6 +128,9 @@ void AdbClient::run(const QStringList &arguments, int timeoutMs, Done done) {
     if (logged.size() >= 3 && logged.first() == u"pair") logged.last() = u"******"_s;
     qCDebug(lcApp) << "adb" << logged;
     job->timer->start(timeoutMs);
+#ifdef Q_OS_WIN
+    process::configureChild(*process);
+#endif
     process->start(program(), arguments);
 }
 

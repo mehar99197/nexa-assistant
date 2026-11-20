@@ -1336,6 +1336,14 @@ void MainWindow::showSpeechModels() {
 }
 
 void MainWindow::showHelper() {
+#ifdef Q_OS_WIN
+    helperLabel_->setText(tr("Control: Windows UAC"));
+    QStringList notes;
+    if (status_.inputSummary) notes.append(status_.inputSummary());
+    if (status_.inputNotes) notes.append(status_.inputNotes());
+    notes.append(tr("Typing and clicking use Windows SendInput; administrator actions use Windows UAC."));
+    helperLabel_->setToolTip(notes.join(u'\n'));
+#else
     const bool installed = HelperClient::isInstalled();
     helperLabel_->setText(installed ? tr("Helper: installed") : tr("Helper: not installed"));
     QStringList notes;
@@ -1343,6 +1351,7 @@ void MainWindow::showHelper() {
     if (status_.inputNotes) notes.append(status_.inputNotes());
     if (!installed) notes.append(tr("Root commands and typing need it: %1").arg(HelperClient::installCommand()));
     helperLabel_->setToolTip(notes.join(u'\n'));
+#endif
 }
 
 void MainWindow::showPhone(const QString &description) {

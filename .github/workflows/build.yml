@@ -20,9 +20,9 @@ env:
   QT_VERSION: '6.8.3'
   POLKIT_QT_VERSION: '0.201.1'
   POLKIT_QT_SHA256: '95d8e2cae530c546d9437459deb8a1bea38d572f0f9772cc2860dc143637f256'
-  SHERPA_WIN_URL: 'https://github.com/k2-fsa/sherpa-onnx/releases/download/v2.0.1/sherpa-onnx-v2.0.1-win-x64-shared-MD-Release-lib.tar.bz2'
-  SHERPA_WIN_SHA256: 'c3c78220db8bebf97d5f932496165bb3897b163410427d7c021013439c80f183'
-  SHERPA_WIN_TOP: 'sherpa-onnx-v2.0.1-win-x64-shared-MD-Release-lib'
+  SHERPA_WIN_URL: 'https://github.com/k2-fsa/sherpa-onnx/releases/download/v2.0.1/sherpa-onnx-v2.0.1-win-x64-shared-MT-Release-lib.tar.bz2'
+  SHERPA_WIN_SHA256: 'afa4de3ca4ab0afd53bb4aab40d28ee15608364b549ffc0fe0caf6489bfc39a5'
+  SHERPA_WIN_TOP: 'sherpa-onnx-v2.0.1-win-x64-shared-MT-Release-lib'
   PIPER_WIN_URL: 'https://github.com/rhasspy/piper/releases/download/2023.11.14-2/piper_windows_amd64.zip'
   PIPER_WIN_SHA256: 'f3c58906402b24f3a96d92145f58acba6d86c9b5db896d207f78dc80811efcea'
 

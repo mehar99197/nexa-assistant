@@ -24,10 +24,17 @@ QList<Asset> all() {
               {u"encoder-epoch-12-avg-2-chunk-16-left-64.int8.onnx"_s, u"decoder-epoch-12-avg-2-chunk-16-left-64.int8.onnx"_s,
                u"joiner-epoch-12-avg-2-chunk-16-left-64.int8.onnx"_s, u"tokens.txt"_s, u"bpe.model"_s},
               u"sherpa-onnx-kws-zipformer-gigaspeech-3.3M-2024-01-01"_s},
+#ifdef Q_OS_WIN
+        Asset{u"speaker"_s, u"speaker"_s,
+              kSherpaReleases + u"/speaker-recongition-models/3dspeaker_speech_eres2net_sv_en_voxceleb_16k.onnx"_s, 26'485'264,
+              u"c4947caf150b8502fdd75bbe4089b971ab1ec42e90ee3ba547faca2cde44d9ee"_s, u"sherpa/speaker"_s,
+              {u"3dspeaker_speech_eres2net_sv_en_voxceleb_16k.onnx"_s}, {}},
+#else
         Asset{u"speaker"_s, u"speaker"_s,
               kSherpaReleases + u"/speaker-recongition-models/3dspeaker_speech_eres2net_sv_en_voxceleb_16k.onnx"_s, 26'485'263,
               u"c59158379255ad66e161679cca6af8d52d51e389e3224ab7d7a7baae295c2db5"_s, u"sherpa/speaker"_s,
               {u"3dspeaker_speech_eres2net_sv_en_voxceleb_16k.onnx"_s}, {}},
+#endif
         Asset{u"piper-en_US-lessac-medium.json"_s, u"voice"_s,
               u"https://huggingface.co/rhasspy/piper-voices/resolve/main/en/en_US/lessac/medium/en_US-lessac-medium.onnx.json"_s, 4'885,
               u"efe19c417bed055f2d69908248c6ba650fa135bc868b0e6abb3da181dab690a0"_s, u"piper/voices"_s,

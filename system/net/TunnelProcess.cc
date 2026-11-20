@@ -53,7 +53,11 @@ void TunnelProcess::start(Spec spec) {
     fallback_ = false;
     problem_.clear();
     if (spec_.program.isEmpty()) {
+#ifdef Q_OS_WIN
+        problem_ = tr("%1 is not installed. Install it on PATH or place it in %LOCALAPPDATA%\\nexa\\tunnels.").arg(name_);
+#else
         problem_ = tr("%1 is not installed: scripts/download-tunnels.sh puts it in ~/.local/share/nexa/tunnels.").arg(name_);
+#endif
         qCInfo(lcApp).noquote() << "tunnel:" << problem_;
         setState(State::Missing);
         return;

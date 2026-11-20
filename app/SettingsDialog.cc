@@ -792,8 +792,24 @@ QWidget *SettingsDialog::buildVoiceTab() {
             modelsProgress_->setValue(int(received / 1024));
             modelsProgress_->setFormat(tr("%1 — %p%").arg(id));
         });
+#ifdef Q_OS_WIN
+        const auto refreshVoiceEngines = [this] {
+            refreshModels();
+            if (status_.sherpa && status_.sherpa->load()) {
+                spotterStatus_->setText(status_.sherpa->libraryDir() == SherpaRuntime::defaultDir()
+                                            ? tr("Instant spotting: installed (your copy)")
+                                            : tr("Instant spotting: installed (from the package)"));
+                spotterStatus_->setToolTip({});
+            }
+            refreshMyVoice();
+            refreshOwnVoice();
+        };
+        connect(status_.assets, &AssetDownloader::assetInstalled, this, refreshVoiceEngines);
+        connect(status_.assets, &AssetDownloader::finished, this, refreshVoiceEngines);
+#else
         connect(status_.assets, &AssetDownloader::assetInstalled, this, &SettingsDialog::refreshModels);
         connect(status_.assets, &AssetDownloader::finished, this, &SettingsDialog::refreshModels);
+#endif
         connect(status_.assets, &AssetDownloader::failed, this, [this](const QString &id, const Error &error) {
             refreshModels();
             modelsStatus_->setText(modelsStatus_->text() + u"\n"_s + tr("%1: %2").arg(id, error.message));
@@ -1020,7 +1036,11 @@ void SettingsDialog::refreshOwnVoice() {
     } else if (entitled) {
         notes.append(tr("No sample yet: record the passage once, and Nexa can speak in your voice."));
     }
+#ifdef Q_OS_WIN
+    if (!engine) notes.append(tr("ZipVoice is not installed — download the speech models above, then reopen Settings."));
+#else
     if (!engine) notes.append(tr("ZipVoice is not installed — run scripts/download-sherpa.sh, then reopen Settings."));
+#endif
     if (!phonemizer.available()) notes.append(phonemizer.problem());
     ownVoiceStatus_->setText(notes.join(u' '));
 }
@@ -1112,6 +1132,30 @@ QWidget *SettingsDialog::buildHelperTab() {
     authState_->setWordWrap(true);
     authState_->setTextInteractionFlags(Qt::TextSelectableByMouse);
 
+#ifdef Q_OS_WIN
+    helperTestButton_ = new QPushButton(tr("&Test Windows control"), page);
+    helperTestButton_->setToolTip(tr("Checks Windows SendInput and UI Automation readiness."));
+    connect(helperTestButton_, &QPushButton::clicked, this, &SettingsDialog::testHelper);
+
+    helperForgetButton_ = new QPushButton(tr("&Forget my password"), page);
+    helperForgetButton_->hide();
+
+    auto *explanation = new QLabel(
+        tr("On Windows, Nexa does not need a separate root helper service.\n\n"
+           "Typing and clicking use Windows SendInput directly, screen reading uses Windows UI Automation, "
+           "and administrator commands use Windows User Account Control (UAC) when needed.\n\n"
+           "Note: Windows UIPI prevents a standard process from typing or clicking inside elevated "
+           "(Run as Administrator) windows unless Nexa itself is started as Administrator.\n\n"
+           "Every action is written to the Actions panel and to %LOCALAPPDATA%\\nexa\\audit.jsonl."),
+        page);
+    explanation->setWordWrap(true);
+    explanation->setTextInteractionFlags(Qt::TextSelectableByMouse);
+
+    auto *form = new QFormLayout;
+    form->addRow(tr("System control:"), helperState_);
+    form->addRow(tr("Typing and clicking:"), inputState_);
+    form->addRow(tr("Elevation:"), authState_);
+#else
     helperTestButton_ = new QPushButton(tr("&Test the helper"), page);
     helperTestButton_->setToolTip(tr("Starts the helper and asks for its version. This needs no password."));
     connect(helperTestButton_, &QPushButton::clicked, this, &SettingsDialog::testHelper);
@@ -1140,6 +1184,7 @@ QWidget *SettingsDialog::buildHelperTab() {
     form->addRow(tr("Root helper:"), helperState_);
     form->addRow(tr("Typing and clicking:"), inputState_);
     form->addRow(tr("Password:"), authState_);
+#endif
 
     auto *buttons = new QHBoxLayout;
     buttons->addWidget(helperTestButton_);
@@ -1157,6 +1202,10 @@ QWidget *SettingsDialog::buildHelperTab() {
 }
 
 void SettingsDialog::showHelperStatus() {
+#ifdef Q_OS_WIN
+    helperState_->setText(tr("Built-in (Windows SendInput & UAC) — no separate helper needed."));
+    helperState_->setStyleSheet(u"color: #2bb3a0;"_s);
+#else
     if (HelperClient::isInstalled()) {
         helperState_->setText(tr("Installed."));
         helperState_->setStyleSheet(u"color: #2bb3a0;"_s);
@@ -1165,6 +1214,7 @@ void SettingsDialog::showHelperStatus() {
                                  "type or click."));
         helperState_->setStyleSheet(u"color: #e09b2d;"_s);
     }
+#endif
     QStringList lines;
     if (status_.inputSummary) lines.append(status_.inputSummary());
     if (status_.inputNotes) lines += status_.inputNotes();
@@ -1175,6 +1225,11 @@ void SettingsDialog::showHelperStatus() {
 // Whether the password has already been given for this login. Only asked of a helper that is
 // already running: opening this tab is no reason to start root-privileged code.
 void SettingsDialog::showAuthorizationState() {
+#ifdef Q_OS_WIN
+    helperForgetButton_->setEnabled(false);
+    authState_->setText(tr("Windows UAC prompts when an administrator action is requested."));
+    return;
+#else
     const bool installed = HelperClient::isInstalled();
     helperForgetButton_->setEnabled(installed && status_.helper != nullptr);
     if (!installed) {
@@ -1197,9 +1252,20 @@ void SettingsDialog::showAuthorizationState() {
                                       ? tr("Given for this login — nothing will ask again until you log out.")
                                       : tr("Asked for once, the next time Nexa needs the helper."));
     });
+#endif
 }
 
 void SettingsDialog::testHelper() {
+#ifdef Q_OS_WIN
+    QStringList parts;
+    if (status_.inputSummary) parts.append(status_.inputSummary());
+    if (status_.a11y && status_.a11y->isAvailable()) parts.append(tr("UI Automation ready"));
+    helperState_->setText(parts.isEmpty()
+                              ? tr("Working — built-in Windows control is active.")
+                              : tr("Working — %1.").arg(parts.join(u" · "_s)));
+    helperState_->setStyleSheet(u"color: #2bb3a0;"_s);
+    return;
+#else
     if (!status_.helper) return;
     helperTestButton_->setEnabled(false);
     helperState_->setStyleSheet({});
@@ -1217,6 +1283,7 @@ void SettingsDialog::testHelper() {
         }
         if (self->status_.inputSummary) self->showHelperStatus();
     });
+#endif
 }
 
 void SettingsDialog::forgetAuthorization() {
@@ -1383,7 +1450,11 @@ void SettingsDialog::showPhone() {
         return;
     }
     if (!AdbClient::isInstalled()) {
+#ifdef Q_OS_WIN
+        phoneState_->setText(tr("adb is not installed. Install Android Platform Tools with: winget install Google.PlatformTools"));
+#else
         phoneState_->setText(tr("adb is not installed. Install it with: sudo apt install adb"));
+#endif
         phoneState_->setStyleSheet(u"color: #e09b2d;"_s);
         return;
     }
@@ -1824,10 +1895,17 @@ QWidget *SettingsDialog::buildPolicyTab() {
     policyCombo_->setCurrentIndex(index >= 0 ? index : 0);
 
     auto *explanation = new QLabel(
+#ifdef Q_OS_WIN
+        tr("Every action is recorded in %LOCALAPPDATA%\\nexa\\audit.jsonl and shown in the Actions panel. "
+           "Destructive commands (del /s, rmdir /s, format, shutdown, git reset --hard, …) are flagged there in "
+           "every mode.\n\nStop everything at any time with Esc (current reply) or Ctrl+Alt+Esc / "
+           "Ctrl+Shift+Esc (panic: replies, tools and the processes they started)."),
+#else
         tr("Every action is recorded in ~/.local/share/nexa/audit.jsonl and shown in the Actions panel. "
            "Destructive commands (rm -r, mkfs, dd of=, shutdown, git reset --hard, …) are flagged there in "
            "every mode.\n\nStop everything at any time with Esc (current reply) or Ctrl+Alt+Esc / "
            "Ctrl+Shift+Esc (panic: replies, tools and the processes they started)."),
+#endif
         page);
     explanation->setWordWrap(true);
 
@@ -1863,6 +1941,31 @@ QWidget *SettingsDialog::buildGeneralTab() {
     auto *screenGroup = new QGroupBox(tr("Screen as text"), page);
     auto *screenLayout = new QVBoxLayout(screenGroup);
     const bool haveBus = status_.a11y && status_.a11y->isAvailable();
+#ifdef Q_OS_WIN
+    auto *screenNote = new QLabel(haveBus ? tr("While Share screen is on, Nexa reads desktop windows as text through "
+                                               "Windows UI Automation — so a model that cannot see images still works "
+                                               "with them. A picture is taken only when the text is not enough.")
+                                          : tr("Windows UI Automation is not available on this session, so windows cannot "
+                                               "be read as text; the screen is a picture only."),
+                                  screenGroup);
+    screenNote->setWordWrap(true);
+    exposeContentsCheck_ = new QCheckBox(tr("Windows UI Automation exposes app contents automatically (always enabled by Windows)"),
+                                         screenGroup);
+    exposeContentsCheck_->setObjectName(u"exposeContents"_s);
+    exposeContentsCheck_->setEnabled(false);
+    if (haveBus) {
+        if (const Result<bool> on = status_.a11y->appsExposeContents()) exposeContentsWas_ = on.value();
+    }
+    exposeContentsCheck_->setChecked(exposeContentsWas_);
+    screenLayout->addWidget(screenNote);
+    screenLayout->addWidget(exposeContentsCheck_);
+
+    auto *hotkeyLabel = new QLabel(
+        tr("Hotkeys that work from any window: %1.\nInside Nexa: Ctrl+M talks, Esc stops the reply, "
+           "Ctrl+Alt+Esc stops everything.")
+            .arg(hotkeys),
+        page);
+#else
     auto *screenNote = new QLabel(haveBus ? tr("While Share screen is on, Nexa reads the window in front as text through the "
                                                "desktop's accessibility bus — so a model that cannot see images still works "
                                                "with it. A picture is taken only when the text is not enough.")
@@ -1887,6 +1990,7 @@ QWidget *SettingsDialog::buildGeneralTab() {
            "→ Nexa Assistant. Inside Nexa: Ctrl+M talks, Esc stops the reply, Ctrl+Alt+Esc stops everything.")
             .arg(hotkeys),
         page);
+#endif
     hotkeyLabel->setWordWrap(true);
     hotkeyLabel->setTextInteractionFlags(Qt::TextSelectableByMouse);
 
@@ -2043,11 +2147,19 @@ void SettingsDialog::showRowsFor(const QString &kind, bool nexaManaged) {
     if (auto *label = qobject_cast<QLabel *>(form->labelForField(baseUrlEdit_))) {
         label->setText(http ? tr("Base URL:") : program ? tr("Program:") : tr("Server:"));
     }
+#ifdef Q_OS_WIN
+    baseUrlEdit_->setPlaceholderText(http    ? u"https://api.example.com/v1"_s
+                                     : agy    ? tr("agy on PATH or in %LOCALAPPDATA%\\Programs")
+                                     : codex  ? tr("codex on PATH or in %APPDATA%\\npm")
+                                     : claude ? tr("claude on PATH or in %USERPROFILE%\\.local\\bin")
+                                              : tr("Nexa starts its own"));
+#else
     baseUrlEdit_->setPlaceholderText(http    ? u"https://api.example.com/v1"_s
                                      : agy    ? tr("agy on PATH or in ~/.local/bin")
                                      : codex  ? tr("codex on PATH or in ~/.npm-global/bin")
                                      : claude ? tr("claude on PATH or in ~/.local/bin")
                                               : tr("Nexa starts its own"));
+#endif
     // agy, Codex and Claude Code sign in by themselves (Sign-in below); Nexa AI uses Settings → Account's
     // signed licence token (never stored in config.json); an opencode server has a password.
     form->setRowVisible(keyRow_, !program && !nexaManaged);

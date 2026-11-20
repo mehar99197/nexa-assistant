@@ -186,6 +186,16 @@ void AssetDownloader::onReplyFinished() {
     reply_ = nullptr;
     reply->deleteLater();
     part_.close();
+#ifdef Q_OS_WIN
+    if (current_.bytes > 0 && received_ < current_.bytes) {
+        fail(Error{ErrorCode::Network,
+                   u"%1 stopped early (%2 of %3 bytes); what came is kept, try again."_s
+                       .arg(fileName())
+                       .arg(received_)
+                       .arg(current_.bytes)});
+        return;
+    }
+#endif
     verify();
 }
 

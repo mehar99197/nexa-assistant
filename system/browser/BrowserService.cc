@@ -154,7 +154,11 @@ void BrowserService::start() {
     const QString node = PlaywrightInstaller::nodeProgram();
     if (node.isEmpty()) {
         connectors_.apply({});
+#ifdef Q_OS_WIN
+        setState(State::NeedsSetup, tr("Node.js is not installed. Install it with: winget install OpenJS.NodeJS.LTS"));
+#else
         setState(State::NeedsSetup, tr("Node.js is not installed. Install it with: sudo apt install nodejs npm"));
+#endif
         return;
     }
     const QString data = portable::dataDir();

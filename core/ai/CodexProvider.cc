@@ -182,10 +182,18 @@ std::shared_ptr<ChatStream> CodexProvider::chat(const ChatRequest &request) {
         ledger_.reset();
         session_->interrupt();
     });
+#ifdef Q_OS_WIN
+    const QString devExtra = plan.fresh ? plan.system : QString();
+    QTimer::singleShot(0, stream, [stream, session = QPointer<CodexSession>(session_.get()),
+                                   text = parts.join(u"\n\n"_s), model = pending_.model, newThread, devExtra] {
+        if (session && !stream->isDone()) session->send(text, model, newThread, devExtra); // cancelled before it began: not sent
+    });
+#else
     QTimer::singleShot(0, stream, [stream, session = QPointer<CodexSession>(session_.get()),
                                    text = parts.join(u"\n\n"_s), model = pending_.model, newThread] {
         if (session && !stream->isDone()) session->send(text, model, newThread);     // cancelled before it began: not sent
     });
+#endif
     return handle;
 }
 

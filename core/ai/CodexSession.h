@@ -104,7 +104,12 @@ public:
     void start();                                   // idempotent: the process and the handshake
     // One turn. `newThread`: begin a new thread first (the first turn, or after one that cannot be trusted);
     // `model` empty: the first model Codex lists as visible.
+#ifdef Q_OS_WIN
+    void send(const QString &text, const QString &model, bool newThread,
+              const QString &extraDeveloperInstructions = {});
+#else
     void send(const QString &text, const QString &model, bool newThread);
+#endif
     void interrupt();                               // the turn in progress; `settled` follows
     void stop();                                    // kills the process
     bool isUsable() const { return !broken_; }
@@ -142,6 +147,9 @@ private:
     QTimer killTimer_;
     QString text_;                      // the turn on its way
     QString requestedModel_;
+#ifdef Q_OS_WIN
+    QString extraDeveloperInstructions_;
+#endif
     QString defaultModel_;              // the first visible model, once listed
     QString threadId_;
     QString turnId_;
